@@ -1,0 +1,113 @@
+{
+  "lead_sample_fields": [
+    "email",
+    "id",
+    "creationDate",
+    "firstName",
+    "lastName",
+    "tags"
+  ],
+  "lead_has_source": false,
+  "lead_sample": {
+    "email": "kristinbott14@gmail.com",
+    "id": "efe77923dfc6eccfbdd4f6c19f6380b43c09d9de9c9f45dd24977cd5bee58541",
+    "creationDate": "2026-04-14T14:54:39-06:00",
+    "firstName": "kristin",
+    "lastName": "bott",
+    "tags": "<list>"
+  },
+  "calls_count_7d": 3,
+  "call_sample_fields": [
+    "id",
+    "tag",
+    "qualified",
+    "score",
+    "creationDate",
+    "externalId",
+    "name",
+    "state",
+    "lead",
+    "firstSource",
+    "lastSource",
+    "provider"
+  ],
+  "call_firstSource": {
+    "sourceLinkId": "d8a644176d2cd05b2530e2dd610c431888eb95ed8e9d60c20684b8988992d705",
+    "name": "Lookalike (US, 1%) - List Stack",
+    "tag": "@lookalike-us-1-list-stack-6971096565261",
+    "disregarded": false,
+    "organic": false,
+    "trafficSource": {
+      "id": "cat-fc9217f87b2e3b122b1fe4bb8be84fa8",
+      "name": "facebook"
+    },
+    "goal": {
+      "id": "cat-fe9a17da30b2e433c50446754bb3a7f5",
+      "name": "all"
+    },
+    "category": {
+      "id": "cat-19cbfb8f1043cf91e1043236c09b95be",
+      "name": "DS | __Chiro__ Top Ten | CBO | USA | LAL | Videos Dr. Jason"
+    },
+    "adSource": {
+      "adSourceId": "6971096565261",
+      "adAccountId": "1379051522386222",
+      "platform": "FACEBOOK"
+    },
+    "sourceLinkAd": {
+      "name": "Dr. Jason (1x1) | C1",
+      "adSourceId": "6971096566461"
+    },
+    "clickDate": "2026-01-04T12:01:19Z",
+    "clickId": "PAZXh0bgNhZW0BMABhZGlkAAAGVxdExpVzcnRjBmFwcF9pZA8xMjQwMjQ1NzQyODc0MTQAAadeToUZlfqBVfzFDhPOYdVCM3XkPR5UGsAPHFcg_QNoQzUQfjKT5HuoxHVLpw_aem_nQY_6_KYCmcQo5k83SSY5Q"
+  },
+  "call_lastSource": {
+    "sourceLinkId": "b137f1541c6c6020eaddca4f0599efe05a429791abac53f071c5fa7e549f0065",
+    "name": "CE Custom Audiences",
+    "tag": "@ce-custom-audiences-6968121545661",
+    "disregarded": false,
+    "organic": false,
+    "trafficSource": {
+      "id": "cat-fc9217f87b2e3b122b1fe4bb8be84fa8",
+      "name": "facebook"
+    },
+    "goal": {
+      "id": "cat-fe9a17da30b2e433c50446754bb3a7f5",
+      "name": "all"
+    },
+    "category": {
+      "id": "cat-7fd6767b4d721598232e431d3b8a07ee",
+      "name": "DS | __Chiro__ VEMX | CBO | USA | CA | Dec 2025 Videos | C6"
+    },
+    "adSource": {
+      "adSourceId": "6968121545661",
+      "adAccountId": "1379051522386222",
+      "platform": "FACEBOOK"
+    },
+    "sourceLinkAd": {
+      "name": "video - Gumm's End of Year_1 | C6",
+      "adSourceId": "6968121545261"
+    },
+    "clickDate": "2026-01-17T07:08:15Z",
+    "clickId": "PAZXh0bgNhZW0BMABhZGlkAAAGVmWEBJ1zcnRjBmFwcF9pZA8xMjQwMjQ1NzQyODc0MTQAAacV4VJE1PSYxSINAKxvgBuVZx4zB-Fcwck3kTmdkOz9b53gaMbGbcHKGEvIGQ_aem_2Ir4vdHLzGX5YfgjHtYzbg"
+  },
+  "call_provider": {
+    "id": "cll-1e0ecda71d3a068edf4e8af2eef85c10f792483be2c4c553d7d9b1a39cb37391",
+    "integration": {
+      "name": "Hubspot integration",
+      "id": "exi-dcf55e364c3b5fae1d91c8e24d3f03257d3ab67528c046f3a217316db75a67f1",
+      "type": "HUBSPOT"
+    }
+  },
+  "call_qualified": true,
+  "call_score": 1,
+  "unique_sources_in_calls": [
+    "CE Custom Audiences",
+    "[MB] - Dr. Maas - VIDEO 1 - CAN WE HELP YOU SCALE - OPEN - AUTO",
+    "Lookalike (US, 1%) - List Stack"
+  ],
+  "sales_count_7d": 0,
+  "sales_count_30d": 0,
+  "sales_count_90d": 0,
+  "leads_count_30d_page1": 5
+}

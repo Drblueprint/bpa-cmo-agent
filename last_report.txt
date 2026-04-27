@@ -1,0 +1,52 @@
+*BPA CMO Agent — Weekly Paid Media Report*
+_Period: 2026-04-07 → 2026-04-14 (last 7 days)_
+_Source: Facebook Ads | v1 manual run_
+
+*Headline*
+Spent $10,554 this week generating 58 leads at $181.96 blended CPL.
+
+*Top-line numbers*
+• Spend: $10,553.93
+• Impressions: 168,897
+• Clicks: 4,426
+• Leads (FB-reported): 58
+• Blended CTR: 2.62%
+• Blended CPC: $2.38
+• Blended CPL: $181.96
+
+*Top 5 campaigns by spend*
+• DS | __Theraray__ Funnel Setup | CBO | USA | CA & LAL | Images Apr 2026 — $1,519 spent, 19 leads, CPL $79.96, CTR 3.87%
+• DS | EMX 2026 Fort Worth Mixed Funnel Setup | CBO | USA | CA | Videos — $1,498 spent, 7 leads, CPL $214.03, CTR 2.25%
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | CA | Dr Jo — $1,362 spent, 6 leads, CPL $226.95, CTR 3.32%
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | LAL | Dr Rob — $1,350 spent, 2 leads, CPL $675.20, CTR 1.46%
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | Interests | Dr Jo — $1,333 spent, 4 leads, CPL $333.29, CTR 2.20%
+
+*Best CPL (what's working)*
+• DS | __PT__ Recovery Program Funnel | CBO | USA | Interests | Apr 2026 Images | Copy 3 — CPL $54.57 (12 leads, $655 spent)
+• DS | __Theraray__ Funnel Setup | CBO | USA | CA & LAL | Images Apr 2026 — CPL $79.96 (19 leads, $1,519 spent)
+• DS | __PT__ Recovery Program Funnel | CBO | USA | Interests | Apr 2026 Images | Copy 2 — CPL $82.09 (8 leads, $657 spent)
+
+*Worst CPL (what's not working)*
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | CA | Dr Jo — CPL $226.95 (6 leads, $1,362 spent)
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | Interests | Dr Jo — CPL $333.29 (4 leads, $1,333 spent)
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | LAL | Dr Rob — CPL $675.20 (2 leads, $1,350 spent)
+
+*Zero-lead campaigns burning spend >$50*
+• KK__Chiro__Traffic__Testimonials__2026__Retargeting — $71 spent, 0 leads
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | CA | Dr Rob — $1,302 spent, 0 leads
+• DS | __Chiro__ Mixed Funnel Setup | CBO | USA | Interests | Dr Rob — $807 spent, 0 leads
+
+*Constraint (this week)*
+WASTED SPEND. $2,180 burned on campaigns with zero leads this week. Cut or diagnose before Friday.
+
+*Recommended actions*
+• Review 'KK__Chiro__Traffic__Testimonials__2026__Retargeting' — cut or iterate this week ($71 at stake)
+• Review 'DS | __Chiro__ Mixed Funnel Setup | CBO | USA | CA | Dr Rob' — cut or iterate this week ($1,302 at stake)
+• Review 'DS | __Chiro__ Mixed Funnel Setup | CBO | USA | Interests | Dr Rob' — cut or iterate this week ($807 at stake)
+• Diagnose 'DS | __Chiro__ Mixed Funnel Setup | CBO | USA | LAL | Dr Rob' (CPL $675.20) — creative, audience, or offer?
+• Consider scaling 'DS | __PT__ Recovery Program Funnel | CBO | USA | Interests | Apr 2026 Images | Copy 3' — best CPL at $54.57
+
+*Blindspots*
+• This report does not yet include Hyros-verified ROAS. FB-reported leads only.
+• No creative/copy analysis in this run — Paid Media only.
+• No HubSpot lead→enrolled attribution.

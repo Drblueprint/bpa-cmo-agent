@@ -1,0 +1,37 @@
+*BPA CMO Agent — Weekly Report v2*
+_Window: 2026-04-07 → 2026-04-14 (7 days)_
+_Sources: Facebook Ads + Hyros attribution_
+
+*Top-line*
+• Spend: $10,554
+• Impressions: 168,897
+• Clicks: 4,426 (CTR 2.62%)
+• Leads — FB: 58 · Hyros: 2000
+  Hyros vs FB delta: +3348.3% (Hyros sees more)
+• Hyros calls booked: 22 (22 qualified)
+• Blended CPL (FB): $181.96
+• Cost per booked call: $479.72
+• Cost per qualified call: $479.72
+
+*By segment*
+• Chiro: $6,154 spent, 12 leads (CPL $513), 11 calls, $559/call
+• TheraRay: $1,519 spent, 19 leads (CPL $80), 0 calls
+• EMX / Event: $1,498 spent, 7 leads (CPL $214), 0 calls
+• PT Recovery: $1,312 spent, 20 leads (CPL $66), 11 calls, $119/call
+• Retargeting: $71 spent, 0 leads (CPL n/a), 0 calls
+
+*By talent*
+• Dr. Rob: $3,459 spent, 2 leads (CPL $1,730), 5 calls
+• Dr. Jo: $2,695 spent, 10 leads (CPL $269), 6 calls
+
+*Constraint (this week)*
+WASTED SPEND. $2,109 on campaigns with 0 FB leads.
+Top offenders: DS | __Chiro__ Mixed Funnel Setup | CBO …, DS | __Chiro__ Mixed Funnel Setup | CBO …
+
+*Attribution confidence*
+⚠ Hyros vs FB delta of +3348% — significant disagreement. Audit pixel + hidden fields.
+
+*Blindspots*
+• Sales/revenue still NOT tracked in Hyros — true ROAS impossible until HubSpot → Hyros sale events are wired.
+• Opt-in form attribution (HubSpot) may be leaking — reconciliation vs Typeform pending.
+• No creative-level analysis in this report — run ad_level_report.py.

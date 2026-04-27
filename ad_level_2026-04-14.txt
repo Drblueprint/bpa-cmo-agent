@@ -1,0 +1,46 @@
+*BPA CMO Agent — Ad-Level Report*
+_Window: 2026-04-07 → 2026-04-14 (7 days)_
+_Ads active (>$10 spend): 101_
+_Total spend: $10,367 · Total leads: 58_
+
+*Top 10 ads by spend*
+• EMX Image 27 (4x5) | C4 — $710, 6 leads, CPL $118, CTR 2.43%, (no video data)
+• video 4_4x5 - Certification Program | C1 — $529, 1 leads, CPL $529, CTR 1.54%, (no video data)
+• video 1_4x5 - Started First case at $5k | C4 - Copy — $476, 4 leads, CPL $119, CTR 2.81%, (no video data)
+• Gemini_Generated_Image_wyl37kwyl37kwyl3 | C7 - Copy — $401, 5 leads, CPL $80, CTR 4.00%, (no video data)
+• video 4_4x5 - I want to be that CEO | C2 - Copy — $400, 2 leads, CPL $200, CTR 1.99%, (no video data)
+• Image 8 | Copy 2 "Already Spending" — $394, 6 leads, CPL $66, CTR 1.74%, (no video data)
+• Image 1 | Copy 3 "The Math Doesn't Lie" — $360, 2 leads, CPL $180, CTR 2.81%, (no video data)
+• video 1_4x5 - Burnt Out | C4 - Copy — $339, 0 leads, no leads, CTR 3.72%, (no video data)
+• video 1_4x5 - Burnt Out | C1 — $299, 1 leads, CPL $299, CTR 1.72%, (no video data)
+• video 1_4x5 - Started First case at $5k | C1 - Copy — $295, 2 leads, CPL $147, CTR 2.43%, (no video data)
+
+*Best CPL (what to scale)*
+• Image 8 | Copy 3 "The Math Doesn't Lie" — CPL $23, 9 leads, $209 spent
+• image (12) | C3 - Copy — CPL $30, 6 leads, $178 spent
+• image (12) | C7 - Copy — CPL $32, 3 leads, $96 spent
+• Image 9 | Copy 3 "The Math Doesn't Lie" — CPL $62, 1 leads, $62 spent
+• Image (17) | C3 - Copy — CPL $64, 3 leads, $190 spent
+
+*Worst CPL with spend (what to cut)*
+• video 4_4x5 - Certification Program | C1 — CPL $529, 1 leads, $529 spent
+• video 1_4x5 - Burnt Out | C1 — CPL $299, 1 leads, $299 spent
+• video 4_4x5 - I want to be that CEO | C2 - Copy — CPL $200, 2 leads, $400 spent
+• Image 1 | Copy 3 "The Math Doesn't Lie" — CPL $180, 2 leads, $360 spent
+• video 1_4x5 - Started First case at $5k | C1 - Copy — CPL $147, 2 leads, $295 spent
+
+*Zero-lead ads burning >$100*
+• video 1_4x5 - Burnt Out | C4 - Copy — $339 spent, 0 leads, CTR 3.72% 
+• video 1_4x5 - Started First case at $5k | C3 - Copy — $256 spent, 0 leads, CTR 2.83% 
+• video 1_4x5 - Started First case at $5k | C2 - Copy — $244 spent, 0 leads, CTR 3.02% 
+• video 1_4x5 - Started First case at $5k | C4 - Copy — $191 spent, 0 leads, CTR 2.41% 
+• video 5_4x5 - Take More Vacations | C4 - Copy — $173 spent, 0 leads, CTR 2.13% 
+• video 3_4x5 - Patients were getting | C2 — $161 spent, 0 leads, CTR 0.84% 
+• video 5_4x5 - Take More Vacations | C3 - Copy — $155 spent, 0 leads, CTR 1.27% 
+• video 5_4x5 - Take More Vacations | C1 - Copy — $152 spent, 0 leads, CTR 3.87% 
+• video 1_4x5 - Burnt Out | C4 — $147 spent, 0 leads, CTR 1.31% 
+• video 4_4x5 - Certification Program | C4 - Copy — $145 spent, 0 leads, CTR 3.47% 
+
+*Diagnostic*
+CREATIVE OR TARGETING BROKEN on $2,540 of zero-lead ads.
+Next: check hook rates on the offenders. Low hook = creative. Good hook + no leads = landing page / offer.

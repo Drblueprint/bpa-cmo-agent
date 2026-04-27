@@ -1,0 +1,458 @@
+[
+  {
+    "path": "/leads",
+    "status": 200,
+    "preview": {
+      "count": 5,
+      "sample_keys": [
+        "email",
+        "id",
+        "creationDate",
+        "firstName",
+        "lastName",
+        "tags"
+      ]
+    },
+    "raw": {
+      "result": [
+        {
+          "email": "kristinbott14@gmail.com",
+          "id": "efe77923dfc6eccfbdd4f6c19f6380b43c09d9de9c9f45dd24977cd5bee58541",
+          "creationDate": "2026-04-14T14:54:39-06:00",
+          "firstName": "kristin",
+          "lastName": "bott",
+          "tags": [
+            "!hubspot"
+          ]
+        },
+        {
+          "email": "brian@newhealthmadison.com",
+          "id": "f021f4e7b45df46b772098058c2a0abd63cf3d4d225e12aee55d0649209e2c0e",
+          "creationDate": "2026-04-14T14:54:03-06:00",
+          "firstName": "brian",
+          "lastName": "blindt",
+          "tags": [
+            "!hubspot"
+          ]
+        },
+        {
+          "email": "sergio@newhealthmadison.com",
+          "id": "4e3f94239eb3c32c158fbac8949f9641fa9209f30281127e8d16c0f4239d28af",
+          "creationDate": "2026-04-14T14:53:15-06:00",
+          "firstName": "sergio",
+          "lastName": "ardila-alvarado",
+          "tags": [
+            "!hubspot"
+          ]
+        },
+        {
+          "email": "hello@compasschiropracticmn.com",
+          "id": "67171722068267b7ac716b6195096607ded5ce42a419a18e1d976955495efea7",
+          "creationDate": "2026-04-14T14:49:43-06:00",
+          "firstName": "tanner j",
+          "lastName": "swystun",
+          "tags": [
+            "!hubspot"
+          ]
+        },
+        {
+          "email": "funding@leasepoint.com",
+          "id": "3632ea76f6bdc19ab786e321bab8360b2ac8c48cce2538842b7f366b23ceab05",
+          "creationDate": "2026-04-14T14:24:27-06:00",
+          "tags": [
+            "!hubspot"
+          ]
+        }
+      ],
+      "nextPageId": "e70bc51a885b41c1b6272dfc928ae4417d3755e40f937530f51e64de7f39edf2",
+      "request_id": "fd75e2edad3a4d94b01b7b474f85afbf"
+    }
+  },
+  {
+    "path": "/sales",
+    "status": 200,
+    "preview": {
+      "count": 0,
+      "sample_keys": []
+    },
+    "raw": {
+      "result": [],
+      "request_id": "cc3bef0200444052a6fc3e949c595c5a"
+    }
+  },
+  {
+    "path": "/orders",
+    "status": 404,
+    "preview": {
+      "keys": [
+        "raw_error"
+      ]
+    },
+    "raw": {
+      "raw_error": "non-json response"
+    }
+  },
+  {
+    "path": "/calls",
+    "status": 200,
+    "preview": {
+      "count": 5,
+      "sample_keys": [
+        "id",
+        "tag",
+        "qualified",
+        "score",
+        "creationDate",
+        "externalId",
+        "name",
+        "state",
+        "lead",
+        "firstSource",
+        "lastSource",
+        "provider"
+      ]
+    },
+    "raw": {
+      "result": [
+        {
+          "id": "cll-1e0ecda71d3a068edf4e8af2eef85c10f792483be2c4c553d7d9b1a39cb37391",
+          "tag": "$hubspot-onboarding-000",
+          "qualified": true,
+          "score": 1,
+          "creationDate": "Tue Apr 14 21:04:01 UTC 2026",
+          "externalId": "107999568229",
+          "name": "Onboarding",
+          "state": "QUALIFIED",
+          "lead": {
+            "email": "drdiegocaban@gmail.com",
+            "id": "be554d70e9ba0aafa8185b8b1f3ce06c2167f3d0479c2c39f6243ad845935934",
+            "creationDate": "Sun Jan 04 18:01:51 UTC 2026",
+            "firstName": "diego",
+            "lastName": "caban",
+            "ips": [
+              "98.79.139.62"
+            ],
+            "phoneNumbers": [
+              "18632317033"
+            ],
+            "tags": [
+              "!chiro",
+              "@lookalike-us-1-list-stack-6971096565261",
+              "!hubspot",
+              "$hubspot-15-min-call-000",
+              "@ce-custom-audiences-6968123155461",
+              "@ce-custom-audiences-6960085271661",
+              "$hubspot-strategy-call-000",
+              "$hubspot-call-000",
+              "@ce-custom-audiences-6968121545661",
+              "@lookalike-us-1-list-stack-6971086264861",
+              "$hubspot-closing-call-000",
+              "$hubspot-onboarding-000"
+            ]
+          },
+          "firstSource": {
+            "sourceLinkId": "d8a644176d2cd05b2530e2dd610c431888eb95ed8e9d60c20684b8988992d705",
+            "name": "Lookalike (US, 1%) - List Stack",
+            "tag": "@lookalike-us-1-list-stack-6971096565261",
+            "disregarded": false,
+            "organic": false,
+            "trafficSource": {
+              "id": "cat-fc9217f87b2e3b122b1fe4bb8be84fa8",
+              "name": "facebook"
+            },
+            "goal": {
+              "id": "cat-fe9a17da30b2e433c50446754bb3a7f5",
+              "name": "all"
+            },
+            "category": {
+              "id": "cat-19cbfb8f1043cf91e1043236c09b95be",
+              "name": "DS | __Chiro__ Top Ten | CBO | USA | LAL | Videos Dr. Jason"
+            },
+            "adSource": {
+              "adSourceId": "6971096565261",
+              "adAccountId": "1379051522386222",
+              "platform": "FACEBOOK"
+            },
+            "sourceLinkAd": {
+              "name": "Dr. Jason (1x1) | C1",
+              "adSourceId": "6971096566461"
+            },
+            "clickDate": "2026-01-04T12:01:19Z",
+            "clickId": "PAZXh0bgNhZW0BMABhZGlkAAAGVxdExpVzcnRjBmFwcF9pZA8xMjQwMjQ1NzQyODc0MTQAAadeToUZlfqBVfzFDhPOYdVCM3XkPR5UGsAPHFcg_QNoQzUQfjKT5HuoxHVLpw_aem_nQY_6_KYCmcQo5k83SSY5Q"
+          },
+          "lastSource": {
+            "sourceLinkId": "b137f1541c6c6020eaddca4f0599efe05a429791abac53f071c5fa7e549f0065",
+            "name": "CE Custom Audiences",
+            "tag": "@ce-custom-audiences-6968121545661",
+            "disregarded": false,
+            "organic": false,
+            "trafficSource": {
+              "id": "cat-fc9217f87b2e3b122b1fe4bb8be84fa8",
+              "name": "facebook"
+            },
+            "goal": {
+              "id": "cat-fe9a17da30b2e433c50446754bb3a7f5",
+              "name": "all"
+            },
+            "category": {
+              "id": "cat-7fd6767b4d721598232e431d3b8a07ee",
+              "name": "DS | __Chiro__ VEMX | CBO | USA | CA | Dec 2025 Videos | C6"
+            },
+            "adSource": {
+              "adSourceId": "6968121545661",
+              "adAccountId": "1379051522386222",
+              "platform": "FACEBOOK"
+            },
+            "sourceLinkAd": {
+              "name": "video - Gumm's End of Year_1 | C6",
+              "adSourceId": "6968121545261"
+            },
+            "clickDate": "2026-01-17T07:08:15Z",
+            "clickId": "PAZXh0bgNhZW0BMABhZGlkAAAGVmWEBJ1zcnRjBmFwcF9pZA8xMjQwMjQ1NzQyODc0MTQAAacV4VJE1PSYxSINAKxvgBuVZx4zB-Fcwck3kTmdkOz9b53gaMbGbcHKGEvIGQ_aem_2Ir4vdHLzGX5YfgjHtYzbg"
+          },
+          "provider": {
+            "id": "cll-1e0ecda71d3a068edf4e8af2eef85c10f792483be2c4c553d7d9b1a39cb37391",
+            "integration": {
+              "name": "Hubspot integration",
+              "id": "exi-dcf55e364c3b5fae1d91c8e24d3f03257d3ab67528c046f3a217316db75a67f1",
+              "type": "HUBSPOT"
+            }
+          }
+        },
+        {
+          "id": "cll-ffbae6dea4795872920140e03c433f7ae120e35c116266d808fc40fe028664a6",
+          "tag": "$hubspot-onboarding-000",
+          "qualified": true,
+          "score": 1,
+          "creationDate": "Tue Apr 14 20:41:06 UTC 2026",
+          "externalId": "107997252972",
+          "name": "Onboarding",
+          "state": "QUALIFIED",
+          "lead": {
+            "email": "rmerrion@gmail.com",
+            "id": "05ad808f97447c59dca1c58064e9ac163e438407fcecb0a052936fcdbeb8bbf4",
+            "creationDate": "Wed Mar 25 17:30:05 UTC 2026",
+            "firstName": "richard",
+            "lastName": "merrion",
+            "phoneNumbers": [
+              "16304429697",
+              "16082732222"
+            ],
+            "tags": [
+              "!hubspot",
+              "$hubspot-15-min-call-000",
+              "$hubspot-strategy-call-000",
+              "$hubspot-closing-call-000",
+              "$hubspot-onboarding-000"
+            ]
+          },
+          "provider": {
+            "id": "cll-ffbae6dea4795872920140e03c433f7ae120e35c116266d808fc40fe028664a6",
+            "integration": {
+              "name": "Hubspot integration",
+              "id": "exi-dcf55e364c3b5fae1d91c8e24d3f03257d3ab67528c046f3a217316db75a67f1",
+              "type": "HUBSPOT"
+            }
+          }
+        },
+        {
+          "id": "cll-3a6e4c4952a0153d4c6e0d2fd6cf05fbc85fdd31985fdfa836274b5d32087b22",
+          "tag": "$hubspot-onboarding-000",
+          "qualified": true,
+          "score": 1,
+          "creationDate": "Tue Apr 14 20:04:05 UTC 2026",
+          "externalId": "107996209001",
+          "name": "Onboarding",
+          "state": "QUALIFIED",
+          "lead": {
+            "email": "dob@backstrongpearland.com",
+            "id": "6f645f685d198990cd434f114cacfc5807b950577587b6778055cab7f4beb01c",
+            "creationDate": "Tue Sep 16 05:45:45 UTC 2025",
+            "firstName": "darrin",
+            "lastName": "richardson",
+            "ips": [
+              "99.19.63.56"
+            ],
+            "phoneNumbers": [
+              "8326716995",
+              "18326716995",
+              "17133400304"
+            ],
+            "tags": [
+              "!chiro",
+              "@mb-dr-maas-video-1-can-we-help-you-scale-open-auto",
+              "!hubspot",
+              "$hubspot-15-min-call-000",
+              "$hubspot-strategy-call-000",
+              "$hubspot-onboarding-000"
+            ]
+          },
+          "firstSource": {
+            "sourceLinkId": "b9417e6803156fd00f82b746bc732ea062aa34e1ea88dc0c52bcb97c449dda91",
+            "name": "[MB] - Dr. Maas - VIDEO 1 - CAN WE HELP YOU SCALE - OPEN - AUTO",
+            "tag": "@mb-dr-maas-video-1-can-we-help-you-scale-open-auto",
+            "disregarded": false,
+            "organic": false,
+            "trafficSource": {
+              "id": "cat-fc9217f87b2e3b122b1fe4bb8be84fa8",
+              "name": "facebook"
+            },
+            "goal": {
+              "id": "cat-fe9a17da30b2e433c50446754bb3a7f5",
+              "name": "all"
+            },
+            "category": {
+              "id": "cat-cea0f7bd33dda658137c7490cdab4258",
+              "name": "MB__Chiro__Can We Help You Scale - PROS BPA - ABO"
+            },
+            "adSource": {
+              "adSourceId": "6920674270861",
+              "adAccountId": "1379051522386222",
+              "platform": "FACEBOOK"
+            },
+            "sourceLinkAd": {
+              "name": "BPA 601 - DR. MAAS - [CAN WE HELP YOU SCALE] - VIDEO",
+              "adSourceId": "6920674270661"
+            },
+            "clickDate": "2025-09-15T23:44:22Z",
+            "clickId": "IwZXh0bgNhZW0BMABhZGlkAAAGS1laBT0BHvYYhBjkjfejGK1FO2Z16dPqbWOmw0Fv4uVo2DNhL77x2NMPXzki685iKHHJ_aem_xXIaEq8ZcjShE4CaLK5Mpw"
+          },
+          "lastSource": {
+            "sourceLinkId": "b9417e6803156fd00f82b746bc732ea062aa34e1ea88dc0c52bcb97c449dda91",
+            "name": "[MB] - Dr. Maas - VIDEO 1 - CAN WE HELP YOU SCALE - OPEN - AUTO",
+            "tag": "@mb-dr-maas-video-1-can-we-help-you-scale-open-auto",
+            "disregarded": false,
+            "organic": false,
+            "trafficSource": {
+              "id": "cat-fc9217f87b2e3b122b1fe4bb8be84fa8",
+              "name": "facebook"
+            },
+            "goal": {
+              "id": "cat-fe9a17da30b2e433c50446754bb3a7f5",
+              "name": "all"
+            },
+            "category": {
+              "id": "cat-cea0f7bd33dda658137c7490cdab4258",
+              "name": "MB__Chiro__Can We Help You Scale - PROS BPA - ABO"
+            },
+            "adSource": {
+              "adSourceId": "6920674270861",
+              "adAccountId": "1379051522386222",
+              "platform": "FACEBOOK"
+            },
+            "sourceLinkAd": {
+              "name": "BPA 601 - DR. MAAS - [CAN WE HELP YOU SCALE] - VIDEO",
+              "adSourceId": "6920674270661"
+            },
+            "clickDate": "2025-09-15T23:44:22Z",
+            "clickId": "IwZXh0bgNhZW0BMABhZGlkAAAGS1laBT0BHvYYhBjkjfejGK1FO2Z16dPqbWOmw0Fv4uVo2DNhL77x2NMPXzki685iKHHJ_aem_xXIaEq8ZcjShE4CaLK5Mpw"
+          },
+          "provider": {
+            "id": "cll-3a6e4c4952a0153d4c6e0d2fd6cf05fbc85fdd31985fdfa836274b5d32087b22",
+            "integration": {
+              "name": "Hubspot integration",
+              "id": "exi-dcf55e364c3b5fae1d91c8e24d3f03257d3ab67528c046f3a217316db75a67f1",
+              "type": "HUBSPOT"
+            }
+          }
+        },
+        {
+          "id": "cll-16422c0359942dd1377d73eb5b0b71017c2523e9d3c5045b4c8267e836d80cc5",
+          "tag": "$hubspot-strategy-call-000",
+          "qualified": true,
+          "score": 1,
+          "creationDate": "Tue Apr 14 19:52:01 UTC 2026",
+          "externalId": "107995431595",
+          "name": "Strategy Call",
+          "state": "QUALIFIED",
+          "lead": {
+            "email": "vanveiga@netscape.net",
+            "id": "36ccfc8737163616d0ac80cc1e8ac7c3d5babebc28fd2f96a5b6bd1d930f13f1",
+            "creationDate": "Tue Oct 28 14:34:12 UTC 2025",
+            "firstName": "robert",
+            "lastName": "higginbottom",
+            "phoneNumbers": [
+              "17736001418"
+            ],
+            "tags": [
+              "!hubspot",
+              "$hubspot-15-min-call-000",
+              "$hubspot-strategy-call-000"
+            ]
+          },
+          "provider": {
+            "id": "cll-16422c0359942dd1377d73eb5b0b71017c2523e9d3c5045b4c8267e836d80cc5",
+            "integration": {
+              "name": "Hubspot integration",
+              "id": "exi-dcf55e364c3b5fae1d91c8e24d3f03257d3ab67528c046f3a217316db75a67f1",
+              "type": "HUBSPOT"
+            }
+          }
+        },
+        {
+          "id": "cll-bdd8b635879925ecb1e4b86c772457ad9efe85432b817ed9b2d7e46fec4a6fb0",
+          "tag": "$hubspot-strategy-call-000",
+          "qualified": true,
+          "score": 1,
+          "creationDate": "Tue Apr 14 17:49:04 UTC 2026",
+          "externalId": "107987621905",
+          "name": "Strategy Call",
+          "state": "QUALIFIED",
+          "lead": {
+            "email": "cvilfort12@netscape.net",
+            "id": "d1033fd057950f67c598c65df714e7d95fc9f9a7c99debc28853f43754e137bb",
+            "creationDate": "Sat Apr 11 18:52:22 UTC 2026",
+            "firstName": "carline",
+            "lastName": "vilfort",
+            "phoneNumbers": [
+              "18135238681"
+            ],
+            "tags": [
+              "!hubspot",
+              "$hubspot-15-min-call-000",
+              "$hubspot-strategy-call-000"
+            ]
+          },
+          "provider": {
+            "id": "cll-bdd8b635879925ecb1e4b86c772457ad9efe85432b817ed9b2d7e46fec4a6fb0",
+            "integration": {
+              "name": "Hubspot integration",
+              "id": "exi-dcf55e364c3b5fae1d91c8e24d3f03257d3ab67528c046f3a217316db75a67f1",
+              "type": "HUBSPOT"
+            }
+          }
+        }
+      ],
+      "nextPageId": "e70bc51a885b41c1b6272dfc928ae4417d3755e40f937530f51e64de7f39edf2",
+      "request_id": "041d979879db46ce9672def5e06d7d7f"
+    }
+  },
+  {
+    "path": "/attribution/sources",
+    "status": 404,
+    "preview": {
+      "keys": [
+        "raw_error"
+      ]
+    },
+    "raw": {
+      "raw_error": "non-json response"
+    }
+  },
+  {
+    "path": "/attribution",
+    "status": 400,
+    "preview": {
+      "keys": [
+        "result",
+        "message"
+      ]
+    },
+    "raw": {
+      "result": "ERROR",
+      "message": [
+        "Missing required parameter: Missing required parameters: startDate, endDate"
+      ]
+    }
+  }
+]

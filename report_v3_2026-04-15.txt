@@ -1,0 +1,60 @@
+*BPA CMO Agent — Weekly Report v3*
+_Window: 2026-04-08 → 2026-04-15 (7d)_
+_Sources: Facebook Ads + Hyros + HubSpot (FULL FUNNEL)_
+
+*🎯 Top Constraint*
+*[HIGH] Creative/Targeting*
+→ $2,191 on campaigns producing ZERO FB leads
+   Top offenders: DS | __Chiro__ Mixed Funnel Setup | CBO , DS | __Chiro__ Mixed Funnel Setup | CBO 
+   *Action:* Pause or creative-refresh these campaigns today.
+
+*📊 Top-Line (Spend → Revenue)*
+• FB Spend: $10,261
+• FB Impressions: 164,087 · Clicks: 4,163 (CTR 2.54%)
+• FB Leads: 48 (CPL $213.78)
+• Hyros Leads: 2000 · Calls: 21 (21 qualified)
+• HubSpot New Contacts: 284
+• Closed Won: 2 deals, *$80,000 revenue* (AOV $40,000)
+• *Blended ROAS: 7.80x*
+
+*🔻 HubSpot Lifecycle Funnel (new contacts this window)*
+• Lead: 236
+• MQL: 14
+• SQL: 5
+• Opportunity: 6
+• Customer: 22
+
+*📞 Deal Funnel (marketing pipelines, this window)*
+• New marketing leads → deals: 6
+  - Closed Won: 1
+
+*By Segment (FB spend → Hyros calls)*
+• Chiro: $5,962 / 12 leads (CPL $497), 11 calls, $542/call
+• TheraRay: $1,508 / 14 leads (CPL $108), 0 calls
+• EMX / Event: $1,420 / 5 leads (CPL $284), 0 calls
+• PT Recovery: $1,302 / 17 leads (CPL $77), 10 calls, $130/call
+• Retargeting: $69 / 0 leads (CPL n/a), 0 calls
+
+*By Talent*
+• Dr. Rob: $3,253 / 2 leads (CPL $1,626), 4 calls
+• Dr. Jo: $2,710 / 10 leads (CPL $271), 7 calls
+
+*💰 Revenue by Source (HubSpot closed won)*
+• DIRECT_TRAFFIC: 1 deal(s), $40,000
+• OFFLINE: 1 deal(s), $40,000
+
+*🔍 Attribution Reconciliation (3 sources)*
+• FB reports: 48 leads
+• Hyros sees: 2000 leads
+• HubSpot shows: 284 new contacts
+• HubSpot 'PAID_SOCIAL'-tagged: 3 (6% match rate)
+⚠ *Paid social attribution is broken in HubSpot* — audit UTMs + CAPI.
+
+*Other constraints surfaced*
+• [HIGH] Tracking / Attribution: Only 6% of FB leads are tagged PAID_SOCIAL in HubSpot
+• [MEDIUM] Lead Quality / SDR: Only 6% of new Leads became MQLs (14/236)
+
+*Known Blindspots*
+• Hyros → HubSpot: sale events still not written to Hyros. True ROAS comes from HubSpot.
+• utm_content lead-ID not yet implemented — can't trace individual FB ads to closed deals.
+• Ad-creative level: run ad_level_report.py for creative-level diagnosis.
