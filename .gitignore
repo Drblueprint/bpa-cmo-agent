@@ -1,22 +1,36 @@
 # Secrets
 .env
+.env.local
 tokens.txt
 
-# Generated reports
+# OAuth tokens (do not commit live tokens)
+gchat_token.json
+
+# Generated reports and data dumps
+report_v2_*.txt
 report_v3_*.txt
+ad_level_*.txt
+last_report.txt
+active_ads_*.json
+apr17_24_raw.json
+hyros_probe*.json
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
 *.egg-info/
 dist/
 build/
+.venv/
+venv/
 
 # Probe / scratch scripts
 _lookup_owners.py
+
+# Creative diagnostic image outputs
+creative_diagnostic_*/
 
 # OS
 .DS_Store
