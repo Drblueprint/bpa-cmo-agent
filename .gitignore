@@ -1,0 +1,23 @@
+# Secrets
+.env
+tokens.txt
+
+# Generated reports
+report_v3_*.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Probe / scratch scripts
+_lookup_owners.py
+
+# OS
+.DS_Store
+Thumbs.db
