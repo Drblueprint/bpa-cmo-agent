@@ -74,6 +74,11 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
     rows = []
     for r in results:
         p = r.get("properties", {})
+        # Skip test contacts (firstname or lastname == "TEST", case-insensitive)
+        _fn = (p.get("firstname") or "").strip().lower()
+        _ln = (p.get("lastname") or "").strip().lower()
+        if _fn == "test" or _ln == "test":
+            continue
         hs_id = r.get("id")
         rows.append({
             "hs_id": str(hs_id) if hs_id is not None else None,
