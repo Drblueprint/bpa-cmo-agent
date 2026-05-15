@@ -90,7 +90,7 @@ def load_deals_in_window(start: date, end: date) -> pd.DataFrame:
     """Return deals modified or created in the window.
 
     Columns: deal_id, dealname, amount, dealstage, pipeline, createdate,
-    closedate, hs_object_id, contact_ids (list).
+    closedate.
     """
     token = st.secrets["HUBSPOT_TOKEN"]
     start_ms = int(datetime.combine(start, datetime.min.time(),
