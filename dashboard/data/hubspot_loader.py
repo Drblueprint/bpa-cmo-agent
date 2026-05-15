@@ -74,8 +74,9 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
     rows = []
     for r in results:
         p = r.get("properties", {})
+        hs_id = r.get("id")
         rows.append({
-            "hs_id": r.get("id"),
+            "hs_id": str(hs_id) if hs_id is not None else None,
             "name": f"{p.get('firstname','')} {p.get('lastname','')}".strip(),
             "email": p.get("email"),
             "created": p.get("createdate"),
@@ -123,8 +124,9 @@ def load_deals_in_window(start: date, end: date) -> pd.DataFrame:
     rows = []
     for r in results:
         p = r.get("properties", {})
+        deal_id = r.get("id")
         rows.append({
-            "deal_id": r.get("id"),
+            "deal_id": str(deal_id) if deal_id is not None else None,
             "dealname": p.get("dealname"),
             "amount": float(p.get("amount") or 0),
             "dealstage": p.get("dealstage"),
@@ -162,5 +164,9 @@ def load_contact_deals(contact_ids: list[str]) -> pd.DataFrame:
         for item in r.json().get("results", []):
             cid = item.get("from", {}).get("id")
             for t in item.get("to", []):
-                rows.append({"contact_id": cid, "deal_id": t.get("toObjectId")})
+                deal_id = t.get("toObjectId")
+                rows.append({
+                    "contact_id": str(cid) if cid is not None else None,
+                    "deal_id": str(deal_id) if deal_id is not None else None,
+                })
     return pd.DataFrame(rows, columns=["contact_id", "deal_id"])
