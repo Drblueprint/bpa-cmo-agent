@@ -35,3 +35,8 @@ creative_diagnostic_*/
 # OS
 .DS_Store
 Thumbs.db
+
+# Dashboard secrets and cache
+.streamlit/secrets.toml
+dashboard/__pycache__/
+dashboard/**/__pycache__/
