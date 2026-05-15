@@ -53,10 +53,13 @@ def render_marketing(start: date, end: date) -> None:
     try:
         contact_deals = load_contact_deals(contacts["hs_id"].tolist()) \
             if not contacts.empty else pd.DataFrame(columns=["contact_id", "deal_id"])
+    except Exception as e:
+        st.warning(f"HubSpot contact-deal associations unavailable: {e}")
+        contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
+    try:
         deals = load_deals_in_window(start, end)
     except Exception as e:
         st.warning(f"HubSpot deals unavailable: {e}")
-        contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
         deals = pd.DataFrame()
 
     metrics = group_marketing_metrics(
@@ -70,7 +73,6 @@ def render_marketing(start: date, end: date) -> None:
     total_leads = metrics["leads"].sum()
     total_booked = metrics["calls_booked"].sum()
     cpl = (total_spend / total_leads) if total_leads else None
-    cpqc = (total_spend / total_booked) if total_booked else None
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Ad Spend", _fmt_money(total_spend))
@@ -129,9 +131,10 @@ def render_marketing(start: date, end: date) -> None:
     # --- Section C: trend chart ---
     st.subheader("Leads & Spend Over Time")
     if not contacts.empty and not fb.empty:
-        contacts["created_date"] = pd.to_datetime(contacts["created"]).dt.date
-        contacts["group"] = contacts["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
-        daily_leads = contacts.groupby(["created_date", "group"]).size().reset_index(name="leads")
+        trend = contacts.copy()
+        trend["created_date"] = pd.to_datetime(trend["created"]).dt.date
+        trend["group"] = trend["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
+        daily_leads = trend.groupby(["created_date", "group"]).size().reset_index(name="leads")
         fig = px.bar(daily_leads, x="created_date", y="leads", color="group",
                      title="Marketing leads per day by group")
         st.plotly_chart(fig, use_container_width=True)
