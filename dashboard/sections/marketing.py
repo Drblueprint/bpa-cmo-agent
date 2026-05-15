@@ -66,34 +66,44 @@ def render_marketing(start: date, end: date) -> None:
         fb, contacts, contact_deals, deals,
         asset_to_group=cfg.ASSET_TO_GROUP,
         stages_15min_booked=cfg.STAGES_15MIN_BOOKED | cfg.STAGES_15MIN_HELD,
+        hyros=hyros,
     )
 
     # --- Top-row KPIs ---
     total_spend = metrics["spend"].sum()
     total_leads = metrics["leads"].sum()
+    total_mql = metrics["mql"].sum()
     total_booked = metrics["calls_booked"].sum()
     cpl = (total_spend / total_leads) if total_leads else None
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total Ad Spend", _fmt_money(total_spend))
-    c2.metric("Marketing Leads", _fmt_int(total_leads))
-    c3.metric("CPL", _fmt_money(cpl))
-    c4.metric("15-min Calls Booked", _fmt_int(total_booked))
+    c2.metric("Leads", _fmt_int(total_leads),
+              help="Hyros-tracked leads attributed to your ad campaigns")
+    c3.metric("CPL", _fmt_money(cpl),
+              help="Spend / Leads (Hyros)")
+    c4.metric("MQL (Typeform)", _fmt_int(total_mql),
+              help="HubSpot contacts who completed the typeform (deeper funnel stage)")
+    c5.metric("15-min Calls Booked", _fmt_int(total_booked),
+              help="MQL contacts with a 15 Min Call Date set OR lifecycle = MQL")
 
     st.divider()
 
     # --- Section A: campaign group table ---
     st.subheader("By Campaign Group")
-    display = metrics.copy()
+    display = metrics[["group", "spend", "leads", "mql", "cpl",
+                        "calls_booked", "cost_per_qualified_call"]].copy()
     display["spend"] = display["spend"].map(_fmt_money)
     display["cpl"] = display["cpl"].map(_fmt_money)
     display["cost_per_qualified_call"] = display["cost_per_qualified_call"].map(_fmt_money)
     display["leads"] = display["leads"].map(_fmt_int)
+    display["mql"] = display["mql"].map(_fmt_int)
     display["calls_booked"] = display["calls_booked"].map(_fmt_int)
     display = display.rename(columns={
         "group": "Group",
         "spend": "Spend",
-        "leads": "Leads",
+        "leads": "Leads (Hyros)",
+        "mql": "MQL (Typeform)",
         "cpl": "CPL",
         "calls_booked": "15-min Calls",
         "cost_per_qualified_call": "Cost / Qualified Call",
@@ -123,8 +133,11 @@ def render_marketing(start: date, end: date) -> None:
             "hubspot_leads": "HubSpot (truth)", "match_rate": "Hyros↔HubSpot",
         })
         st.dataframe(recon_display, use_container_width=True, hide_index=True)
-    st.caption("HubSpot is the headline number above. FB and Hyros shown here "
-               "for cross-check only.")
+    st.caption(
+        "Hyros is the headline lead count above (full ad-attributed top-of-funnel). "
+        "FB is the pixel-reported figure (known under-reporting post iOS 14). "
+        "HubSpot (truth) is contacts who completed the typeform — a deeper funnel stage."
+    )
 
     st.divider()
 

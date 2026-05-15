@@ -1,5 +1,5 @@
-"""Cross-source aggregation. HubSpot is the source of truth for leads and
-calls; FB is the source of truth for spend; Hyros is the cross-check."""
+"""Cross-source aggregation. Hyros is the headline source for leads;
+FB is the source of truth for spend; HubSpot tracks MQL (typeform completions)."""
 from __future__ import annotations
 
 from typing import Iterable
@@ -21,30 +21,38 @@ def group_marketing_metrics(
     *,
     asset_to_group: dict[str, str],
     stages_15min_booked: Iterable[str],
+    hyros: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return per-group marketing metrics.
 
-    Columns: group, spend, leads, calls_booked, cpl, cost_per_qualified_call.
+    Columns: group, spend, leads, mql, calls_booked, cpl, cost_per_qualified_call.
 
     - spend: sum of FB spend rows whose group matches
-    - leads: count of contacts whose typeform_asset_download maps to the group
+    - leads: Hyros-attributed lead count (top-of-funnel, ad-attributed)
+    - mql: count of HubSpot contacts who completed the typeform (deeper funnel stage)
     - calls_booked: count of contacts with fifteen_min_call_date populated OR
       lifecycle_stage == "marketingqualifiedlead" (contact-property source of truth)
-    - cpl: spend / leads
+    - cpl: spend / leads (Hyros)
     - cost_per_qualified_call: spend / calls_booked
 
     Note: `contact_deals` and `stages_15min_booked` are kept in the signature
-    for API compatibility but no longer drive the calls_booked count.
+    for API compatibility but no longer drive any counts.
     """
     fb_by_group = fb.groupby("group", dropna=True)["spend"].sum().to_dict()
 
     contacts = contacts.copy()
     contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
 
-    # "Calls booked" is now derived from the contact-level 15-min call date property.
-    # A contact is counted as having booked a 15-min call if either:
-    #   - fifteen_min_call_date is populated (preferred signal), OR
-    #   - lifecycle_stage has reached MQL (corroborating signal)
+    # Hyros leads -> grouped via regex on first_source (campaign-name match)
+    from dashboard.data.groups import match_group
+    if hyros is None or hyros.empty:
+        hyros_by_group: dict[str, int] = {}
+    else:
+        h = hyros.copy()
+        h["group"] = h["first_source"].map(match_group)
+        hyros_by_group = h.groupby("group", dropna=True).size().to_dict()
+
+    # Calls booked uses contact-level n15_min_call_date OR lifecycle=MQL
     # The legacy deal-stage parameters `contact_deals` and `stages_15min_booked` are
     # kept in the signature for API compatibility but no longer drive the count.
     has_call_date = contacts.get("fifteen_min_call_date").notna() \
@@ -55,10 +63,13 @@ def group_marketing_metrics(
     booked_mask = has_call_date | is_mql
     booked_contact_ids = set(contacts.loc[booked_mask, "hs_id"])
 
-    groups = sorted({*fb_by_group.keys(), *contacts["group"].dropna().unique()})
+    groups = sorted({*fb_by_group.keys(),
+                     *contacts["group"].dropna().unique(),
+                     *hyros_by_group.keys()})
     rows = []
     for g in groups:
-        leads = int((contacts["group"] == g).sum())
+        leads = int(hyros_by_group.get(g, 0))          # <- NOW Hyros-driven
+        mql = int((contacts["group"] == g).sum())      # <- HubSpot typeform completions
         booked = int(((contacts["group"] == g) &
                       contacts["hs_id"].isin(booked_contact_ids)).sum())
         spend = float(fb_by_group.get(g, 0.0))
@@ -66,6 +77,7 @@ def group_marketing_metrics(
             "group": g,
             "spend": spend,
             "leads": leads,
+            "mql": mql,
             "calls_booked": booked,
             "cpl": _safe_div(spend, leads),
             "cost_per_qualified_call": _safe_div(spend, booked),

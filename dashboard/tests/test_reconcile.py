@@ -30,15 +30,22 @@ def test_group_marketing_metrics_basic():
         "Chiro Audit PDF": "Chiro",
         "PT Recovery Guide": "PT Recovery",
     }
+    hyros = pd.DataFrame([
+        {"lead_id": "h1", "first_source": "FB - __Chiro__ campaign"},
+        {"lead_id": "h2", "first_source": "FB - __Chiro__ campaign"},
+        {"lead_id": "h3", "first_source": "FB - __PT__ campaign"},
+    ])
     result = group_marketing_metrics(
         fb, contacts, contact_deals, deals,
         asset_to_group=asset_to_group,
         stages_15min_booked=set(),  # unused - calls_booked driven by contact properties
+        hyros=hyros,
     )
 
     chiro = result[result["group"] == "Chiro"].iloc[0]
     assert chiro["spend"] == 1000.0
-    assert chiro["leads"] == 2
+    assert chiro["leads"] == 2   # Hyros count
+    assert chiro["mql"] == 2     # HubSpot typeform completions
     assert chiro["calls_booked"] == 1
     assert chiro["cpl"] == 500.0
     assert chiro["cost_per_qualified_call"] == 1000.0
@@ -179,12 +186,14 @@ def test_group_marketing_metrics_empty_contact_deals():
         fb, contacts, contact_deals, deals,
         asset_to_group={"Chiro Audit PDF": "Chiro"},
         stages_15min_booked={"15min_booked"},
+        hyros=pd.DataFrame(),
     )
 
     chiro = result[result["group"] == "Chiro"].iloc[0]
-    assert chiro["leads"] == 1
+    assert chiro["leads"] == 0    # no Hyros data
+    assert chiro["mql"] == 1      # 1 HubSpot contact
     assert chiro["calls_booked"] == 0
-    assert chiro["cpl"] == 1000.0
+    assert chiro["cpl"] is None   # divide by 0 Hyros leads
     assert chiro["cost_per_qualified_call"] is None
 
 
@@ -247,7 +256,9 @@ def test_group_marketing_metrics_uses_contact_properties_for_calls_booked():
         fb, contacts, contact_deals, deals,
         asset_to_group={"Chiro PDF": "Chiro"},
         stages_15min_booked=set(),  # ignored
+        hyros=pd.DataFrame(),
     )
     chiro = result[result["group"] == "Chiro"].iloc[0]
-    assert chiro["leads"] == 3
+    assert chiro["leads"] == 0    # no Hyros data
+    assert chiro["mql"] == 3      # 3 HubSpot typeform contacts
     assert chiro["calls_booked"] == 2  # contact 1 (date) + contact 2 (MQL)
