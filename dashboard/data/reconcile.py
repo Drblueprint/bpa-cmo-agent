@@ -192,4 +192,7 @@ def owner_rollup(
             "closed_won": int(sub["dealstage"].isin(scw).sum()),
             "closed_won_revenue": float(sub.loc[sub["dealstage"].isin(scw), "amount"].sum()),
         })
-    return pd.DataFrame(rows).sort_values("closed_won_revenue", ascending=False)
+    columns = ["owner", "calls_15min", "strategy_calls",
+               "closed_won", "closed_won_revenue"]
+    return pd.DataFrame(rows, columns=columns).sort_values(
+        "closed_won_revenue", ascending=False)

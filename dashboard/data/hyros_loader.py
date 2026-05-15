@@ -35,15 +35,22 @@ def load_hyros_leads(start: date, end: date) -> pd.DataFrame:
     rows_in = data.get("result") or data.get("data") or []
     if not isinstance(rows_in, list):
         rows_in = []
+    def _source_label(src) -> str:
+        """Pick the campaign-level name when available; fall back to ad set name."""
+        if not isinstance(src, dict):
+            return src or "unattributed"
+        category = src.get("category")
+        if isinstance(category, dict) and category.get("name"):
+            return category["name"]
+        return src.get("name") or "unattributed"
+
     rows = []
     for x in rows_in:
-        fs = x.get("firstSource")
-        ls = x.get("lastSource")
         rows.append({
             "lead_id": x.get("id"),
             "email": x.get("email"),
-            "first_source": (fs.get("name") if isinstance(fs, dict) else fs) or "unattributed",
-            "last_source": (ls.get("name") if isinstance(ls, dict) else ls) or "unattributed",
+            "first_source": _source_label(x.get("firstSource")),
+            "last_source": _source_label(x.get("lastSource")),
             "created": x.get("createdDate") or x.get("created"),
         })
     return pd.DataFrame(rows, columns=[

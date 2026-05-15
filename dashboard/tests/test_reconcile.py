@@ -207,3 +207,21 @@ def test_reconciliation_panel_empty_hyros():
     chiro = result[result["group"] == "Chiro"].iloc[0]
     assert chiro["hyros_leads"] == 0
     assert chiro["hubspot_leads"] == 1
+
+
+def test_owner_rollup_empty_contact_deals():
+    """No matching deals → empty result with columns intact, no sort crash."""
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "sdr_owner": "Gage", "bds": "Scott Warren"},
+    ])
+    contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
+    deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount"])
+    stages = {
+        "15min_booked":    {"15min_booked"},
+        "strategy_booked": {"strategy_booked"},
+        "closedwon":       {"closedwon"},
+    }
+    result = owner_rollup(contacts, contact_deals, deals,
+                          owner_field="sdr_owner", stage_groups=stages)
+    # Must have the column even if zero rows
+    assert "closed_won_revenue" in result.columns
