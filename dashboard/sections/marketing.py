@@ -135,15 +135,34 @@ def render_marketing(start: date, end: date) -> None:
         detail = contacts.copy()
         detail["group"] = detail["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
         detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
+
+        # Convert UTC ISO timestamps to America/Chicago, MM/DD/YYYY hh:mm AM/PM.
+        # Use errors="coerce" so unparseable values become NaT instead of raising.
+        submitted_utc = pd.to_datetime(
+            detail["typeform_submission_date"], utc=True, errors="coerce"
+        )
+        submitted_cst = submitted_utc.dt.tz_convert("America/Chicago")
+        detail["typeform_submission_date"] = submitted_cst.apply(
+            lambda x: x.strftime("%m/%d/%Y %I:%M %p") if pd.notna(x) else ""
+        )
+
+        # 15-min call indicator: "Scheduled" if call date is set OR lifecycle = MQL.
+        has_call_date = detail["fifteen_min_call_date"].fillna("").astype(str).str.strip() != ""
+        is_mql = detail["lifecycle_stage"].fillna("").astype(str).str.lower() == "marketingqualifiedlead"
+        detail["fifteen_min_status"] = (has_call_date | is_mql).map(
+            lambda x: "Scheduled" if x else ""
+        )
+
         detail = detail[[
             "name", "email", "group", "typeform_asset_download",
-            "typeform_submission_date", "sdr_owner",
+            "typeform_submission_date", "sdr_owner", "fifteen_min_status",
         ]].rename(columns={
             "name": "Name",
             "email": "Email",
             "group": "Group",
             "typeform_asset_download": "Asset",
-            "typeform_submission_date": "Submitted",
+            "typeform_submission_date": "Submitted (CT)",
             "sdr_owner": "SDR Owner",
+            "fifteen_min_status": "15-min Call",
         })
         st.dataframe(detail, use_container_width=True, hide_index=True)
