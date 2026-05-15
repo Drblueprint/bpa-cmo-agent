@@ -107,6 +107,7 @@ HS_OWNER_NAMES: dict[str, str] = {
     "77643349": "Dr. Eric Smith",
     "24801837": "Dr. William Lewis",
     "61097347": "Haley",
+    "568393136": "Haley",
     "1266266951": "Self Booking",   # Kurt Kleinpeter — leads who self-booked
 }
 
