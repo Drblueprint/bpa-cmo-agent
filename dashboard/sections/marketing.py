@@ -63,6 +63,8 @@ def render_marketing(start: date, end: date) -> None:
         asset_to_group=cfg.ASSET_TO_GROUP,
         stages_15min_booked=cfg.STAGES_15MIN_BOOKED | cfg.STAGES_15MIN_HELD,
         hyros=hyros,
+        stages_strategy=cfg.STAGES_STRATEGY_BOOKED | cfg.STAGES_STRATEGY_HELD,
+        stages_closed_won=cfg.STAGES_CLOSED_WON,
     )
 
     # --- Top-row KPIs ---
@@ -99,14 +101,24 @@ def render_marketing(start: date, end: date) -> None:
             return f"{int(v):,}"
         return "—"
 
+    def _fmt_won(row) -> str:
+        n = row["closed_won"]
+        rev = row["closed_won_revenue"]
+        if n is None or pd.isna(n) or int(n) == 0:
+            return "—"
+        return f"{int(n):,} · ${float(rev):,.0f}"
+
     display["marketing_leads"] = display.apply(_fmt_marketing_leads, axis=1)
+    display["closed_won_display"] = display.apply(_fmt_won, axis=1)
     display["spend"] = display["spend"].map(_fmt_money)
     display["cpl"] = display["cpl"].map(_fmt_money)
     display["cost_per_qualified_call"] = display["cost_per_qualified_call"].map(_fmt_money)
     display["calls_booked"] = display["calls_booked"].map(_fmt_int)
+    display["strategy_calls"] = display["strategy_calls"].map(_fmt_int)
 
     display = display[["group", "spend", "marketing_leads", "cpl",
-                       "calls_booked", "cost_per_qualified_call"]]
+                       "calls_booked", "strategy_calls", "closed_won_display",
+                       "cost_per_qualified_call"]]
 
     display = display.rename(columns={
         "group": "Group",
@@ -114,6 +126,8 @@ def render_marketing(start: date, end: date) -> None:
         "marketing_leads": "Marketing Leads",
         "cpl": "CPL",
         "calls_booked": "15-min Calls",
+        "strategy_calls": "Strategy Calls",
+        "closed_won_display": "Closed Won",
         "cost_per_qualified_call": "Cost / Qualified Call",
     })
     st.dataframe(display, use_container_width=True, hide_index=True)
@@ -146,16 +160,23 @@ def render_marketing(start: date, end: date) -> None:
             lambda x: x.strftime("%m/%d/%Y %I:%M %p") if pd.notna(x) else ""
         )
 
-        # 15-min call indicator: "Scheduled" if call date is set OR lifecycle = MQL.
-        has_call_date = detail["fifteen_min_call_date"].fillna("").astype(str).str.strip() != ""
-        is_mql = detail["lifecycle_stage"].fillna("").astype(str).str.lower() == "marketingqualifiedlead"
-        detail["fifteen_min_status"] = (has_call_date | is_mql).map(
-            lambda x: "Scheduled" if x else ""
+        from dashboard.data.reconcile import per_contact_journey
+        journey = per_contact_journey(
+            contacts, contact_deals, deals,
+            stages_15min_booked=cfg.STAGES_15MIN_BOOKED,
+            stages_15min_held=cfg.STAGES_15MIN_HELD,
+            stages_strategy_booked=cfg.STAGES_STRATEGY_BOOKED,
+            stages_strategy_held=cfg.STAGES_STRATEGY_HELD,
+            stages_closed_won=cfg.STAGES_CLOSED_WON,
         )
+        detail = detail.merge(journey, on="hs_id", how="left")
+        detail[["fifteen_min_status", "strategy_status", "closed_won"]] = \
+            detail[["fifteen_min_status", "strategy_status", "closed_won"]].fillna("")
 
         detail = detail[[
             "name", "email", "group", "typeform_asset_download",
-            "typeform_submission_date", "sdr_owner", "fifteen_min_status",
+            "typeform_submission_date", "sdr_owner",
+            "fifteen_min_status", "strategy_status", "closed_won",
         ]].rename(columns={
             "name": "Name",
             "email": "Email",
@@ -164,5 +185,7 @@ def render_marketing(start: date, end: date) -> None:
             "typeform_submission_date": "Submitted (CT)",
             "sdr_owner": "SDR Owner",
             "fifteen_min_status": "15-min Call",
+            "strategy_status": "Strategy Call",
+            "closed_won": "Closed Won",
         })
         st.dataframe(detail, use_container_width=True, hide_index=True)

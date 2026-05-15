@@ -22,11 +22,14 @@ def group_marketing_metrics(
     asset_to_group: dict[str, str],
     stages_15min_booked: Iterable[str],
     hyros: pd.DataFrame | None = None,
+    stages_strategy: Iterable[str] = (),
+    stages_closed_won: Iterable[str] = (),
 ) -> pd.DataFrame:
     """Return per-group marketing metrics.
 
     Columns: group, spend, marketing_leads, marketing_leads_source, hyros_leads,
-             calls_booked, cpl, cost_per_qualified_call.
+             calls_booked, strategy_calls, closed_won, closed_won_revenue,
+             cpl, cost_per_qualified_call.
 
     - spend: sum of FB spend rows whose group matches
     - marketing_leads: typeform submissions (source of truth); falls back to FB lead
@@ -68,6 +71,34 @@ def group_marketing_metrics(
     booked_mask = has_call_date | is_mql
     booked_contact_ids = set(contacts.loc[booked_mask, "hs_id"])
 
+    # Per-contact deal-stage progression
+    strategy_set = set(stages_strategy)
+    won_set = set(stages_closed_won)
+    if not deals.empty and not contact_deals.empty:
+        strategy_deal_ids = set(
+            deals.loc[deals["dealstage"].isin(strategy_set), "deal_id"]
+        )
+        won_deal_ids = set(
+            deals.loc[deals["dealstage"].isin(won_set), "deal_id"]
+        )
+        strategy_contact_ids = set(
+            contact_deals.loc[contact_deals["deal_id"].isin(strategy_deal_ids), "contact_id"]
+        )
+        won_contact_ids = set(
+            contact_deals.loc[contact_deals["deal_id"].isin(won_deal_ids), "contact_id"]
+        )
+        # Revenue per contact (sum of amounts from won deals associated to them)
+        won_deal_rows = deals[deals["deal_id"].isin(won_deal_ids)][["deal_id", "amount"]]
+        won_associations = contact_deals[contact_deals["deal_id"].isin(won_deal_ids)]
+        revenue_by_contact = (
+            won_associations.merge(won_deal_rows, on="deal_id", how="left")
+            .groupby("contact_id")["amount"].sum().to_dict()
+        )
+    else:
+        strategy_contact_ids = set()
+        won_contact_ids = set()
+        revenue_by_contact = {}
+
     groups = sorted({*fb_by_group.keys(),
                      *contacts["group"].dropna().unique(),
                      *hyros_by_group.keys()})
@@ -84,6 +115,13 @@ def group_marketing_metrics(
         booked = int(((contacts["group"] == g) &
                       contacts["hs_id"].isin(booked_contact_ids)).sum())
         spend = float(fb_by_group.get(g, 0.0))
+        group_mask = (contacts["group"] == g)
+        strategy = int((group_mask & contacts["hs_id"].isin(strategy_contact_ids)).sum())
+        won = int((group_mask & contacts["hs_id"].isin(won_contact_ids)).sum())
+        won_revenue = float(
+            sum(revenue_by_contact.get(cid, 0.0)
+                for cid in contacts.loc[group_mask & contacts["hs_id"].isin(won_contact_ids), "hs_id"])
+        )
         rows.append({
             "group": g,
             "spend": spend,
@@ -91,6 +129,9 @@ def group_marketing_metrics(
             "marketing_leads_source": marketing_leads_source,
             "hyros_leads": hyros_count,
             "calls_booked": booked,
+            "strategy_calls": strategy,
+            "closed_won": won,
+            "closed_won_revenue": won_revenue,
             "cpl": _safe_div(spend, marketing_leads),
             "cost_per_qualified_call": _safe_div(spend, booked),
         })
@@ -232,3 +273,75 @@ def owner_rollup(
                "closed_won", "closed_won_revenue"]
     return pd.DataFrame(rows, columns=columns).sort_values(
         "closed_won_revenue", ascending=False)
+
+
+def per_contact_journey(
+    contacts: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    *,
+    stages_15min_booked: Iterable[str],
+    stages_15min_held: Iterable[str],
+    stages_strategy_booked: Iterable[str],
+    stages_strategy_held: Iterable[str],
+    stages_closed_won: Iterable[str],
+) -> pd.DataFrame:
+    """Return per-contact stage indicators.
+
+    Columns: hs_id, fifteen_min_status, strategy_status, closed_won.
+    - fifteen_min_status: "Completed" if any deal in 15min_held; else "Scheduled" if
+      n15_min_call_date set OR lifecycle=MQL OR any deal in 15min_booked; else "".
+    - strategy_status: "Completed" if any deal in strategy_held; else "Scheduled" if
+      any deal in strategy_booked; else "".
+    - closed_won: "Yes" if any deal in closed_won; else "".
+    """
+    if contacts.empty:
+        return pd.DataFrame(columns=["hs_id", "fifteen_min_status",
+                                     "strategy_status", "closed_won"])
+
+    def _stage_contact_ids(stages: Iterable[str]) -> set[str]:
+        s = set(stages)
+        if deals.empty or contact_deals.empty or not s:
+            return set()
+        deal_ids = set(deals.loc[deals["dealstage"].isin(s), "deal_id"])
+        if not deal_ids:
+            return set()
+        return set(contact_deals.loc[contact_deals["deal_id"].isin(deal_ids), "contact_id"])
+
+    ids_15min_scheduled = _stage_contact_ids(stages_15min_booked)
+    ids_15min_completed = _stage_contact_ids(stages_15min_held)
+    ids_strategy_scheduled = _stage_contact_ids(stages_strategy_booked)
+    ids_strategy_completed = _stage_contact_ids(stages_strategy_held)
+    ids_won = _stage_contact_ids(stages_closed_won)
+
+    # Contact-property signals for 15-min
+    has_call_date = contacts.get("fifteen_min_call_date", pd.Series(dtype=str)) \
+        .fillna("").astype(str).str.strip() != ""
+    is_mql = contacts.get("lifecycle_stage", pd.Series(dtype=str)) \
+        .fillna("").astype(str).str.lower().eq("marketingqualifiedlead")
+
+    rows = []
+    for i, hs_id in enumerate(contacts["hs_id"]):
+        prop_scheduled = bool(has_call_date.iloc[i] or is_mql.iloc[i])
+        if hs_id in ids_15min_completed:
+            fifteen = "Completed"
+        elif prop_scheduled or hs_id in ids_15min_scheduled:
+            fifteen = "Scheduled"
+        else:
+            fifteen = ""
+
+        if hs_id in ids_strategy_completed:
+            strategy = "Completed"
+        elif hs_id in ids_strategy_scheduled:
+            strategy = "Scheduled"
+        else:
+            strategy = ""
+
+        won = "Yes" if hs_id in ids_won else ""
+        rows.append({
+            "hs_id": hs_id,
+            "fifteen_min_status": fifteen,
+            "strategy_status": strategy,
+            "closed_won": won,
+        })
+    return pd.DataFrame(rows)
