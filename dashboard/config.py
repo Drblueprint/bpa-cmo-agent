@@ -78,7 +78,17 @@ CAMPAIGN_GROUPS: list[tuple[str, re.Pattern[str]]] = [
 EMX_PARENT = "Chiro"
 
 # --- Typeform asset download -> campaign group mapping ---
-# Populate from observed typeform_asset_download values in HubSpot.
-# Expand as new assets ship. Run dashboard/probes/asset_probe.py (created in Task 10)
-# to discover live values.
-ASSET_TO_GROUP: dict[str, str] = {}
+# Populated from live probe run on 2026-05-15 (dashboard/probes/asset_probe.py).
+# Expand as new assets ship. Re-run the probe to discover new values.
+# Strings are EXACT matches (case-sensitive, including trailing whitespace).
+# Unmapped assets surface as warnings in the dashboard.
+ASSET_TO_GROUP: dict[str, str] = {
+    "Recovery Program (PT) typeform": "PT Recovery",
+    "EMX Fort Worth 2026":            "EMX",
+    "Chiro Never Reach $1M ":         "Chiro",   # trailing space is in HubSpot value
+    # UNMAPPED (ambiguous, no clear group signal):
+    #   "Top 10 typeform"              — 95 contacts; unclear which campaign group
+    #   "BPA Revenue Pyramid typeform" — 20 contacts; general BPA, not group-specific
+    #   "Can we help you scale typeform" — 8 contacts; generic
+    #   "Referral "                    — 1 contact; referral channel, not a campaign asset
+}
