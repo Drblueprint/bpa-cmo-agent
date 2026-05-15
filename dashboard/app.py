@@ -6,6 +6,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 from dashboard.auth import require_password
+from dashboard.sections.marketing import render_marketing
 
 
 st.set_page_config(
@@ -46,7 +47,7 @@ st.caption(f"Window: {start_date} → {end_date}")
 tab_marketing, tab_sales = st.tabs(["MARKETING", "SALES"])
 
 with tab_marketing:
-    st.info("Marketing tab — wired in Phase 3.")
+    render_marketing(start_date, end_date)
 
 with tab_sales:
     st.info("Sales tab — wired in Phase 5.")
