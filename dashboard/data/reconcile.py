@@ -71,7 +71,14 @@ def reconciliation_panel(
     """Return per-group lead counts from each source for cross-check.
 
     Columns: group, fb_leads, hyros_leads, hubspot_leads, match_rate.
-    match_rate is hyros_leads / hubspot_leads (capped at 1.0), shown as diagnostic.
+
+    match_rate = min(hyros_leads, hubspot_leads) / hubspot_leads. This is "how
+    much of HubSpot's lead count Hyros covers" — values approach 1.0 when Hyros
+    and HubSpot agree; lower values mean Hyros is missing leads HubSpot has.
+    Returns None when HubSpot has zero leads.
+
+    Note: callers must pass an `fb` DataFrame that includes both `spend` (used
+    by group_marketing_metrics) and `fb_leads` (used here) columns.
     """
     fb_by_group = fb.groupby("group", dropna=True)["fb_leads"].sum().to_dict()
 
