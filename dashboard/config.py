@@ -95,3 +95,33 @@ ASSET_TO_GROUP: dict[str, str] = {
     "Can we help you scale typeform": "Chiro",
     "Referral ":                      "Chiro",   # trailing space per Dr. Gumm
 }
+
+# --- HubSpot owner ID -> human name mapping ---
+# Values come from the BPA team's HubSpot user IDs. Extend as the team grows.
+# Unknown IDs are surfaced verbatim with a "(unknown)" suffix so they can be
+# added later.
+HS_OWNER_NAMES: dict[str, str] = {
+    "89638769": "Peyton",
+    "79870794": "Garrett",
+    "44815718": "Scott Warren",
+    "77643349": "Dr. Eric Smith",
+    "24801837": "Dr. William Lewis",
+    "61097347": "Haley",
+}
+
+
+def resolve_owner(value) -> str:
+    """Map a HubSpot owner field value (numeric ID, string, or None) to a name.
+
+    - If value is None/empty: "(unassigned)"
+    - If value is in HS_OWNER_NAMES: returns the mapped name.
+    - Otherwise: returns the raw value with "(unknown)" suffix.
+    """
+    if value is None:
+        return "(unassigned)"
+    s = str(value).strip()
+    if not s:
+        return "(unassigned)"
+    if s in HS_OWNER_NAMES:
+        return HS_OWNER_NAMES[s]
+    return f"{s} (unknown)"

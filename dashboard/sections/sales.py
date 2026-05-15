@@ -117,12 +117,14 @@ def render_sales(start: date, end: date) -> None:
         st.subheader("By SDR Owner")
         sdr = owner_rollup(contacts_view, contact_deals, deals,
                            owner_field="sdr_owner", stage_groups=stages)
+        sdr["owner"] = sdr["owner"].map(cfg.resolve_owner)
         st.dataframe(sdr, use_container_width=True, hide_index=True)
 
     with col_bds:
         st.subheader("By BDS")
         bds = owner_rollup(contacts_view, contact_deals, deals,
                            owner_field="bds", stage_groups=stages)
+        bds["owner"] = bds["owner"].map(cfg.resolve_owner)
         st.dataframe(bds, use_container_width=True, hide_index=True)
 
     st.divider()
@@ -149,6 +151,8 @@ def render_sales(start: date, end: date) -> None:
         latest_deal[["hs_id", "dealstage", "amount"]],
         on="hs_id", how="left",
     )
+    detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
+    detail["bds"] = detail["bds"].map(cfg.resolve_owner)
     detail = detail[[
         "name", "email", "typeform_asset_download", "typeform_submission_date",
         "fifteen_min_call_date", "lifecycle_stage",
