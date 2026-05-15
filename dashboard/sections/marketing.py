@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 from dashboard import config as cfg
@@ -15,10 +14,7 @@ from dashboard.data.hubspot_loader import (
     load_marketing_contacts,
 )
 from dashboard.data.hyros_loader import load_hyros_leads
-from dashboard.data.reconcile import (
-    group_marketing_metrics,
-    reconciliation_panel,
-)
+from dashboard.data.reconcile import group_marketing_metrics
 
 
 def _fmt_money(x: float | None) -> str:
@@ -72,11 +68,10 @@ def render_marketing(start: date, end: date) -> None:
     # --- Top-row KPIs ---
     total_spend = metrics["spend"].sum()
     total_marketing_leads = metrics["marketing_leads"].sum()
-    total_hyros = metrics["hyros_leads"].sum()
     total_booked = metrics["calls_booked"].sum()
     cpl = (total_spend / total_marketing_leads) if total_marketing_leads else None
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Ad Spend", _fmt_money(total_spend))
     c2.metric("Marketing Leads", _fmt_int(total_marketing_leads),
               help="HubSpot contacts whose typeform was submitted in the window. "
@@ -85,11 +80,7 @@ def render_marketing(start: date, end: date) -> None:
                    "typeform (e.g., TheraRay).")
     c3.metric("CPL", _fmt_money(cpl),
               help="Spend / Marketing Leads")
-    c4.metric("Ad Clicks Tracked (Hyros)", _fmt_int(total_hyros),
-              help="Ad clicks Hyros could fully attribute to a paid source. "
-                   "Lower than Marketing Leads when UTMs are stripped or "
-                   "attribution breaks - diagnostic, not source of truth.")
-    c5.metric("15-min Calls Booked", _fmt_int(total_booked),
+    c4.metric("15-min Calls Booked", _fmt_int(total_booked),
               help="Contacts with a 15 Min Call Date set OR lifecycle = MQL.")
 
     st.divider()
@@ -113,19 +104,15 @@ def render_marketing(start: date, end: date) -> None:
     display["cpl"] = display["cpl"].map(_fmt_money)
     display["cost_per_qualified_call"] = display["cost_per_qualified_call"].map(_fmt_money)
     display["calls_booked"] = display["calls_booked"].map(_fmt_int)
-    display["hyros_leads"] = display["hyros_leads"].map(
-        lambda x: "—" if (x is None or pd.isna(x) or x == 0) else f"{int(x):,}"
-    )
 
     display = display[["group", "spend", "marketing_leads", "cpl",
-                       "hyros_leads", "calls_booked", "cost_per_qualified_call"]]
+                       "calls_booked", "cost_per_qualified_call"]]
 
     display = display.rename(columns={
         "group": "Group",
         "spend": "Spend",
         "marketing_leads": "Marketing Leads",
         "cpl": "CPL",
-        "hyros_leads": "Ad Clicks (Hyros)",
         "calls_booked": "15-min Calls",
         "cost_per_qualified_call": "Cost / Qualified Call",
     })
@@ -140,39 +127,23 @@ def render_marketing(start: date, end: date) -> None:
 
     st.divider()
 
-    # --- Section B: reconciliation panel ---
-    st.subheader("Lead Reconciliation (diagnostic)")
-    recon = reconciliation_panel(fb, contacts, hyros,
-                                  asset_to_group=cfg.ASSET_TO_GROUP)
-    if not recon.empty:
-        recon_display = recon.copy()
-        recon_display["match_rate"] = recon_display["match_rate"].map(
-            lambda x: f"{x*100:.0f}%" if pd.notna(x) else "—"
-        )
-        recon_display = recon_display.rename(columns={
-            "group": "Group", "fb_leads": "FB", "hyros_leads": "Hyros",
-            "hubspot_leads": "HubSpot (truth)", "match_rate": "Hyros↔HubSpot",
-        })
-        st.dataframe(recon_display, use_container_width=True, hide_index=True)
-    st.caption(
-        "**Marketing Leads** above is the source of truth (anyone who submitted "
-        "the typeform). The reconciliation table below cross-checks against FB's "
-        "pixel-reported figure and Hyros's tracked attributions - gaps indicate "
-        "UTM tracking issues (currently: HubSpot calendar thank-you page isn't "
-        "passing UTMs through), not missing leads."
-    )
-
-    st.divider()
-
-    # --- Section C: trend chart ---
-    st.subheader("Leads & Spend Over Time")
-    if not contacts.empty and not fb.empty:
-        trend = contacts.copy()
-        trend["created_date"] = pd.to_datetime(trend["created"]).dt.date
-        trend["group"] = trend["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
-        daily_leads = trend.groupby(["created_date", "group"]).size().reset_index(name="leads")
-        fig = px.bar(daily_leads, x="created_date", y="leads", color="group",
-                     title="Marketing leads per day by group")
-        st.plotly_chart(fig, use_container_width=True)
+    # --- Section C: per-lead detail ---
+    st.subheader("Marketing Lead Detail")
+    if contacts.empty:
+        st.info("No marketing leads in this window.")
     else:
-        st.info("No data to plot for selected window.")
+        detail = contacts.copy()
+        detail["group"] = detail["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
+        detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
+        detail = detail[[
+            "name", "email", "group", "typeform_asset_download",
+            "typeform_submission_date", "sdr_owner",
+        ]].rename(columns={
+            "name": "Name",
+            "email": "Email",
+            "group": "Group",
+            "typeform_asset_download": "Asset",
+            "typeform_submission_date": "Submitted",
+            "sdr_owner": "SDR Owner",
+        })
+        st.dataframe(detail, use_container_width=True, hide_index=True)
