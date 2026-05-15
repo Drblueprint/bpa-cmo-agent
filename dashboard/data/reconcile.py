@@ -1,5 +1,5 @@
-"""Cross-source aggregation. Hyros is the headline source for leads;
-FB is the source of truth for spend; HubSpot tracks MQL (typeform completions)."""
+"""Cross-source aggregation. Typeform submissions are the headline Marketing Leads;
+FB is the source of truth for spend; Hyros is a secondary diagnostic for ad attribution."""
 from __future__ import annotations
 
 from typing import Iterable
@@ -25,14 +25,17 @@ def group_marketing_metrics(
 ) -> pd.DataFrame:
     """Return per-group marketing metrics.
 
-    Columns: group, spend, leads, mql, calls_booked, cpl, cost_per_qualified_call.
+    Columns: group, spend, marketing_leads, marketing_leads_source, hyros_leads,
+             calls_booked, cpl, cost_per_qualified_call.
 
     - spend: sum of FB spend rows whose group matches
-    - leads: Hyros-attributed lead count (top-of-funnel, ad-attributed)
-    - mql: count of HubSpot contacts who completed the typeform (deeper funnel stage)
+    - marketing_leads: typeform submissions (source of truth); falls back to FB lead
+      count for groups that don't use a typeform (e.g. TheraRay)
+    - marketing_leads_source: "typeform" | "fb" | "none"
+    - hyros_leads: Hyros-attributed ad click count (diagnostic, not source of truth)
     - calls_booked: count of contacts with fifteen_min_call_date populated OR
       lifecycle_stage == "marketingqualifiedlead" (contact-property source of truth)
-    - cpl: spend / leads (Hyros)
+    - cpl: spend / marketing_leads
     - cost_per_qualified_call: spend / calls_booked
 
     Note: `contact_deals` and `stages_15min_booked` are kept in the signature
@@ -72,20 +75,23 @@ def group_marketing_metrics(
     for g in groups:
         hyros_count = int(hyros_by_group.get(g, 0))
         fb_count = int(fb_leads_by_group.get(g, 0))
-        leads = hyros_count if hyros_count > 0 else fb_count
-        leads_source = "hyros" if hyros_count > 0 else ("fb" if fb_count > 0 else "none")
-        mql = int((contacts["group"] == g).sum())      # <- HubSpot typeform completions
+        typeform_count = int((contacts["group"] == g).sum())
+        # "Marketing Leads" = typeform submissions, with FB fallback for groups
+        # that don't use a typeform (e.g. TheraRay).
+        marketing_leads = typeform_count if typeform_count > 0 else fb_count
+        marketing_leads_source = "typeform" if typeform_count > 0 else \
+            ("fb" if fb_count > 0 else "none")
         booked = int(((contacts["group"] == g) &
                       contacts["hs_id"].isin(booked_contact_ids)).sum())
         spend = float(fb_by_group.get(g, 0.0))
         rows.append({
             "group": g,
             "spend": spend,
-            "leads": leads,
-            "leads_source": leads_source,
-            "mql": mql,
+            "marketing_leads": marketing_leads,
+            "marketing_leads_source": marketing_leads_source,
+            "hyros_leads": hyros_count,
             "calls_booked": booked,
-            "cpl": _safe_div(spend, leads),
+            "cpl": _safe_div(spend, marketing_leads),
             "cost_per_qualified_call": _safe_div(spend, booked),
         })
     return pd.DataFrame(rows)

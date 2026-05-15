@@ -71,55 +71,61 @@ def render_marketing(start: date, end: date) -> None:
 
     # --- Top-row KPIs ---
     total_spend = metrics["spend"].sum()
-    total_leads = metrics["leads"].sum()
-    total_mql = metrics["mql"].sum()
+    total_marketing_leads = metrics["marketing_leads"].sum()
+    total_hyros = metrics["hyros_leads"].sum()
     total_booked = metrics["calls_booked"].sum()
-    cpl = (total_spend / total_leads) if total_leads else None
+    cpl = (total_spend / total_marketing_leads) if total_marketing_leads else None
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total Ad Spend", _fmt_money(total_spend))
-    c2.metric("Leads", _fmt_int(total_leads),
-              help="Hyros-tracked leads attributed to your ad campaigns. "
-                   "Falls back to FB-reported leads when Hyros has 0 for a group "
-                   "(e.g., TheraRay).")
+    c2.metric("Marketing Leads", _fmt_int(total_marketing_leads),
+              help="HubSpot contacts whose typeform was submitted in the window. "
+                   "Source of truth - anyone who filled the typeform is a marketing "
+                   "lead. Falls back to FB lead count for groups that don't use a "
+                   "typeform (e.g., TheraRay).")
     c3.metric("CPL", _fmt_money(cpl),
-              help="Spend / Leads (Hyros)")
-    c4.metric("MQL (Typeform)", _fmt_int(total_mql),
-              help="HubSpot contacts who completed the typeform (deeper funnel stage)")
+              help="Spend / Marketing Leads")
+    c4.metric("Ad Clicks Tracked (Hyros)", _fmt_int(total_hyros),
+              help="Ad clicks Hyros could fully attribute to a paid source. "
+                   "Lower than Marketing Leads when UTMs are stripped or "
+                   "attribution breaks - diagnostic, not source of truth.")
     c5.metric("15-min Calls Booked", _fmt_int(total_booked),
-              help="MQL contacts with a 15 Min Call Date set OR lifecycle = MQL")
+              help="Contacts with a 15 Min Call Date set OR lifecycle = MQL.")
 
     st.divider()
 
     # --- Section A: campaign group table ---
     st.subheader("By Campaign Group")
-    display = metrics[["group", "spend", "leads", "leads_source", "mql", "cpl",
-                        "calls_booked", "cost_per_qualified_call"]].copy()
-    display["spend"] = display["spend"].map(_fmt_money)
-    display["cpl"] = display["cpl"].map(_fmt_money)
-    display["cost_per_qualified_call"] = display["cost_per_qualified_call"].map(_fmt_money)
-    # Annotate leads with source for transparency (e.g., "17 (FB)" when Hyros = 0).
-    def _fmt_leads(row) -> str:
-        v = row["leads"]
+    display = metrics.copy()
+
+    def _fmt_marketing_leads(row) -> str:
+        v = row["marketing_leads"]
         if v is None or pd.isna(v):
             return "—"
-        if row["leads_source"] == "fb":
+        if row["marketing_leads_source"] == "fb":
             return f"{int(v):,} (FB)"
-        if row["leads_source"] == "hyros":
+        if row["marketing_leads_source"] == "typeform":
             return f"{int(v):,}"
         return "—"
 
-    display["leads"] = display.apply(_fmt_leads, axis=1)
-    display["mql"] = display["mql"].map(_fmt_int)
+    display["marketing_leads"] = display.apply(_fmt_marketing_leads, axis=1)
+    display["spend"] = display["spend"].map(_fmt_money)
+    display["cpl"] = display["cpl"].map(_fmt_money)
+    display["cost_per_qualified_call"] = display["cost_per_qualified_call"].map(_fmt_money)
     display["calls_booked"] = display["calls_booked"].map(_fmt_int)
-    display = display[["group", "spend", "leads", "mql", "cpl",
-                        "calls_booked", "cost_per_qualified_call"]]
+    display["hyros_leads"] = display["hyros_leads"].map(
+        lambda x: "—" if (x is None or pd.isna(x) or x == 0) else f"{int(x):,}"
+    )
+
+    display = display[["group", "spend", "marketing_leads", "cpl",
+                       "hyros_leads", "calls_booked", "cost_per_qualified_call"]]
+
     display = display.rename(columns={
         "group": "Group",
         "spend": "Spend",
-        "leads": "Leads",
-        "mql": "MQL (Typeform)",
+        "marketing_leads": "Marketing Leads",
         "cpl": "CPL",
+        "hyros_leads": "Ad Clicks (Hyros)",
         "calls_booked": "15-min Calls",
         "cost_per_qualified_call": "Cost / Qualified Call",
     })
@@ -149,10 +155,11 @@ def render_marketing(start: date, end: date) -> None:
         })
         st.dataframe(recon_display, use_container_width=True, hide_index=True)
     st.caption(
-        "Hyros is the primary headline lead count above; FB is the fallback when "
-        "Hyros has zero for a group (e.g., TheraRay). FB is the pixel-reported "
-        "figure (known under-reporting post iOS 14). HubSpot (truth) is contacts "
-        "who completed the typeform - a deeper funnel stage."
+        "**Marketing Leads** above is the source of truth (anyone who submitted "
+        "the typeform). The reconciliation table below cross-checks against FB's "
+        "pixel-reported figure and Hyros's tracked attributions - gaps indicate "
+        "UTM tracking issues (currently: HubSpot calendar thank-you page isn't "
+        "passing UTMs through), not missing leads."
     )
 
     st.divider()

@@ -44,10 +44,11 @@ def test_group_marketing_metrics_basic():
 
     chiro = result[result["group"] == "Chiro"].iloc[0]
     assert chiro["spend"] == 1000.0
-    assert chiro["leads"] == 2   # Hyros count
-    assert chiro["mql"] == 2     # HubSpot typeform completions
+    assert chiro["marketing_leads"] == 2      # typeform count (source of truth)
+    assert chiro["hyros_leads"] == 2          # Hyros count (diagnostic)
+    assert chiro["marketing_leads_source"] == "typeform"
     assert chiro["calls_booked"] == 1
-    assert chiro["cpl"] == 500.0
+    assert chiro["cpl"] == 500.0              # 1000 / 2
     assert chiro["cost_per_qualified_call"] == 1000.0
 
 
@@ -190,10 +191,11 @@ def test_group_marketing_metrics_empty_contact_deals():
     )
 
     chiro = result[result["group"] == "Chiro"].iloc[0]
-    assert chiro["leads"] == 0    # no Hyros data
-    assert chiro["mql"] == 1      # 1 HubSpot contact
+    assert chiro["marketing_leads"] == 1      # typeform = 1, no fallback needed
+    assert chiro["hyros_leads"] == 0
+    assert chiro["marketing_leads_source"] == "typeform"
     assert chiro["calls_booked"] == 0
-    assert chiro["cpl"] is None   # divide by 0 Hyros leads
+    assert chiro["cpl"] == 1000.0             # spend 1000 / 1
     assert chiro["cost_per_qualified_call"] is None
 
 
@@ -259,14 +261,14 @@ def test_group_marketing_metrics_uses_contact_properties_for_calls_booked():
         hyros=pd.DataFrame(),
     )
     chiro = result[result["group"] == "Chiro"].iloc[0]
-    assert chiro["leads"] == 5    # no Hyros data, falls back to FB (fb_leads=5)
-    assert chiro["leads_source"] == "fb"
-    assert chiro["mql"] == 3      # 3 HubSpot typeform contacts
+    assert chiro["marketing_leads"] == 3      # typeform = 3, used directly (no fallback)
+    assert chiro["hyros_leads"] == 0
+    assert chiro["marketing_leads_source"] == "typeform"
     assert chiro["calls_booked"] == 2  # contact 1 (date) + contact 2 (MQL)
 
 
-def test_group_marketing_metrics_falls_back_to_fb_when_hyros_zero():
-    """When Hyros has zero leads for a group but FB does, FB lead count is used."""
+def test_group_marketing_metrics_fb_fallback_when_no_typeform():
+    """When typeform is also zero for a group (e.g. TheraRay), FB lead count is used."""
     fb = pd.DataFrame([
         {"campaign_name": "DS | __Theraray__ ...", "group": "TheraRay",
          "spend": 500.0, "impressions": 5000, "clicks": 50, "fb_leads": 17},
@@ -285,6 +287,6 @@ def test_group_marketing_metrics_falls_back_to_fb_when_hyros_zero():
         hyros=hyros,
     )
     theraray = result[result["group"] == "TheraRay"].iloc[0]
-    assert theraray["leads"] == 17           # FB fallback
-    assert theraray["leads_source"] == "fb"
-    assert theraray["cpl"] == 500.0 / 17     # uses fallback denominator
+    assert theraray["marketing_leads"] == 17           # FB fallback (typeform = 0)
+    assert theraray["marketing_leads_source"] == "fb"
+    assert theraray["cpl"] == 500.0 / 17               # uses fallback denominator
