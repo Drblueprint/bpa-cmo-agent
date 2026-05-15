@@ -81,3 +81,37 @@ def test_pipeline_funnel_marketing_vs_all():
                               stage_groups=stages, marketing_only=False)
     assert fn_all["count"].loc[fn_all["stage"] == "Closed-Won"].iloc[0] == 2
     assert fn_all["revenue"].loc[fn_all["stage"] == "Closed-Won"].iloc[0] == 6000.0
+
+
+from dashboard.data.reconcile import owner_rollup
+
+
+def test_owner_rollup_by_sdr():
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "sdr_owner": "Gage", "bds": "Scott Warren"},
+        {"hs_id": "2", "sdr_owner": "Gage", "bds": "Garrett"},
+        {"hs_id": "3", "sdr_owner": "Other", "bds": "Scott Warren"},
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "1", "deal_id": "d1"},
+        {"contact_id": "2", "deal_id": "d2"},
+        {"contact_id": "3", "deal_id": "d3"},
+    ])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "15min_booked", "amount": 0},
+        {"deal_id": "d2", "dealstage": "closedwon",    "amount": 5000},
+        {"deal_id": "d3", "dealstage": "strategy_held", "amount": 0},
+    ])
+    stages = {
+        "15min_booked":    {"15min_booked", "15min_held"},
+        "strategy_booked": {"strategy_booked", "strategy_held"},
+        "closedwon":       {"closedwon"},
+    }
+
+    by_sdr = owner_rollup(contacts, contact_deals, deals,
+                          owner_field="sdr_owner", stage_groups=stages)
+
+    gage = by_sdr[by_sdr["owner"] == "Gage"].iloc[0]
+    assert gage["calls_15min"] == 1
+    assert gage["closed_won"] == 1
+    assert gage["closed_won_revenue"] == 5000.0

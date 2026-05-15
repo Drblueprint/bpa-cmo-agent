@@ -154,3 +154,42 @@ def pipeline_funnel(
             "revenue": float(sub["amount"].sum()),
         })
     return pd.DataFrame(rows)
+
+
+def owner_rollup(
+    contacts: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    *,
+    owner_field: str,
+    stage_groups: dict[str, set[str]],
+) -> pd.DataFrame:
+    """Aggregate funnel metrics by a contact-level owner field.
+
+    Columns: owner, calls_15min, strategy_calls, closed_won, closed_won_revenue.
+    """
+    if contacts.empty:
+        return pd.DataFrame(columns=["owner", "calls_15min", "strategy_calls",
+                                     "closed_won", "closed_won_revenue"])
+
+    cd = contact_deals.merge(
+        contacts[["hs_id", owner_field]].rename(columns={"hs_id": "contact_id"}),
+        on="contact_id", how="left",
+    )
+    cd = cd.merge(deals[["deal_id", "dealstage", "amount"]],
+                   on="deal_id", how="left")
+
+    s15 = stage_groups.get("15min_booked", set())
+    sst = stage_groups.get("strategy_booked", set())
+    scw = stage_groups.get("closedwon", set())
+
+    rows = []
+    for owner, sub in cd.groupby(owner_field, dropna=False):
+        rows.append({
+            "owner": owner or "(unassigned)",
+            "calls_15min": int(sub["dealstage"].isin(s15).sum()),
+            "strategy_calls": int(sub["dealstage"].isin(sst).sum()),
+            "closed_won": int(sub["dealstage"].isin(scw).sum()),
+            "closed_won_revenue": float(sub.loc[sub["dealstage"].isin(scw), "amount"].sum()),
+        })
+    return pd.DataFrame(rows).sort_values("closed_won_revenue", ascending=False)
