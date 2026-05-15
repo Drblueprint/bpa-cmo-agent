@@ -86,9 +86,8 @@ ASSET_TO_GROUP: dict[str, str] = {
     "Recovery Program (PT) typeform": "PT Recovery",
     "EMX Fort Worth 2026":            "EMX",
     "Chiro Never Reach $1M ":         "Chiro",   # trailing space is in HubSpot value
-    # UNMAPPED (ambiguous, no clear group signal):
-    #   "Top 10 typeform"              — 95 contacts; unclear which campaign group
-    #   "BPA Revenue Pyramid typeform" — 20 contacts; general BPA, not group-specific
-    #   "Can we help you scale typeform" — 8 contacts; generic
-    #   "Referral "                    — 1 contact; referral channel, not a campaign asset
+    "Top 10 typeform":                "Chiro",
+    "BPA Revenue Pyramid typeform":   "Chiro",
+    "Can we help you scale typeform": "Chiro",
+    "Referral ":                      "Chiro",   # trailing space per Dr. Gumm
 }
