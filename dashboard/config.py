@@ -58,8 +58,7 @@ STAGES_STRATEGY_HELD: set[str] = {
     "1057070392", # PT Marketing Pipeline: Strategy Call Complete-BAMFAM
 }
 
-# HubSpot default closed-won stage + SALES-V2 closed-won
-HS_STAGE_CLOSED_WON = "closedwon"  # Sales Pipeline (default): Closed Won
+# --- HubSpot closed-won stage IDs ---
 STAGES_CLOSED_WON: set[str] = {
     "closedwon",  # Sales Pipeline (id=default): Closed Won
     "24094605",   # SALES - V2 (id=8346417): CLOSED - Won
