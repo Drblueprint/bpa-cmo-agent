@@ -290,15 +290,23 @@ def per_contact_journey(
 
     # Build per-contact outcome sets for each meeting type
     def _classify(contact_meetings: pd.DataFrame) -> str:
-        """Status priority: Completed > Scheduled > Canceled > blank."""
+        """Status priority: Completed > Scheduled > No Show > Canceled > blank.
+
+        Handles outcome variants like 'CANCELLED - BY BPA' and 'RESCHEDULED - NO BOFU'
+        via prefix matching.
+        """
         if contact_meetings.empty:
             return ""
         outcomes = contact_meetings["outcome"].fillna("").astype(str).str.upper().tolist()
         if any(o.startswith("COMPLETE") for o in outcomes):
             return "Completed"
-        if any(o in ("SCHEDULED", "RESCHEDULED") for o in outcomes):
+        if any(o.startswith("SCHEDULED") for o in outcomes):
             return "Scheduled"
-        if any(o in ("CANCELED", "CANCELLED") for o in outcomes):
+        if any(o.startswith("RESCHEDULED") for o in outcomes):
+            return "Scheduled"  # rescheduled means moved, not lost
+        if any("NO_SHOW" in o or o.startswith("NO SHOW") for o in outcomes):
+            return "No Show"
+        if any(o.startswith("CANCEL") for o in outcomes):  # catches CANCELED, CANCELLED, CANCELLED - BY *
             return "Canceled"
         return ""
 

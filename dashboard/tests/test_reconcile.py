@@ -328,3 +328,65 @@ def test_per_contact_journey_handles_canceled_and_pt_variant():
     # Contact 2: a canceled 15-min still shows as Canceled (no Scheduled/Completed 15-min)
     assert by_id["2"]["fifteen_min_status"] == "Canceled"
     assert by_id["2"]["strategy_status"] == "Completed"
+
+
+def test_per_contact_journey_no_show_status():
+    """NO_SHOW outcome surfaces as 'No Show', distinct from Canceled."""
+    from dashboard.data.reconcile import per_contact_journey
+    contacts = pd.DataFrame([{"hs_id": "1", "fifteen_min_call_date": None,
+                              "lifecycle_stage": "lead"}])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "NO_SHOW", "start_time": ""},
+    ])
+    result = per_contact_journey(
+        contacts, meetings,
+        pd.DataFrame(columns=["contact_id", "deal_id"]),
+        pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        stages_closed_won=set(),
+    )
+    assert result.iloc[0]["strategy_status"] == "No Show"
+
+
+def test_per_contact_journey_outcome_variants():
+    """Outcome suffix variants are caught via prefix matching."""
+    from dashboard.data.reconcile import per_contact_journey
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
+        {"hs_id": "2", "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "CANCELLED - BY BPA", "start_time": ""},
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "Strategy Call",
+         "outcome": "RESCHEDULED - NO BOFU", "start_time": ""},
+    ])
+    result = per_contact_journey(
+        contacts, meetings,
+        pd.DataFrame(columns=["contact_id", "deal_id"]),
+        pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        stages_closed_won=set(),
+    )
+    by_id = {row["hs_id"]: row for _, row in result.iterrows()}
+    assert by_id["1"]["strategy_status"] == "Canceled"   # variant suffix matched
+    assert by_id["2"]["strategy_status"] == "Scheduled"  # rescheduled → still scheduled
+
+
+def test_per_contact_journey_priority_completed_over_canceled():
+    """A contact with both Completed and Canceled Strategy meetings shows Completed."""
+    from dashboard.data.reconcile import per_contact_journey
+    contacts = pd.DataFrame([{"hs_id": "1", "fifteen_min_call_date": None,
+                              "lifecycle_stage": "lead"}])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-05-01T00:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "CANCELED", "start_time": "2026-05-10T00:00:00Z"},
+    ])
+    result = per_contact_journey(
+        contacts, meetings,
+        pd.DataFrame(columns=["contact_id", "deal_id"]),
+        pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        stages_closed_won=set(),
+    )
+    assert result.iloc[0]["strategy_status"] == "Completed"
