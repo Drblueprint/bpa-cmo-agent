@@ -115,3 +115,70 @@ def test_owner_rollup_by_sdr():
     assert gage["calls_15min"] == 1
     assert gage["closed_won"] == 1
     assert gage["closed_won_revenue"] == 5000.0
+
+
+from dashboard.data.reconcile import reconciliation_panel
+
+
+def test_reconciliation_panel_basic():
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__ ...", "group": "Chiro",
+         "spend": 1000.0, "fb_leads": 20},
+        {"campaign_name": "DS | __PT__ ...", "group": "PT Recovery",
+         "spend": 500.0, "fb_leads": 10},
+    ])
+    # HubSpot: 3 Chiro leads (from Chiro Audit PDF), 1 PT lead
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF"},
+        {"hs_id": "2", "typeform_asset_download": "Chiro Audit PDF"},
+        {"hs_id": "3", "typeform_asset_download": "Chiro Audit PDF"},
+        {"hs_id": "4", "typeform_asset_download": "PT Recovery Guide"},
+    ])
+    # Hyros: 2 leads from a Chiro campaign source, 0 PT
+    hyros = pd.DataFrame([
+        {"lead_id": "h1", "first_source": "FB - __Chiro__ campaign"},
+        {"lead_id": "h2", "first_source": "FB - __Chiro__ campaign"},
+    ])
+    asset_to_group = {
+        "Chiro Audit PDF": "Chiro",
+        "PT Recovery Guide": "PT Recovery",
+    }
+
+    result = reconciliation_panel(fb, contacts, hyros,
+                                   asset_to_group=asset_to_group)
+
+    # Verify expected columns
+    assert set(result.columns) == {"group", "fb_leads", "hyros_leads",
+                                    "hubspot_leads", "match_rate"}
+
+    # Chiro: FB=20, Hyros=2, HubSpot=3 → match_rate = min(2,3)/3 ≈ 0.667
+    chiro = result[result["group"] == "Chiro"].iloc[0]
+    assert chiro["fb_leads"] == 20
+    assert chiro["hyros_leads"] == 2
+    assert chiro["hubspot_leads"] == 3
+    assert abs(chiro["match_rate"] - (2/3)) < 1e-9
+
+    # PT Recovery: FB=10, Hyros=0, HubSpot=1 → match_rate = 0/1 = 0.0
+    pt = result[result["group"] == "PT Recovery"].iloc[0]
+    assert pt["fb_leads"] == 10
+    assert pt["hyros_leads"] == 0
+    assert pt["hubspot_leads"] == 1
+    assert pt["match_rate"] == 0.0
+
+
+def test_reconciliation_panel_empty_hyros():
+    """Hyros may return zero rows; the panel should still render the other sources."""
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__ ...", "group": "Chiro",
+         "spend": 1000.0, "fb_leads": 5},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF"},
+    ])
+    hyros = pd.DataFrame()  # empty
+
+    result = reconciliation_panel(fb, contacts, hyros,
+                                   asset_to_group={"Chiro Audit PDF": "Chiro"})
+    chiro = result[result["group"] == "Chiro"].iloc[0]
+    assert chiro["hyros_leads"] == 0
+    assert chiro["hubspot_leads"] == 1
