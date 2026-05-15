@@ -39,6 +39,8 @@ def group_marketing_metrics(
     for API compatibility but no longer drive any counts.
     """
     fb_by_group = fb.groupby("group", dropna=True)["spend"].sum().to_dict()
+    fb_leads_by_group = fb.groupby("group", dropna=True)["fb_leads"].sum().to_dict() \
+        if "fb_leads" in fb.columns else {}
 
     contacts = contacts.copy()
     contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
@@ -68,7 +70,10 @@ def group_marketing_metrics(
                      *hyros_by_group.keys()})
     rows = []
     for g in groups:
-        leads = int(hyros_by_group.get(g, 0))          # <- NOW Hyros-driven
+        hyros_count = int(hyros_by_group.get(g, 0))
+        fb_count = int(fb_leads_by_group.get(g, 0))
+        leads = hyros_count if hyros_count > 0 else fb_count
+        leads_source = "hyros" if hyros_count > 0 else ("fb" if fb_count > 0 else "none")
         mql = int((contacts["group"] == g).sum())      # <- HubSpot typeform completions
         booked = int(((contacts["group"] == g) &
                       contacts["hs_id"].isin(booked_contact_ids)).sum())
@@ -77,6 +82,7 @@ def group_marketing_metrics(
             "group": g,
             "spend": spend,
             "leads": leads,
+            "leads_source": leads_source,
             "mql": mql,
             "calls_booked": booked,
             "cpl": _safe_div(spend, leads),
