@@ -16,6 +16,7 @@ HS_PROP_SME = "sme"                                 # label: "SME", type=enumera
 HS_PROP_UTM_SOURCE = "utm_source"
 HS_PROP_15MIN_CALL_DATE = "n15_min_call_date"  # confirmed via probe on 2026-05-15; label: "15 Min Call Date", type=date
 HS_PROP_LIFECYCLE_STAGE = "lifecyclestage"  # HubSpot standard property
+HS_PROP_TYPEFORM_SUBMISSION_DATE = "typeform_submission_date"  # datetime; HubSpot confirms via probe
 HS_LIFECYCLE_MQL_VALUE = "marketingqualifiedlead"  # confirmed via probe on 2026-05-15
 
 # --- HubSpot deal stage IDs ---
