@@ -7,6 +7,7 @@ import streamlit as st
 
 from dashboard.auth import require_password
 from dashboard.sections.marketing import render_marketing
+from dashboard.sections.sales import render_sales
 
 
 st.set_page_config(
@@ -50,4 +51,4 @@ with tab_marketing:
     render_marketing(start_date, end_date)
 
 with tab_sales:
-    st.info("Sales tab — wired in Phase 5.")
+    render_sales(start_date, end_date)
