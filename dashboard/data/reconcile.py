@@ -28,20 +28,32 @@ def group_marketing_metrics(
 
     - spend: sum of FB spend rows whose group matches
     - leads: count of contacts whose typeform_asset_download maps to the group
-    - calls_booked: count of contacts whose deals contain a 15-min stage
+    - calls_booked: count of contacts with fifteen_min_call_date populated OR
+      lifecycle_stage == "marketingqualifiedlead" (contact-property source of truth)
     - cpl: spend / leads
     - cost_per_qualified_call: spend / calls_booked
+
+    Note: `contact_deals` and `stages_15min_booked` are kept in the signature
+    for API compatibility but no longer drive the calls_booked count.
     """
     fb_by_group = fb.groupby("group", dropna=True)["spend"].sum().to_dict()
 
     contacts = contacts.copy()
     contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
 
-    stages_set = set(stages_15min_booked)
-    booked_deal_ids = set(deals.loc[deals["dealstage"].isin(stages_set), "deal_id"])
-    booked_contact_ids = set(
-        contact_deals.loc[contact_deals["deal_id"].isin(booked_deal_ids), "contact_id"]
-    )
+    # "Calls booked" is now derived from the contact-level 15-min call date property.
+    # A contact is counted as having booked a 15-min call if either:
+    #   - fifteen_min_call_date is populated (preferred signal), OR
+    #   - lifecycle_stage has reached MQL (corroborating signal)
+    # The legacy deal-stage parameters `contact_deals` and `stages_15min_booked` are
+    # kept in the signature for API compatibility but no longer drive the count.
+    has_call_date = contacts.get("fifteen_min_call_date").notna() \
+        if "fifteen_min_call_date" in contacts.columns else pd.Series(False, index=contacts.index)
+    has_call_date = has_call_date & (contacts.get("fifteen_min_call_date") != "")
+    is_mql = contacts.get("lifecycle_stage", pd.Series(dtype=str)).fillna("") \
+        .astype(str).str.lower().eq("marketingqualifiedlead")
+    booked_mask = has_call_date | is_mql
+    booked_contact_ids = set(contacts.loc[booked_mask, "hs_id"])
 
     groups = sorted({*fb_by_group.keys(), *contacts["group"].dropna().unique()})
     rows = []

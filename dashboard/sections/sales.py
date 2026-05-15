@@ -151,10 +151,13 @@ def render_sales(start: date, end: date) -> None:
     )
     detail = detail[[
         "name", "email", "typeform_asset_download", "created",
+        "fifteen_min_call_date", "lifecycle_stage",
         "sdr_owner", "bds", "dealstage", "amount",
     ]].rename(columns={
         "typeform_asset_download": "Asset",
         "created": "Created",
+        "fifteen_min_call_date": "15-min Call Date",
+        "lifecycle_stage": "Lifecycle",
         "sdr_owner": "SDR Owner",
         "bds": "BDS",
         "dealstage": "Current Stage",

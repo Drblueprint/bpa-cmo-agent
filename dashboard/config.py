@@ -14,6 +14,9 @@ HS_PROP_SDR_OWNER = "sdr_owner"                     # label: "SDR Owner", type=e
 HS_PROP_BDS = "bds"                                 # label: "BDS", type=enumeration
 HS_PROP_SME = "sme"                                 # label: "SME", type=enumeration
 HS_PROP_UTM_SOURCE = "utm_source"
+HS_PROP_15MIN_CALL_DATE = "n15_min_call_date"  # confirmed via probe on 2026-05-15; label: "15 Min Call Date", type=date
+HS_PROP_LIFECYCLE_STAGE = "lifecyclestage"  # HubSpot standard property
+HS_LIFECYCLE_MQL_VALUE = "marketingqualifiedlead"  # confirmed via probe on 2026-05-15
 
 # --- HubSpot deal stage IDs ---
 # Confirmed via probe on 2026-05-15.

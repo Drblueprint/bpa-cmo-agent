@@ -63,6 +63,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "firstname", "lastname", "email", "createdate",
             cfg.HS_PROP_TYPEFORM_ASSET, cfg.HS_PROP_SDR_OWNER,
             cfg.HS_PROP_BDS, cfg.HS_PROP_SME, cfg.HS_PROP_UTM_SOURCE,
+            cfg.HS_PROP_15MIN_CALL_DATE, cfg.HS_PROP_LIFECYCLE_STAGE,
         ],
         "limit": 100,
     }
@@ -81,10 +82,13 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "bds": p.get(cfg.HS_PROP_BDS),
             "sme": p.get(cfg.HS_PROP_SME),
             "utm_source": p.get(cfg.HS_PROP_UTM_SOURCE),
+            "fifteen_min_call_date": p.get(cfg.HS_PROP_15MIN_CALL_DATE),
+            "lifecycle_stage": p.get(cfg.HS_PROP_LIFECYCLE_STAGE),
         })
     return pd.DataFrame(rows, columns=[
         "hs_id", "name", "email", "created",
         "typeform_asset_download", "sdr_owner", "bds", "sme", "utm_source",
+        "fifteen_min_call_date", "lifecycle_stage",
     ])
 
 

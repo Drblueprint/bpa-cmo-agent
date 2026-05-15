@@ -14,30 +14,26 @@ def test_group_marketing_metrics_basic():
          "spend": 200.0, "impressions": 8000, "clicks": 80, "fb_leads": 5},
     ])
     # 3 marketing contacts: 2 from Chiro asset, 1 PT
+    # Contact 1: has call date -> booked; Contact 2: nothing; Contact 3: MQL -> booked
     contacts = pd.DataFrame([
-        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF"},
-        {"hs_id": "2", "typeform_asset_download": "Chiro Audit PDF"},
-        {"hs_id": "3", "typeform_asset_download": "PT Recovery Guide"},
+        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF",
+         "fifteen_min_call_date": "2026-05-10T10:00:00Z", "lifecycle_stage": "subscriber"},
+        {"hs_id": "2", "typeform_asset_download": "Chiro Audit PDF",
+         "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
+        {"hs_id": "3", "typeform_asset_download": "PT Recovery Guide",
+         "fifteen_min_call_date": None, "lifecycle_stage": "marketingqualifiedlead"},
     ])
-    # 2 deals from marketing leads in 15-min booked stage
-    contact_deals = pd.DataFrame([
-        {"contact_id": "1", "deal_id": "d1"},
-        {"contact_id": "3", "deal_id": "d2"},
-    ])
-    deals = pd.DataFrame([
-        {"deal_id": "d1", "dealstage": "15min_booked", "amount": 0},
-        {"deal_id": "d2", "dealstage": "15min_booked", "amount": 0},
-    ])
+    # Deal data is no longer the source of truth for calls_booked
+    contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
+    deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount"])
     asset_to_group = {
         "Chiro Audit PDF": "Chiro",
         "PT Recovery Guide": "PT Recovery",
     }
-    stages_15min = {"15min_booked", "15min_held"}
-
     result = group_marketing_metrics(
         fb, contacts, contact_deals, deals,
         asset_to_group=asset_to_group,
-        stages_15min_booked=stages_15min,
+        stages_15min_booked=set(),  # unused - calls_booked driven by contact properties
     )
 
     chiro = result[result["group"] == "Chiro"].iloc[0]
@@ -167,13 +163,14 @@ def test_reconciliation_panel_basic():
 
 
 def test_group_marketing_metrics_empty_contact_deals():
-    """Empty contact_deals (no associations) must not crash."""
+    """Empty contact_deals and no call-date properties must not crash."""
     fb = pd.DataFrame([
         {"campaign_name": "DS | __Chiro__ ...", "group": "Chiro",
          "spend": 1000.0, "impressions": 0, "clicks": 0, "fb_leads": 0},
     ])
     contacts = pd.DataFrame([
-        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF"},
+        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF",
+         "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
     ])
     contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
     deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount"])
@@ -225,3 +222,32 @@ def test_owner_rollup_empty_contact_deals():
                           owner_field="sdr_owner", stage_groups=stages)
     # Must have the column even if zero rows
     assert "closed_won_revenue" in result.columns
+
+
+def test_group_marketing_metrics_uses_contact_properties_for_calls_booked():
+    """A contact with fifteen_min_call_date OR lifecycle=MQL counts as booked,
+    regardless of deal stage."""
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__ ...", "group": "Chiro",
+         "spend": 100.0, "impressions": 1000, "clicks": 10, "fb_leads": 5},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro PDF",
+         "fifteen_min_call_date": "2026-05-10T12:00:00Z", "lifecycle_stage": "lead"},
+        {"hs_id": "2", "typeform_asset_download": "Chiro PDF",
+         "fifteen_min_call_date": None, "lifecycle_stage": "marketingqualifiedlead"},
+        {"hs_id": "3", "typeform_asset_download": "Chiro PDF",
+         "fifteen_min_call_date": None, "lifecycle_stage": "subscriber"},
+    ])
+    # Deal data is irrelevant for calls_booked now
+    contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
+    deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount"])
+
+    result = group_marketing_metrics(
+        fb, contacts, contact_deals, deals,
+        asset_to_group={"Chiro PDF": "Chiro"},
+        stages_15min_booked=set(),  # ignored
+    )
+    chiro = result[result["group"] == "Chiro"].iloc[0]
+    assert chiro["leads"] == 3
+    assert chiro["calls_booked"] == 2  # contact 1 (date) + contact 2 (MQL)
