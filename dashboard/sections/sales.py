@@ -109,7 +109,9 @@ def render_sales(start: date, end: date) -> None:
 
     only_mkt = st.checkbox("Marketing-attributed only", value=True,
                             key="owners_marketing_only")
-    contacts_view = marketing if only_mkt else marketing  # we only have marketing contacts loaded
+    # v1 only loads marketing-attributed contacts; the "All" branch is a placeholder
+    # for a future enhancement that loads all contacts.
+    contacts_view = marketing
 
     with col_sdr:
         st.subheader("By SDR Owner")
@@ -129,6 +131,9 @@ def render_sales(start: date, end: date) -> None:
     st.subheader("Marketing Lead Detail")
     if marketing.empty:
         st.info("No marketing leads in this window.")
+        return
+    if deals.empty or contact_deals.empty:
+        st.info("No deal data available — drill-down hidden.")
         return
 
     deals_by_contact = contact_deals.merge(
