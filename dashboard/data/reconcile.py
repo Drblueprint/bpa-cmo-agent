@@ -24,6 +24,7 @@ def group_marketing_metrics(
     hyros: pd.DataFrame | None = None,
     stages_strategy: Iterable[str] = (),
     stages_closed_won: Iterable[str] = (),
+    meetings: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return per-group marketing metrics.
 
@@ -36,13 +37,10 @@ def group_marketing_metrics(
       count for groups that don't use a typeform (e.g. TheraRay)
     - marketing_leads_source: "typeform" | "fb" | "none"
     - hyros_leads: Hyros-attributed ad click count (diagnostic, not source of truth)
-    - calls_booked: count of contacts with fifteen_min_call_date populated OR
-      lifecycle_stage == "marketingqualifiedlead" (contact-property source of truth)
+    - calls_booked: count of contacts with a "15 min call" meeting (source of truth)
+    - strategy_calls: count of contacts with a "Strategy Call" meeting
     - cpl: spend / marketing_leads
     - cost_per_qualified_call: spend / calls_booked
-
-    Note: `contact_deals` and `stages_15min_booked` are kept in the signature
-    for API compatibility but no longer drive any counts.
     """
     fb_by_group = fb.groupby("group", dropna=True)["spend"].sum().to_dict()
     fb_leads_by_group = fb.groupby("group", dropna=True)["fb_leads"].sum().to_dict() \
@@ -60,34 +58,31 @@ def group_marketing_metrics(
         h["group"] = h["first_source"].map(match_group)
         hyros_by_group = h.groupby("group", dropna=True).size().to_dict()
 
-    # Calls booked uses contact-level n15_min_call_date OR lifecycle=MQL
-    # The legacy deal-stage parameters `contact_deals` and `stages_15min_booked` are
-    # kept in the signature for API compatibility but no longer drive the count.
-    has_call_date = contacts.get("fifteen_min_call_date").notna() \
-        if "fifteen_min_call_date" in contacts.columns else pd.Series(False, index=contacts.index)
-    has_call_date = has_call_date & (contacts.get("fifteen_min_call_date") != "")
-    is_mql = contacts.get("lifecycle_stage", pd.Series(dtype=str)).fillna("") \
-        .astype(str).str.lower().eq("marketingqualifiedlead")
-    booked_mask = has_call_date | is_mql
-    booked_contact_ids = set(contacts.loc[booked_mask, "hs_id"])
+    # Count 15-min calls + strategy calls via MEETINGS (source of truth in HubSpot).
+    if meetings is None or meetings.empty:
+        booked_contact_ids: set[str] = set()
+        strategy_contact_ids: set[str] = set()
+    else:
+        fifteen_meetings = meetings[
+            meetings["activity_type"].str.strip().str.lower() == "15 min call"
+        ]
+        booked_contact_ids = set(
+            str(cid) for cid in fifteen_meetings["contact_id"].dropna().unique()
+        )
+        strategy_meetings = meetings[
+            meetings["activity_type"].str.strip().str.lower() == "strategy call"
+        ]
+        strategy_contact_ids = set(
+            str(cid) for cid in strategy_meetings["contact_id"].dropna().unique()
+        )
 
-    # Per-contact deal-stage progression
-    strategy_set = set(stages_strategy)
+    # Closed-won via deals (stays deal-based; a closed deal IS the signal)
     won_set = set(stages_closed_won)
     if not deals.empty and not contact_deals.empty:
-        strategy_deal_ids = set(
-            deals.loc[deals["dealstage"].isin(strategy_set), "deal_id"]
-        )
-        won_deal_ids = set(
-            deals.loc[deals["dealstage"].isin(won_set), "deal_id"]
-        )
-        strategy_contact_ids = set(
-            contact_deals.loc[contact_deals["deal_id"].isin(strategy_deal_ids), "contact_id"]
-        )
+        won_deal_ids = set(deals.loc[deals["dealstage"].isin(won_set), "deal_id"])
         won_contact_ids = set(
             contact_deals.loc[contact_deals["deal_id"].isin(won_deal_ids), "contact_id"]
         )
-        # Revenue per contact (sum of amounts from won deals associated to them)
         won_deal_rows = deals[deals["deal_id"].isin(won_deal_ids)][["deal_id", "amount"]]
         won_associations = contact_deals[contact_deals["deal_id"].isin(won_deal_ids)]
         revenue_by_contact = (
@@ -95,7 +90,6 @@ def group_marketing_metrics(
             .groupby("contact_id")["amount"].sum().to_dict()
         )
     else:
-        strategy_contact_ids = set()
         won_contact_ids = set()
         revenue_by_contact = {}
 
@@ -277,71 +271,70 @@ def owner_rollup(
 
 def per_contact_journey(
     contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
     contact_deals: pd.DataFrame,
     deals: pd.DataFrame,
     *,
-    stages_15min_booked: Iterable[str],
-    stages_15min_held: Iterable[str],
-    stages_strategy_booked: Iterable[str],
-    stages_strategy_held: Iterable[str],
     stages_closed_won: Iterable[str],
 ) -> pd.DataFrame:
-    """Return per-contact stage indicators.
+    """Return per-contact stage indicators based on meeting activity_type/outcome.
 
     Columns: hs_id, fifteen_min_status, strategy_status, closed_won.
-    - fifteen_min_status: "Completed" if any deal in 15min_held; else "Scheduled" if
-      n15_min_call_date set OR lifecycle=MQL OR any deal in 15min_booked; else "".
-    - strategy_status: "Completed" if any deal in strategy_held; else "Scheduled" if
-      any deal in strategy_booked; else "".
-    - closed_won: "Yes" if any deal in closed_won; else "".
+
+    - fifteen_min_status: "Completed" if any 15-min meeting outcome starts with
+      "COMPLETE"; else "Scheduled" if any 15-min meeting outcome is SCHEDULED or
+      RESCHEDULED; else "".
+    - strategy_status: same logic for Strategy Call meetings.
+    - closed_won: "Yes" if any deal in stages_closed_won; else "".
     """
     if contacts.empty:
         return pd.DataFrame(columns=["hs_id", "fifteen_min_status",
                                      "strategy_status", "closed_won"])
 
-    def _stage_contact_ids(stages: Iterable[str]) -> set[str]:
-        s = set(stages)
-        if deals.empty or contact_deals.empty or not s:
-            return set()
-        deal_ids = set(deals.loc[deals["dealstage"].isin(s), "deal_id"])
-        if not deal_ids:
-            return set()
-        return set(contact_deals.loc[contact_deals["deal_id"].isin(deal_ids), "contact_id"])
+    # Build per-contact outcome sets for each meeting type
+    def _classify(contact_meetings: pd.DataFrame) -> str:
+        if contact_meetings.empty:
+            return ""
+        outcomes = contact_meetings["outcome"].fillna("").astype(str).str.upper().tolist()
+        if any(o.startswith("COMPLETE") for o in outcomes):
+            return "Completed"
+        if any(o in ("SCHEDULED", "RESCHEDULED") for o in outcomes):
+            return "Scheduled"
+        return ""
 
-    ids_15min_scheduled = _stage_contact_ids(stages_15min_booked)
-    ids_15min_completed = _stage_contact_ids(stages_15min_held)
-    ids_strategy_scheduled = _stage_contact_ids(stages_strategy_booked)
-    ids_strategy_completed = _stage_contact_ids(stages_strategy_held)
-    ids_won = _stage_contact_ids(stages_closed_won)
+    # Group meetings by contact and type for fast lookup
+    if meetings.empty:
+        fifteen_by_contact: dict[str, str] = {}
+        strategy_by_contact: dict[str, str] = {}
+    else:
+        fifteen = meetings[meetings["activity_type"].str.strip().str.lower() == "15 min call"]
+        strategy = meetings[meetings["activity_type"].str.strip().str.lower() == "strategy call"]
+        fifteen_by_contact = {
+            cid: _classify(grp)
+            for cid, grp in fifteen.groupby("contact_id")
+        }
+        strategy_by_contact = {
+            cid: _classify(grp)
+            for cid, grp in strategy.groupby("contact_id")
+        }
 
-    # Contact-property signals for 15-min
-    has_call_date = contacts.get("fifteen_min_call_date", pd.Series(dtype=str)) \
-        .fillna("").astype(str).str.strip() != ""
-    is_mql = contacts.get("lifecycle_stage", pd.Series(dtype=str)) \
-        .fillna("").astype(str).str.lower().eq("marketingqualifiedlead")
+    # Closed-won via deals
+    won_set = set(stages_closed_won)
+    if deals.empty or contact_deals.empty or not won_set:
+        won_contact_ids: set[str] = set()
+    else:
+        won_deal_ids = set(deals.loc[deals["dealstage"].isin(won_set), "deal_id"])
+        won_contact_ids = set(
+            contact_deals.loc[contact_deals["deal_id"].isin(won_deal_ids), "contact_id"]
+        )
 
     rows = []
-    for i, hs_id in enumerate(contacts["hs_id"]):
-        prop_scheduled = bool(has_call_date.iloc[i] or is_mql.iloc[i])
-        if hs_id in ids_15min_completed:
-            fifteen = "Completed"
-        elif prop_scheduled or hs_id in ids_15min_scheduled:
-            fifteen = "Scheduled"
-        else:
-            fifteen = ""
-
-        if hs_id in ids_strategy_completed:
-            strategy = "Completed"
-        elif hs_id in ids_strategy_scheduled:
-            strategy = "Scheduled"
-        else:
-            strategy = ""
-
-        won = "Yes" if hs_id in ids_won else ""
+    for hs_id in contacts["hs_id"]:
+        cid = str(hs_id)
         rows.append({
             "hs_id": hs_id,
-            "fifteen_min_status": fifteen,
-            "strategy_status": strategy,
-            "closed_won": won,
+            "fifteen_min_status": fifteen_by_contact.get(cid, ""),
+            "strategy_status": strategy_by_contact.get(cid, ""),
+            "closed_won": "Yes" if cid in won_contact_ids else "",
         })
     return pd.DataFrame(rows)

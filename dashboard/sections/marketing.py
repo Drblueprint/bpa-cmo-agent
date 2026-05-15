@@ -12,6 +12,7 @@ from dashboard.data.hubspot_loader import (
     load_contact_deals,
     load_deals_in_window,
     load_marketing_contacts,
+    load_meetings_for_contacts,
 )
 from dashboard.data.hyros_loader import load_hyros_leads
 from dashboard.data.reconcile import group_marketing_metrics
@@ -57,6 +58,16 @@ def render_marketing(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"HubSpot deals unavailable: {e}")
         deals = pd.DataFrame()
+    try:
+        meetings = load_meetings_for_contacts(contacts["hs_id"].tolist()) \
+            if not contacts.empty else pd.DataFrame(columns=[
+                "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
+            ])
+    except Exception as e:
+        st.warning(f"HubSpot meetings unavailable: {e}")
+        meetings = pd.DataFrame(columns=[
+            "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
+        ])
 
     metrics = group_marketing_metrics(
         fb, contacts, contact_deals, deals,
@@ -65,6 +76,7 @@ def render_marketing(start: date, end: date) -> None:
         hyros=hyros,
         stages_strategy=cfg.STAGES_STRATEGY_BOOKED | cfg.STAGES_STRATEGY_HELD,
         stages_closed_won=cfg.STAGES_CLOSED_WON,
+        meetings=meetings,
     )
 
     # --- Top-row KPIs ---
@@ -162,11 +174,7 @@ def render_marketing(start: date, end: date) -> None:
 
         from dashboard.data.reconcile import per_contact_journey
         journey = per_contact_journey(
-            contacts, contact_deals, deals,
-            stages_15min_booked=cfg.STAGES_15MIN_BOOKED,
-            stages_15min_held=cfg.STAGES_15MIN_HELD,
-            stages_strategy_booked=cfg.STAGES_STRATEGY_BOOKED,
-            stages_strategy_held=cfg.STAGES_STRATEGY_HELD,
+            contacts, meetings, contact_deals, deals,
             stages_closed_won=cfg.STAGES_CLOSED_WON,
         )
         detail = detail.merge(journey, on="hs_id", how="left")

@@ -47,9 +47,9 @@ def test_group_marketing_metrics_basic():
     assert chiro["marketing_leads"] == 2      # typeform count (source of truth)
     assert chiro["hyros_leads"] == 2          # Hyros count (diagnostic)
     assert chiro["marketing_leads_source"] == "typeform"
-    assert chiro["calls_booked"] == 1
+    assert chiro["calls_booked"] == 0         # no meetings passed → 0
     assert chiro["cpl"] == 500.0              # 1000 / 2
-    assert chiro["cost_per_qualified_call"] == 1000.0
+    assert chiro["cost_per_qualified_call"] is None
 
 
 from dashboard.data.reconcile import pipeline_funnel
@@ -235,36 +235,41 @@ def test_owner_rollup_empty_contact_deals():
     assert "closed_won_revenue" in result.columns
 
 
-def test_group_marketing_metrics_uses_contact_properties_for_calls_booked():
-    """A contact with fifteen_min_call_date OR lifecycle=MQL counts as booked,
-    regardless of deal stage."""
+def test_group_marketing_metrics_uses_meetings_for_calls_booked():
+    """A contact with a '15 min call' meeting counts as booked."""
     fb = pd.DataFrame([
         {"campaign_name": "DS | __Chiro__ ...", "group": "Chiro",
          "spend": 100.0, "impressions": 1000, "clicks": 10, "fb_leads": 5},
     ])
     contacts = pd.DataFrame([
         {"hs_id": "1", "typeform_asset_download": "Chiro PDF",
-         "fifteen_min_call_date": "2026-05-10T12:00:00Z", "lifecycle_stage": "lead"},
+         "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
         {"hs_id": "2", "typeform_asset_download": "Chiro PDF",
-         "fifteen_min_call_date": None, "lifecycle_stage": "marketingqualifiedlead"},
+         "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
         {"hs_id": "3", "typeform_asset_download": "Chiro PDF",
-         "fifteen_min_call_date": None, "lifecycle_stage": "subscriber"},
+         "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
     ])
-    # Deal data is irrelevant for calls_booked now
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "SCHEDULED", "start_time": ""},
+    ])
     contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
     deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount"])
 
     result = group_marketing_metrics(
         fb, contacts, contact_deals, deals,
         asset_to_group={"Chiro PDF": "Chiro"},
-        stages_15min_booked=set(),  # ignored
-        hyros=pd.DataFrame(),
+        stages_15min_booked=set(),
+        meetings=meetings,
     )
     chiro = result[result["group"] == "Chiro"].iloc[0]
-    assert chiro["marketing_leads"] == 3      # typeform = 3, used directly (no fallback)
+    assert chiro["marketing_leads"] == 3
     assert chiro["hyros_leads"] == 0
     assert chiro["marketing_leads_source"] == "typeform"
-    assert chiro["calls_booked"] == 2  # contact 1 (date) + contact 2 (MQL)
+    # 2 contacts have 15-min meetings (m1 and m2) → calls_booked == 2
+    assert chiro["calls_booked"] == 2
 
 
 def test_group_marketing_metrics_fb_fallback_when_no_typeform():
