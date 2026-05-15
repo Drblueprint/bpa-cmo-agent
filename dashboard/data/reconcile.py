@@ -109,3 +109,48 @@ def reconciliation_panel(
             "match_rate": rate,
         })
     return pd.DataFrame(rows)
+
+
+STAGE_LABELS = [
+    ("15-min Booked", "15min_booked"),
+    ("15-min Held", "15min_held"),
+    ("Strategy Booked", "strategy_booked"),
+    ("Strategy Held", "strategy_held"),
+    ("Closed-Won", "closedwon"),
+]
+
+
+def pipeline_funnel(
+    contacts: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    *,
+    stage_groups: dict[str, set[str]],
+    marketing_only: bool,
+) -> pd.DataFrame:
+    """Return funnel counts and revenue per stage.
+
+    Columns: stage, count, revenue.
+    - marketing_only=True restricts to deals whose contacts have a typeform asset.
+    - stage_groups maps logical stage keys (e.g. "15min_booked") to sets of
+      HubSpot dealstage internal IDs that count for that stage.
+    """
+    if marketing_only and not contacts.empty:
+        marketing_ids = set(contacts["hs_id"])
+        marketing_deals = set(
+            contact_deals.loc[contact_deals["contact_id"].isin(marketing_ids), "deal_id"]
+        )
+        d = deals[deals["deal_id"].isin(marketing_deals)]
+    else:
+        d = deals
+
+    rows = []
+    for label, key in STAGE_LABELS:
+        stages = stage_groups.get(key, set())
+        sub = d[d["dealstage"].isin(stages)]
+        rows.append({
+            "stage": label,
+            "count": int(len(sub)),
+            "revenue": float(sub["amount"].sum()),
+        })
+    return pd.DataFrame(rows)

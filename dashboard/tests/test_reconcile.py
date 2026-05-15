@@ -46,3 +46,38 @@ def test_group_marketing_metrics_basic():
     assert chiro["calls_booked"] == 1
     assert chiro["cpl"] == 500.0
     assert chiro["cost_per_qualified_call"] == 1000.0
+
+
+from dashboard.data.reconcile import pipeline_funnel
+
+
+def test_pipeline_funnel_marketing_vs_all():
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "x"},
+        {"hs_id": "2", "typeform_asset_download": "y"},
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "1", "deal_id": "d1"},
+        {"contact_id": "2", "deal_id": "d2"},
+    ])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "15min_booked", "amount": 0},
+        {"deal_id": "d2", "dealstage": "closedwon",   "amount": 5000},
+        {"deal_id": "d3", "dealstage": "closedwon",   "amount": 1000},  # not marketing
+    ])
+    stages = {
+        "15min_booked":     {"15min_booked", "15min_held"},
+        "strategy_booked":  set(),
+        "closedwon":        {"closedwon"},
+    }
+
+    fn = pipeline_funnel(contacts, contact_deals, deals,
+                         stage_groups=stages, marketing_only=True)
+    assert fn["count"].loc[fn["stage"] == "15-min Booked"].iloc[0] == 1
+    assert fn["count"].loc[fn["stage"] == "Closed-Won"].iloc[0] == 1
+    assert fn["revenue"].loc[fn["stage"] == "Closed-Won"].iloc[0] == 5000.0
+
+    fn_all = pipeline_funnel(contacts, contact_deals, deals,
+                              stage_groups=stages, marketing_only=False)
+    assert fn_all["count"].loc[fn_all["stage"] == "Closed-Won"].iloc[0] == 2
+    assert fn_all["revenue"].loc[fn_all["stage"] == "Closed-Won"].iloc[0] == 6000.0
