@@ -82,7 +82,10 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "sme": p.get(cfg.HS_PROP_SME),
             "utm_source": p.get(cfg.HS_PROP_UTM_SOURCE),
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=[
+        "hs_id", "name", "email", "created",
+        "typeform_asset_download", "sdr_owner", "bds", "sme", "utm_source",
+    ])
 
 
 @st.cache_data(ttl=900, show_spinner="Pulling HubSpot deals...")
@@ -121,7 +124,10 @@ def load_deals_in_window(start: date, end: date) -> pd.DataFrame:
             "createdate": p.get("createdate"),
             "closedate": p.get("closedate"),
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=[
+        "deal_id", "dealname", "amount", "dealstage",
+        "pipeline", "createdate", "closedate",
+    ])
 
 
 @st.cache_data(ttl=900, show_spinner="Pulling contact-deal associations...")
@@ -149,4 +155,4 @@ def load_contact_deals(contact_ids: list[str]) -> pd.DataFrame:
             cid = item.get("from", {}).get("id")
             for t in item.get("to", []):
                 rows.append({"contact_id": cid, "deal_id": t.get("toObjectId")})
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=["contact_id", "deal_id"])

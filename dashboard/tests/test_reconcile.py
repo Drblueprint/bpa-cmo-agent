@@ -166,6 +166,31 @@ def test_reconciliation_panel_basic():
     assert pt["match_rate"] == 0.0
 
 
+def test_group_marketing_metrics_empty_contact_deals():
+    """Empty contact_deals (no associations) must not crash."""
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__ ...", "group": "Chiro",
+         "spend": 1000.0, "impressions": 0, "clicks": 0, "fb_leads": 0},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF"},
+    ])
+    contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
+    deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount"])
+
+    result = group_marketing_metrics(
+        fb, contacts, contact_deals, deals,
+        asset_to_group={"Chiro Audit PDF": "Chiro"},
+        stages_15min_booked={"15min_booked"},
+    )
+
+    chiro = result[result["group"] == "Chiro"].iloc[0]
+    assert chiro["leads"] == 1
+    assert chiro["calls_booked"] == 0
+    assert chiro["cpl"] == 1000.0
+    assert chiro["cost_per_qualified_call"] is None
+
+
 def test_reconciliation_panel_empty_hyros():
     """Hyros may return zero rows; the panel should still render the other sources."""
     fb = pd.DataFrame([

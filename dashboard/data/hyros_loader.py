@@ -32,7 +32,9 @@ def load_hyros_leads(start: date, end: date) -> pd.DataFrame:
     """
     key = st.secrets["HYROS_API_KEY"]
     data = _call("/leads", key, start, end)
-    rows_in = (data.get("result") or {}).get("leads") or data.get("data") or []
+    rows_in = data.get("result") or data.get("data") or []
+    if not isinstance(rows_in, list):
+        rows_in = []
     rows = []
     for x in rows_in:
         fs = x.get("firstSource")
@@ -44,4 +46,6 @@ def load_hyros_leads(start: date, end: date) -> pd.DataFrame:
             "last_source": (ls.get("name") if isinstance(ls, dict) else ls) or "unattributed",
             "created": x.get("createdDate") or x.get("created"),
         })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=[
+        "lead_id", "email", "first_source", "last_source", "created",
+    ])
