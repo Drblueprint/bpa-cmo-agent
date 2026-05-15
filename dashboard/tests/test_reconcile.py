@@ -295,3 +295,36 @@ def test_group_marketing_metrics_fb_fallback_when_no_typeform():
     assert theraray["marketing_leads"] == 17           # FB fallback (typeform = 0)
     assert theraray["marketing_leads_source"] == "fb"
     assert theraray["cpl"] == 500.0 / 17               # uses fallback denominator
+
+
+def test_per_contact_journey_handles_canceled_and_pt_variant():
+    """Canceled meetings -> 'Canceled' status; 'PT 15 Min Call' matches as 15-min."""
+    from dashboard.data.reconcile import per_contact_journey
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
+        {"hs_id": "2", "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
+    ])
+    meetings = pd.DataFrame([
+        # Contact 1: PT variant, canceled
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "PT 15 Min Call",
+         "outcome": "CANCELED", "start_time": ""},
+        # Contact 2: completed Strategy Call, plus a canceled 15-min - priority Completed for Strategy
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        {"meeting_id": "m3", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "CANCELED", "start_time": ""},
+    ])
+    contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
+    deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount"])
+
+    result = per_contact_journey(
+        contacts, meetings, contact_deals, deals,
+        stages_closed_won=set(),
+    )
+    by_id = {row["hs_id"]: row for _, row in result.iterrows()}
+    assert by_id["1"]["fifteen_min_status"] == "Canceled"
+    assert by_id["1"]["strategy_status"] == ""
+    # Contact 2: a canceled 15-min still shows as Canceled (no Scheduled/Completed 15-min)
+    assert by_id["2"]["fifteen_min_status"] == "Canceled"
+    assert by_id["2"]["strategy_status"] == "Completed"

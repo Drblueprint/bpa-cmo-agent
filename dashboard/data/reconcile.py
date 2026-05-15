@@ -63,15 +63,12 @@ def group_marketing_metrics(
         booked_contact_ids: set[str] = set()
         strategy_contact_ids: set[str] = set()
     else:
-        fifteen_meetings = meetings[
-            meetings["activity_type"].str.strip().str.lower() == "15 min call"
-        ]
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        fifteen_meetings = meetings[types.str.contains("15 min", na=False)]
+        strategy_meetings = meetings[types.str.contains("strategy", na=False)]
         booked_contact_ids = set(
             str(cid) for cid in fifteen_meetings["contact_id"].dropna().unique()
         )
-        strategy_meetings = meetings[
-            meetings["activity_type"].str.strip().str.lower() == "strategy call"
-        ]
         strategy_contact_ids = set(
             str(cid) for cid in strategy_meetings["contact_id"].dropna().unique()
         )
@@ -293,6 +290,7 @@ def per_contact_journey(
 
     # Build per-contact outcome sets for each meeting type
     def _classify(contact_meetings: pd.DataFrame) -> str:
+        """Status priority: Completed > Scheduled > Canceled > blank."""
         if contact_meetings.empty:
             return ""
         outcomes = contact_meetings["outcome"].fillna("").astype(str).str.upper().tolist()
@@ -300,6 +298,8 @@ def per_contact_journey(
             return "Completed"
         if any(o in ("SCHEDULED", "RESCHEDULED") for o in outcomes):
             return "Scheduled"
+        if any(o in ("CANCELED", "CANCELLED") for o in outcomes):
+            return "Canceled"
         return ""
 
     # Group meetings by contact and type for fast lookup
@@ -307,8 +307,11 @@ def per_contact_journey(
         fifteen_by_contact: dict[str, str] = {}
         strategy_by_contact: dict[str, str] = {}
     else:
-        fifteen = meetings[meetings["activity_type"].str.strip().str.lower() == "15 min call"]
-        strategy = meetings[meetings["activity_type"].str.strip().str.lower() == "strategy call"]
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        # Match "15 min call", "PT 15 Min Call", and any other "...15 min..." variant
+        fifteen = meetings[types.str.contains("15 min", na=False)]
+        # Match "Strategy Call" and any "...strategy..." variant
+        strategy = meetings[types.str.contains("strategy", na=False)]
         fifteen_by_contact = {
             cid: _classify(grp)
             for cid, grp in fifteen.groupby("contact_id")
