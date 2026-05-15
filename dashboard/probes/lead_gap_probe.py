@@ -29,6 +29,16 @@ GROUP_PATTERNS: dict[str, re.Pattern[str]] = {
     "TheraRay":    re.compile(r"__Theraray__", re.IGNORECASE),
 }
 
+ASSET_TO_GROUP: dict[str, str] = {
+    "Recovery Program (PT) typeform": "PT Recovery",
+    "EMX Fort Worth 2026": "EMX",
+    "Chiro Never Reach $1M ": "Chiro",
+    "Top 10 typeform": "Chiro",
+    "BPA Revenue Pyramid typeform": "Chiro",
+    "Can we help you scale typeform": "Chiro",
+    "Referral ": "Chiro",
+}
+
 
 def _source_label(src) -> str:
     if not isinstance(src, dict):
@@ -94,6 +104,70 @@ def search_hubspot_contact_by_email(token: str, email: str) -> dict | None:
     r.raise_for_status()
     results = r.json().get("results", [])
     return results[0] if results else None
+
+
+def pull_hubspot_typeform_completers(
+    token: str, start: date, end: date, group: str,
+    asset_to_group: dict[str, str],
+) -> list[dict]:
+    """Return HubSpot contacts whose typeform_submission_date is in window AND
+    whose typeform_asset_download maps to the given group."""
+    start_ms = int(datetime.combine(start, datetime.min.time(),
+                                     tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime.combine(end, datetime.max.time(),
+                                   tzinfo=timezone.utc).timestamp() * 1000)
+    body = {
+        "filterGroups": [{
+            "filters": [
+                {"propertyName": "typeform_asset_download",
+                 "operator": "HAS_PROPERTY"},
+                {"propertyName": "typeform_submission_date",
+                 "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        }],
+        "properties": [
+            "firstname", "lastname", "email", "createdate",
+            "typeform_asset_download", "typeform_submission_date",
+            "utm_source", "lifecyclestage", "n15_min_call_date",
+            "hs_analytics_source", "hs_latest_source",
+        ],
+        "limit": 100,
+    }
+    out = []
+    after = None
+    while True:
+        b = dict(body)
+        if after:
+            b["after"] = after
+        r = requests.post(
+            f"{HS_API}/crm/v3/objects/contacts/search",
+            headers={"Authorization": f"Bearer {token}"},
+            json=b, timeout=60,
+        )
+        r.raise_for_status()
+        data = r.json()
+        for c in data.get("results", []):
+            p = c.get("properties") or {}
+            asset = p.get("typeform_asset_download") or ""
+            if asset_to_group.get(asset) != group:
+                continue
+            out.append({
+                "email": (p.get("email") or "").strip().lower(),
+                "name": f"{p.get('firstname','')} {p.get('lastname','')}".strip(),
+                "asset": asset,
+                "submitted": p.get("typeform_submission_date"),
+                "created": p.get("createdate"),
+                "utm_source": p.get("utm_source") or "",
+                "hs_analytics_source": p.get("hs_analytics_source") or "",
+                "hs_latest_source": p.get("hs_latest_source") or "",
+                "lifecycle": p.get("lifecyclestage") or "",
+                "fifteen_min_date": p.get("n15_min_call_date") or "",
+            })
+        after = (data.get("paging") or {}).get("next", {}).get("after")
+        if not after:
+            break
+    return out
 
 
 def main() -> None:
@@ -185,6 +259,48 @@ def main() -> None:
             asset_counts[asset] = asset_counts.get(asset, 0) + 1
         for asset, n in sorted(asset_counts.items(), key=lambda kv: -kv[1]):
             print(f"  {n:3d}  {asset!r}")
+
+
+    # 5. REVERSE direction: HubSpot typeform completers in group, NOT in Hyros
+    print()
+    print(f"=" * 70)
+    print(f"REVERSE GAP — HubSpot typeform completers for {args.group}")
+    print(f"not attributed to Hyros (likely organic/direct/other paid)")
+    print(f"=" * 70)
+
+    hs_completers = pull_hubspot_typeform_completers(
+        hs_token, start, end, args.group, ASSET_TO_GROUP)
+    print(f"\nHubSpot {args.group} typeform completers in window: {len(hs_completers)}")
+
+    hyros_emails = {h["email"] for h in group_hyros if h["email"]}
+    unattributed = [c for c in hs_completers if c["email"] and c["email"] not in hyros_emails]
+
+    print(f"  - {len(hs_completers) - len(unattributed)} ARE in the Hyros list (paid-attributed)")
+    print(f"  - {len(unattributed)} are NOT in Hyros (the unattributed gap)")
+
+    if unattributed:
+        print(f"\n--- The {len(unattributed)} unattributed Chiro typeform completers ---\n")
+        print(f"{'Email':38s}  {'Name':25s}  {'Asset':28s}  {'Submitted':22s}  "
+              f"{'utm_source':18s}  {'hs_latest_source':22s}  Lifecycle")
+        print("-" * 220)
+        for c in sorted(unattributed, key=lambda r: r["submitted"] or ""):
+            print(f"  {c['email'][:36]:38s}  "
+                  f"{c['name'][:23]:25s}  "
+                  f"{c['asset'][:26]:28s}  "
+                  f"{(c['submitted'] or '')[:20]:22s}  "
+                  f"{c['utm_source'][:16]:18s}  "
+                  f"{c['hs_latest_source'][:20]:22s}  "
+                  f"{c['lifecycle']}")
+
+        # Summary table of where they came from
+        print()
+        sources_seen: dict[str, int] = {}
+        for c in unattributed:
+            tag = c.get("hs_latest_source") or c.get("utm_source") or "(no source data)"
+            sources_seen[tag] = sources_seen.get(tag, 0) + 1
+        print("Source distribution of the unattributed contacts:")
+        for src, n in sorted(sources_seen.items(), key=lambda kv: -kv[1]):
+            print(f"  {n:3d}  {src}")
 
 
 if __name__ == "__main__":
