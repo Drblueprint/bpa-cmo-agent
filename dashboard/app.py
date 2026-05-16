@@ -1,6 +1,12 @@
 """BPA CMO Dashboard entrypoint."""
 from __future__ import annotations
 
+import os
+import sys
+
+# Ensure repo root is on the path so `dashboard.*` imports resolve on Streamlit Cloud
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from datetime import date, timedelta
 
 import streamlit as st
