@@ -1,4 +1,5 @@
 """Tests for marketing per-group aggregation."""
+import pytest
 import pandas as pd
 
 from dashboard.data.reconcile import group_marketing_metrics
@@ -390,3 +391,157 @@ def test_per_contact_journey_priority_completed_over_canceled():
         stages_closed_won=set(),
     )
     assert result.iloc[0]["strategy_status"] == "Completed"
+
+
+def test_executive_kpis_all_groups_basic():
+    """Returns the 15 KPI values aggregated across all groups."""
+    from dashboard.data.reconcile import executive_kpis
+
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__", "group": "Chiro",
+         "spend": 6750.0, "impressions": 50000, "clicks": 500, "fb_leads": 24},
+        {"campaign_name": "DS | __PT__", "group": "PT Recovery",
+         "spend": 1136.0, "impressions": 25000, "clicks": 250, "fb_leads": 12},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Top 10 typeform",
+         "lifecycle_stage": "marketingqualifiedlead",
+         "fifteen_min_call_date": "2026-05-10T10:00:00Z",
+         "sdr_owner": "89638769", "bds": "44815718",
+         "typeform_submission_date": "2026-05-09T00:00:00Z",
+         "createdate": "2026-05-09T00:00:00Z"},
+        {"hs_id": "2", "typeform_asset_download": "Top 10 typeform",
+         "lifecycle_stage": "lead",
+         "fifteen_min_call_date": None,
+         "sdr_owner": "89638769", "bds": "44815718",
+         "typeform_submission_date": "2026-05-10T00:00:00Z",
+         "createdate": "2026-05-10T00:00:00Z"},
+        {"hs_id": "3", "typeform_asset_download": "Recovery Program (PT) typeform",
+         "lifecycle_stage": "salesqualifiedlead",
+         "fifteen_min_call_date": "2026-05-11T10:00:00Z",
+         "sdr_owner": "79870794", "bds": "44815718",
+         "typeform_submission_date": "2026-05-11T00:00:00Z",
+         "createdate": "2026-05-11T00:00:00Z"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-05-10T10:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-05-12T10:00:00Z"},
+        {"meeting_id": "m3", "contact_id": "3", "activity_type": "PT 15 Min Call",
+         "outcome": "SCHEDULED", "start_time": "2026-05-15T10:00:00Z"},
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "1", "deal_id": "d1"},
+    ])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 47928.0,
+         "createdate": "2026-05-09T00:00:00Z", "closedate": "2026-05-15T00:00:00Z"},
+    ])
+
+    result = executive_kpis(
+        fb=fb, contacts=contacts, meetings=meetings,
+        contact_deals=contact_deals, deals=deals,
+        group_filter="All",
+        asset_to_group={"Top 10 typeform": "Chiro",
+                        "Recovery Program (PT) typeform": "PT Recovery"},
+        group_default_amount={"Chiro": 47928.0, "PT Recovery": 23928.0},
+        stages_closed_won={"closedwon"},
+        sdr_payroll_monthly=None,
+        sme_payroll_monthly=None,
+    )
+
+    # Row 1 inputs
+    assert result["total_ad_spend"] == 7886.0           # 6750 + 1136
+    assert result["new_leads"] == 3                      # 3 contacts with typeform
+    assert result["engaged_leads"] == 2                  # MQL (1) + SQL (3)
+    assert result["cpl"] == pytest.approx(7886.0 / 3)
+    assert result["cost_per_engaged_lead"] == pytest.approx(7886.0 / 2)
+
+    # Row 2 conversions
+    assert result["discovery_booked"] == 2               # contacts 1, 3 have 15-min meetings
+    assert result["discovery_held"] == 1                 # contact 1 (COMPLETE)
+    assert result["sme_booked"] == 1                     # contact 1 has Strategy meeting
+    assert result["sme_held"] == 1                       # contact 1 (COMPLETE)
+    assert result["closed_won"] == 1                     # 1 closed deal
+
+    # Row 3 money
+    assert result["new_revenue"] == 47928.0
+    assert result["avg_deal_size"] == 47928.0
+    assert result["cac_ad_only"] == 7886.0               # 7886 / 1
+
+
+def test_executive_kpis_group_filter():
+    """Group filter restricts every metric to the selected group only."""
+    from dashboard.data.reconcile import executive_kpis
+
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__", "group": "Chiro",
+         "spend": 1000.0, "impressions": 0, "clicks": 0, "fb_leads": 5},
+        {"campaign_name": "DS | __PT__", "group": "PT Recovery",
+         "spend": 2000.0, "impressions": 0, "clicks": 0, "fb_leads": 10},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro asset",
+         "lifecycle_stage": "lead", "fifteen_min_call_date": None,
+         "sdr_owner": "x", "bds": "y",
+         "typeform_submission_date": "2026-05-10T00:00:00Z",
+         "createdate": "2026-05-10T00:00:00Z"},
+        {"hs_id": "2", "typeform_asset_download": "PT asset",
+         "lifecycle_stage": "lead", "fifteen_min_call_date": None,
+         "sdr_owner": "x", "bds": "y",
+         "typeform_submission_date": "2026-05-10T00:00:00Z",
+         "createdate": "2026-05-10T00:00:00Z"},
+    ])
+
+    result = executive_kpis(
+        fb=fb, contacts=contacts,
+        meetings=pd.DataFrame(columns=["meeting_id","contact_id","activity_type","outcome","start_time"]),
+        contact_deals=pd.DataFrame(columns=["contact_id","deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id","dealstage","amount","createdate","closedate"]),
+        group_filter="Chiro",
+        asset_to_group={"Chiro asset": "Chiro", "PT asset": "PT Recovery"},
+        group_default_amount={"Chiro": 47928.0, "PT Recovery": 23928.0},
+        stages_closed_won=set(),
+        sdr_payroll_monthly=None,
+        sme_payroll_monthly=None,
+    )
+
+    assert result["total_ad_spend"] == 1000.0    # only Chiro spend
+    assert result["new_leads"] == 1              # only Chiro contact
+
+
+def test_executive_kpis_revenue_fallback_option_c():
+    """If a closed-won deal has zero/missing amount, use the group default."""
+    from dashboard.data.reconcile import executive_kpis
+
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__", "group": "Chiro",
+         "spend": 1000.0, "impressions": 0, "clicks": 0, "fb_leads": 0},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro asset",
+         "lifecycle_stage": "customer", "fifteen_min_call_date": None,
+         "sdr_owner": "x", "bds": "y",
+         "typeform_submission_date": "2026-05-10T00:00:00Z",
+         "createdate": "2026-05-10T00:00:00Z"},
+    ])
+    contact_deals = pd.DataFrame([{"contact_id": "1", "deal_id": "d1"}])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 0,  # missing
+         "createdate": "2026-05-10T00:00:00Z", "closedate": "2026-05-15T00:00:00Z"},
+    ])
+
+    result = executive_kpis(
+        fb=fb, contacts=contacts,
+        meetings=pd.DataFrame(columns=["meeting_id","contact_id","activity_type","outcome","start_time"]),
+        contact_deals=contact_deals, deals=deals,
+        group_filter="All",
+        asset_to_group={"Chiro asset": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+        sdr_payroll_monthly=None,
+        sme_payroll_monthly=None,
+    )
+
+    assert result["new_revenue"] == 47928.0   # Option C fallback fired

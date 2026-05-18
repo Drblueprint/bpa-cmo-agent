@@ -349,3 +349,180 @@ def per_contact_journey(
             "closed_won": "Yes" if cid in won_contact_ids else "",
         })
     return pd.DataFrame(rows)
+
+
+def executive_kpis(
+    *,
+    fb: pd.DataFrame,
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    group_filter: str,
+    asset_to_group: dict[str, str],
+    group_default_amount: dict[str, float],
+    stages_closed_won: Iterable[str],
+    sdr_payroll_monthly: float | None,
+    sme_payroll_monthly: float | None,
+) -> dict:
+    """Return the 15 Executive-tab KPI values for a window.
+
+    group_filter is "All" or a specific group label. When a group is selected,
+    every metric is restricted to that group.
+
+    Returns dict with keys:
+        total_ad_spend, new_leads, engaged_leads, cpl, cost_per_engaged_lead,
+        discovery_booked, discovery_held, sme_booked, sme_held, closed_won,
+        new_revenue, avg_deal_size, cac_ad_only, cac_full, sales_cycle_days,
+        schedule_rate, discovery_show_rate, sme_set_rate, sme_show_rate, close_rate.
+    """
+    # --- Tag contacts with group via asset map ---
+    contacts = contacts.copy()
+    contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
+
+    # --- Apply group filter to each frame ---
+    if group_filter != "All":
+        fb_filtered = fb[fb["group"] == group_filter]
+        contacts_filtered = contacts[contacts["group"] == group_filter]
+    else:
+        fb_filtered = fb
+        contacts_filtered = contacts
+
+    contact_ids_in_scope = set(contacts_filtered["hs_id"].astype(str))
+
+    meetings_filtered = meetings[
+        meetings["contact_id"].astype(str).isin(contact_ids_in_scope)
+    ] if not meetings.empty else meetings
+
+    deals_filtered_ids = set(
+        contact_deals[contact_deals["contact_id"].astype(str).isin(contact_ids_in_scope)]["deal_id"]
+    ) if not contact_deals.empty else set()
+    deals_filtered = deals[deals["deal_id"].isin(deals_filtered_ids)] if not deals.empty else deals
+
+    # --- Row 1: Inputs ---
+    total_ad_spend = float(fb_filtered["spend"].sum()) if not fb_filtered.empty else 0.0
+    new_leads = int(len(contacts_filtered))
+    engaged_set = {"marketingqualifiedlead", "salesqualifiedlead", "opportunity", "customer"}
+    if not contacts_filtered.empty:
+        ls = contacts_filtered["lifecycle_stage"].fillna("").astype(str).str.lower()
+        engaged_leads = int(ls.isin(engaged_set).sum())
+    else:
+        engaged_leads = 0
+
+    cpl = _safe_div(total_ad_spend, new_leads)
+    cost_per_engaged_lead = _safe_div(total_ad_spend, engaged_leads)
+
+    # --- Row 2: Conversions (meeting-based) ---
+    def _meetings_of_type(token: str) -> pd.DataFrame:
+        if meetings_filtered.empty:
+            return meetings_filtered
+        types = meetings_filtered["activity_type"].fillna("").astype(str).str.lower()
+        return meetings_filtered[types.str.contains(token, na=False)]
+
+    fifteen = _meetings_of_type("15 min")
+    strategy = _meetings_of_type("strategy")
+
+    def _has_outcome_prefix(group_df: pd.DataFrame, prefix: str) -> set[str]:
+        if group_df.empty:
+            return set()
+        mask = group_df["outcome"].fillna("").astype(str).str.upper().str.startswith(prefix)
+        return set(group_df.loc[mask, "contact_id"].astype(str))
+
+    discovery_booked = len(set(fifteen["contact_id"].astype(str))) if not fifteen.empty else 0
+    discovery_held = len(_has_outcome_prefix(fifteen, "COMPLETE"))
+    sme_booked = len(set(strategy["contact_id"].astype(str))) if not strategy.empty else 0
+    sme_held = len(_has_outcome_prefix(strategy, "COMPLETE"))
+
+    won_set = set(stages_closed_won)
+    if not deals_filtered.empty and won_set:
+        won_mask = deals_filtered["dealstage"].isin(won_set)
+        won_deals_df = deals_filtered[won_mask]
+    else:
+        won_deals_df = deals_filtered.iloc[0:0] if not deals_filtered.empty else deals_filtered
+
+    closed_won_count = int(len(won_deals_df))
+
+    # --- Row 3: Money ---
+    # Revenue Option C: deal.amount if > 0, else group default
+    if not won_deals_df.empty:
+        # Need to know each won deal's group via its associated contacts
+        contact_to_group = dict(zip(contacts["hs_id"].astype(str), contacts["group"]))
+        deal_to_contacts = (
+            contact_deals[contact_deals["deal_id"].isin(won_deals_df["deal_id"])]
+            .groupby("deal_id")["contact_id"].apply(list).to_dict()
+        )
+
+        def _deal_revenue(row) -> float:
+            amt = float(row.get("amount") or 0)
+            if amt > 0:
+                return amt
+            for cid in deal_to_contacts.get(row["deal_id"], []):
+                g = contact_to_group.get(str(cid))
+                if g and g in group_default_amount:
+                    return float(group_default_amount[g])
+            return 0.0
+
+        new_revenue = float(won_deals_df.apply(_deal_revenue, axis=1).sum())
+    else:
+        new_revenue = 0.0
+
+    avg_deal_size = _safe_div(new_revenue, closed_won_count)
+
+    cac_ad_only = _safe_div(total_ad_spend, closed_won_count)
+    if sdr_payroll_monthly is not None and sme_payroll_monthly is not None and closed_won_count:
+        cac_full = (total_ad_spend + sdr_payroll_monthly + sme_payroll_monthly) / closed_won_count
+    else:
+        cac_full = None
+
+    # Sales cycle: median days from contact.createdate to deal.closedate for won deals
+    if not won_deals_df.empty:
+        cycle_days = []
+        for _, deal_row in won_deals_df.iterrows():
+            for cid in deal_to_contacts.get(deal_row["deal_id"], []):
+                contact = contacts[contacts["hs_id"].astype(str) == str(cid)]
+                if contact.empty:
+                    continue
+                try:
+                    created = pd.to_datetime(contact.iloc[0]["createdate"], utc=True, errors="coerce")
+                    closed = pd.to_datetime(deal_row.get("closedate"), utc=True, errors="coerce")
+                    if pd.notna(created) and pd.notna(closed):
+                        cycle_days.append((closed - created).days)
+                except Exception:
+                    continue
+        sales_cycle_days = float(pd.Series(cycle_days).median()) if cycle_days else None
+    else:
+        sales_cycle_days = None
+
+    # --- Conversion rates ---
+    schedule_rate = _safe_div(discovery_booked, new_leads)
+    discovery_show_rate = _safe_div(discovery_held, discovery_booked)
+    sme_set_rate = _safe_div(sme_booked, discovery_held)
+    sme_show_rate = _safe_div(sme_held, sme_booked)
+    close_rate = _safe_div(closed_won_count, sme_held)
+
+    return {
+        # Row 1
+        "total_ad_spend": total_ad_spend,
+        "new_leads": new_leads,
+        "engaged_leads": engaged_leads,
+        "cpl": cpl,
+        "cost_per_engaged_lead": cost_per_engaged_lead,
+        # Row 2 raw counts
+        "discovery_booked": discovery_booked,
+        "discovery_held": discovery_held,
+        "sme_booked": sme_booked,
+        "sme_held": sme_held,
+        "closed_won": closed_won_count,
+        # Row 2 rates
+        "schedule_rate": schedule_rate,
+        "discovery_show_rate": discovery_show_rate,
+        "sme_set_rate": sme_set_rate,
+        "sme_show_rate": sme_show_rate,
+        "close_rate": close_rate,
+        # Row 3 money
+        "new_revenue": new_revenue,
+        "avg_deal_size": avg_deal_size,
+        "cac_ad_only": cac_ad_only,
+        "cac_full": cac_full,
+        "sales_cycle_days": sales_cycle_days,
+    }
