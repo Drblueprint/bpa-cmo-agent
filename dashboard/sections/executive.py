@@ -247,3 +247,70 @@ def render_executive(start: date, end: date) -> None:
                 "revenue_per_call": "Revenue / Call",
             })
             st.dataframe(sme_display, use_container_width=True, hide_index=True)
+
+    # =============================================================
+    # Per-call detail tables — every 15-min and Strategy call with
+    # the assigned BDS / SME visible. Lets Dr. Gumm see who's on
+    # which calls and which leads are in play.
+    # =============================================================
+    if not meetings.empty and not contacts_for_reps.empty:
+        # Contact lookup with needed properties
+        contact_lookup = contacts_for_reps[[
+            "hs_id", "name", "email", "bds", "sme", "typeform_asset_download",
+        ]].rename(columns={"hs_id": "contact_id"})
+        contact_lookup["contact_id"] = contact_lookup["contact_id"].astype(str)
+
+        meetings_x = meetings.copy()
+        meetings_x["contact_id"] = meetings_x["contact_id"].astype(str)
+        meetings_x = meetings_x.merge(contact_lookup, on="contact_id", how="inner")
+
+        # Format start_time to Central Time
+        st_dt = pd.to_datetime(meetings_x["start_time"], utc=True, errors="coerce")
+        st_dt_ct = st_dt.dt.tz_convert("America/Chicago")
+        meetings_x["scheduled_ct"] = st_dt_ct.apply(
+            lambda x: x.strftime("%m/%d/%Y %I:%M %p") if pd.notna(x) else ""
+        )
+
+        types = meetings_x["activity_type"].fillna("").astype(str).str.lower()
+        fifteen_detail = meetings_x[types.str.contains("15 min", na=False)].copy()
+        strategy_detail = meetings_x[types.str.contains("strategy", na=False)].copy()
+
+        st.divider()
+        st.subheader("BDS Call Detail")
+        st.caption("Every 15-min discovery call, with the BDS assigned to hold it.")
+        if fifteen_detail.empty:
+            st.info("No 15-min calls in this window.")
+        else:
+            fifteen_detail["bds"] = fifteen_detail["bds"].map(cfg.resolve_owner)
+            fifteen_view = fifteen_detail[[
+                "bds", "name", "email", "typeform_asset_download",
+                "outcome", "scheduled_ct",
+            ]].rename(columns={
+                "bds": "BDS",
+                "name": "Contact",
+                "email": "Email",
+                "typeform_asset_download": "Asset",
+                "outcome": "Outcome",
+                "scheduled_ct": "Scheduled (CT)",
+            }).sort_values(["BDS", "Scheduled (CT)"], ascending=[True, False])
+            st.dataframe(fifteen_view, use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader("SME Call Detail")
+        st.caption("Every Strategy call, with the SME assigned to hold it.")
+        if strategy_detail.empty:
+            st.info("No Strategy calls in this window.")
+        else:
+            strategy_detail["sme"] = strategy_detail["sme"].map(cfg.resolve_owner)
+            strategy_view = strategy_detail[[
+                "sme", "name", "email", "typeform_asset_download",
+                "outcome", "scheduled_ct",
+            ]].rename(columns={
+                "sme": "SME",
+                "name": "Contact",
+                "email": "Email",
+                "typeform_asset_download": "Asset",
+                "outcome": "Outcome",
+                "scheduled_ct": "Scheduled (CT)",
+            }).sort_values(["SME", "Scheduled (CT)"], ascending=[True, False])
+            st.dataframe(strategy_view, use_container_width=True, hide_index=True)
