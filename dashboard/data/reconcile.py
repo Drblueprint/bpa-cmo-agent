@@ -526,3 +526,132 @@ def executive_kpis(
         "cac_full": cac_full,
         "sales_cycle_days": sales_cycle_days,
     }
+
+
+def executive_sdr_rollup(
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+) -> pd.DataFrame:
+    """Per-SDR-owner rollup for the Executive tab.
+
+    Columns: sdr_id, leads_worked, discovery_booked, schedule_rate,
+             discovery_held, show_rate.
+    """
+    if contacts.empty:
+        return pd.DataFrame(columns=["sdr_id", "leads_worked", "discovery_booked",
+                                     "schedule_rate", "discovery_held", "show_rate"])
+
+    types = meetings["activity_type"].fillna("").astype(str).str.lower() \
+        if not meetings.empty else pd.Series(dtype=str)
+    fifteen = meetings[types.str.contains("15 min", na=False)] if not meetings.empty else meetings
+
+    # Per-contact stage flags
+    booked_contact_ids = set(fifteen["contact_id"].astype(str)) if not fifteen.empty else set()
+    held_contact_ids = set()
+    if not fifteen.empty:
+        out = fifteen["outcome"].fillna("").astype(str).str.upper()
+        held_contact_ids = set(fifteen.loc[out.str.startswith("COMPLETE"), "contact_id"].astype(str))
+
+    rows = []
+    for sdr_id, grp in contacts.groupby("sdr_owner", dropna=False):
+        worked = int(len(grp))
+        ids = set(grp["hs_id"].astype(str))
+        booked = len(ids & booked_contact_ids)
+        held = len(ids & held_contact_ids)
+        rows.append({
+            "sdr_id": str(sdr_id) if pd.notna(sdr_id) else "",
+            "leads_worked": worked,
+            "discovery_booked": booked,
+            "schedule_rate": _safe_div(booked, worked),
+            "discovery_held": held,
+            "show_rate": _safe_div(held, booked),
+        })
+    return pd.DataFrame(rows).sort_values("discovery_booked", ascending=False)
+
+
+def executive_sme_rollup(
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    *,
+    asset_to_group: dict[str, str],
+    group_default_amount: dict[str, float],
+    stages_closed_won: Iterable[str],
+) -> pd.DataFrame:
+    """Per-SME (BDS) rollup for the Executive tab.
+
+    Columns: sme_id, sme_calls_held, deals_closed, close_rate, revenue, revenue_per_call.
+    """
+    cols = ["sme_id", "sme_calls_held", "deals_closed", "close_rate",
+            "revenue", "revenue_per_call"]
+    if contacts.empty:
+        return pd.DataFrame(columns=cols)
+
+    contacts = contacts.copy()
+    contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
+
+    # Strategy meetings, COMPLETE-prefix outcomes
+    if not meetings.empty:
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        strategy = meetings[types.str.contains("strategy", na=False)]
+        if not strategy.empty:
+            out = strategy["outcome"].fillna("").astype(str).str.upper()
+            sme_held_contact_ids = set(
+                strategy.loc[out.str.startswith("COMPLETE"), "contact_id"].astype(str)
+            )
+        else:
+            sme_held_contact_ids = set()
+    else:
+        sme_held_contact_ids = set()
+
+    # Closed-won deals + contacts associated
+    won_set = set(stages_closed_won)
+    if not deals.empty and not contact_deals.empty and won_set:
+        won_deal_ids = set(deals.loc[deals["dealstage"].isin(won_set), "deal_id"])
+        won_contact_ids = set(
+            contact_deals.loc[contact_deals["deal_id"].isin(won_deal_ids), "contact_id"].astype(str)
+        )
+        # Revenue per contact (Option C)
+        contact_to_group = dict(zip(contacts["hs_id"].astype(str), contacts["group"]))
+
+        def _deal_revenue(row) -> float:
+            amt = float(row.get("amount") or 0)
+            if amt > 0:
+                return amt
+            cids = contact_deals[contact_deals["deal_id"] == row["deal_id"]]["contact_id"].astype(str)
+            for cid in cids:
+                g = contact_to_group.get(cid)
+                if g and g in group_default_amount:
+                    return float(group_default_amount[g])
+            return 0.0
+
+        won_deals = deals[deals["dealstage"].isin(won_set)].copy()
+        won_deals["effective_amount"] = won_deals.apply(_deal_revenue, axis=1)
+
+        deal_revenue_map = dict(zip(won_deals["deal_id"], won_deals["effective_amount"]))
+        contact_revenue: dict[str, float] = {}
+        for _, row in contact_deals.iterrows():
+            cid = str(row["contact_id"])
+            did = row["deal_id"]
+            if did in deal_revenue_map:
+                contact_revenue[cid] = contact_revenue.get(cid, 0.0) + deal_revenue_map[did]
+    else:
+        won_contact_ids = set()
+        contact_revenue = {}
+
+    rows = []
+    for sme_id, grp in contacts.groupby("bds", dropna=False):
+        cids = set(grp["hs_id"].astype(str))
+        held = len(cids & sme_held_contact_ids)
+        closed = len(cids & won_contact_ids)
+        revenue = sum(contact_revenue.get(c, 0.0) for c in cids)
+        rows.append({
+            "sme_id": str(sme_id) if pd.notna(sme_id) else "",
+            "sme_calls_held": held,
+            "deals_closed": closed,
+            "close_rate": _safe_div(closed, held),
+            "revenue": revenue,
+            "revenue_per_call": _safe_div(revenue, held),
+        })
+    return pd.DataFrame(rows, columns=cols).sort_values("revenue", ascending=False)

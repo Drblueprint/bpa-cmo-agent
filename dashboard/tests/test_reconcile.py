@@ -545,3 +545,66 @@ def test_executive_kpis_revenue_fallback_option_c():
     )
 
     assert result["new_revenue"] == 47928.0   # Option C fallback fired
+
+
+def test_executive_sdr_rollup_basic():
+    """Per-SDR table: leads worked, discovery booked, schedule %, held, show %."""
+    from dashboard.data.reconcile import executive_sdr_rollup
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "sdr_owner": "89638769"},   # Peyton
+        {"hs_id": "2", "sdr_owner": "89638769"},   # Peyton
+        {"hs_id": "3", "sdr_owner": "79870794"},   # Garrett
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        {"meeting_id": "m2", "contact_id": "3", "activity_type": "15 min call",
+         "outcome": "SCHEDULED", "start_time": ""},
+    ])
+
+    result = executive_sdr_rollup(contacts, meetings)
+
+    by_id = {row["sdr_id"]: row for _, row in result.iterrows()}
+    peyton = by_id["89638769"]
+    assert peyton["leads_worked"] == 2
+    assert peyton["discovery_booked"] == 1
+    assert peyton["discovery_held"] == 1
+    # Schedule rate = 1/2 = 0.5; show rate = 1/1 = 1.0
+    assert peyton["schedule_rate"] == 0.5
+    assert peyton["show_rate"] == 1.0
+
+
+def test_executive_sme_rollup_basic():
+    """Per-SME table: calls held, deals closed, close %, revenue, revenue/call."""
+    from dashboard.data.reconcile import executive_sme_rollup
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "bds": "44815718", "typeform_asset_download": "Chiro asset"},
+        {"hs_id": "2", "bds": "44815718", "typeform_asset_download": "Chiro asset"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+    ])
+    contact_deals = pd.DataFrame([{"contact_id": "1", "deal_id": "d1"}])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 47928.0,
+         "createdate": "", "closedate": ""},
+    ])
+    result = executive_sme_rollup(
+        contacts, meetings, contact_deals, deals,
+        asset_to_group={"Chiro asset": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+    )
+
+    by_id = {row["sme_id"]: row for _, row in result.iterrows()}
+    scott = by_id["44815718"]
+    assert scott["sme_calls_held"] == 2
+    assert scott["deals_closed"] == 1
+    assert scott["close_rate"] == 0.5
+    assert scott["revenue"] == 47928.0
+    assert scott["revenue_per_call"] == pytest.approx(47928.0 / 2)
