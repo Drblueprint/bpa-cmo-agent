@@ -641,7 +641,7 @@ def executive_sme_rollup(
         contact_revenue = {}
 
     rows = []
-    for sme_id, grp in contacts.groupby("bds", dropna=False):
+    for sme_id, grp in contacts.groupby("sme", dropna=False):
         cids = set(grp["hs_id"].astype(str))
         held = len(cids & sme_held_contact_ids)
         closed = len(cids & won_contact_ids)
@@ -655,3 +655,64 @@ def executive_sme_rollup(
             "revenue_per_call": _safe_div(revenue, held),
         })
     return pd.DataFrame(rows, columns=cols).sort_values("revenue", ascending=False)
+
+
+def executive_bds_rollup(
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+) -> pd.DataFrame:
+    """Per-BDS rollup for the Executive tab.
+
+    BDS holds the 15-min discovery and books the Strategy call. Metrics track
+    the BDS funnel: held a discovery, advanced to strategy (set rate),
+    strategy held (show rate).
+
+    Columns: bds_id, discovery_held, strategy_booked, set_rate,
+             strategy_held, show_rate.
+    """
+    cols = ["bds_id", "discovery_held", "strategy_booked",
+            "set_rate", "strategy_held", "show_rate"]
+    if contacts.empty:
+        return pd.DataFrame(columns=cols)
+
+    if not meetings.empty:
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        fifteen = meetings[types.str.contains("15 min", na=False)]
+        strategy = meetings[types.str.contains("strategy", na=False)]
+
+        held_disco_ids: set[str] = set()
+        if not fifteen.empty:
+            out = fifteen["outcome"].fillna("").astype(str).str.upper()
+            held_disco_ids = set(
+                fifteen.loc[out.str.startswith("COMPLETE"), "contact_id"].astype(str)
+            )
+
+        booked_strat_ids = set(strategy["contact_id"].astype(str)) \
+            if not strategy.empty else set()
+
+        held_strat_ids: set[str] = set()
+        if not strategy.empty:
+            out = strategy["outcome"].fillna("").astype(str).str.upper()
+            held_strat_ids = set(
+                strategy.loc[out.str.startswith("COMPLETE"), "contact_id"].astype(str)
+            )
+    else:
+        held_disco_ids = set()
+        booked_strat_ids = set()
+        held_strat_ids = set()
+
+    rows = []
+    for bds_id, grp in contacts.groupby("bds", dropna=False):
+        ids = set(grp["hs_id"].astype(str))
+        disco_held = len(ids & held_disco_ids)
+        strat_booked = len(ids & booked_strat_ids)
+        strat_held = len(ids & held_strat_ids)
+        rows.append({
+            "bds_id": str(bds_id) if pd.notna(bds_id) else "",
+            "discovery_held": disco_held,
+            "strategy_booked": strat_booked,
+            "set_rate": _safe_div(strat_booked, disco_held),
+            "strategy_held": strat_held,
+            "show_rate": _safe_div(strat_held, strat_booked),
+        })
+    return pd.DataFrame(rows, columns=cols).sort_values("strategy_held", ascending=False)

@@ -580,8 +580,8 @@ def test_executive_sme_rollup_basic():
     from dashboard.data.reconcile import executive_sme_rollup
 
     contacts = pd.DataFrame([
-        {"hs_id": "1", "bds": "44815718", "typeform_asset_download": "Chiro asset"},
-        {"hs_id": "2", "bds": "44815718", "typeform_asset_download": "Chiro asset"},
+        {"hs_id": "1", "bds": "44815718", "sme": "44815718", "typeform_asset_download": "Chiro asset"},
+        {"hs_id": "2", "bds": "44815718", "sme": "44815718", "typeform_asset_download": "Chiro asset"},
     ])
     meetings = pd.DataFrame([
         {"meeting_id": "m1", "contact_id": "1", "activity_type": "Strategy Call",
@@ -608,3 +608,90 @@ def test_executive_sme_rollup_basic():
     assert scott["close_rate"] == 0.5
     assert scott["revenue"] == 47928.0
     assert scott["revenue_per_call"] == pytest.approx(47928.0 / 2)
+
+
+def test_executive_bds_rollup_basic():
+    """BDS table: held discovery, booked strategy, set rate, strategy held, show rate."""
+    from dashboard.data.reconcile import executive_bds_rollup
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "bds": "44815718"},   # Scott
+        {"hs_id": "2", "bds": "44815718"},   # Scott
+        {"hs_id": "3", "bds": "79870794"},   # Garrett
+    ])
+    meetings = pd.DataFrame([
+        # Contact 1: discovery held + strategy booked + held
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        {"meeting_id": "m2", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        # Contact 2: discovery held + strategy booked (not held)
+        {"meeting_id": "m3", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        {"meeting_id": "m4", "contact_id": "2", "activity_type": "Strategy Call",
+         "outcome": "SCHEDULED", "start_time": ""},
+        # Contact 3: discovery held only (no strategy)
+        {"meeting_id": "m5", "contact_id": "3", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+    ])
+
+    result = executive_bds_rollup(contacts, meetings)
+    by_id = {row["bds_id"]: row for _, row in result.iterrows()}
+
+    scott = by_id["44815718"]
+    assert scott["discovery_held"] == 2
+    assert scott["strategy_booked"] == 2
+    assert scott["set_rate"] == 1.0       # 2 / 2
+    assert scott["strategy_held"] == 1
+    assert scott["show_rate"] == 0.5      # 1 / 2
+
+    garrett = by_id["79870794"]
+    assert garrett["discovery_held"] == 1
+    assert garrett["strategy_booked"] == 0
+    assert garrett["set_rate"] == 0.0     # 0 / 1 -> 0.0
+    assert garrett["strategy_held"] == 0
+
+
+def test_executive_sme_rollup_uses_sme_field():
+    """SME rollup must group by the `sme` field (Dr. Lewis/Dr. Smith),
+    not the `bds` field."""
+    from dashboard.data.reconcile import executive_sme_rollup
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "bds": "44815718", "sme": "77643349",
+         "typeform_asset_download": "Chiro asset"},  # Eric Smith
+        {"hs_id": "2", "bds": "44815718", "sme": "24801837",
+         "typeform_asset_download": "Chiro asset"},  # Wm. Lewis
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+    ])
+    contact_deals = pd.DataFrame([{"contact_id": "1", "deal_id": "d1"}])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 47928.0,
+         "createdate": "", "closedate": ""},
+    ])
+
+    result = executive_sme_rollup(
+        contacts, meetings, contact_deals, deals,
+        asset_to_group={"Chiro asset": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+    )
+    by_id = {row["sme_id"]: row for _, row in result.iterrows()}
+
+    # Eric Smith should appear; deal was associated to contact 1 (Eric's contact)
+    assert "77643349" in by_id
+    eric = by_id["77643349"]
+    assert eric["sme_calls_held"] == 1
+    assert eric["deals_closed"] == 1
+    assert eric["revenue"] == 47928.0
+
+    # Wm. Lewis: 1 call held, 0 closed
+    assert "24801837" in by_id
+    lewis = by_id["24801837"]
+    assert lewis["sme_calls_held"] == 1
+    assert lewis["deals_closed"] == 0

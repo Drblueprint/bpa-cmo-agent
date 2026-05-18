@@ -170,30 +170,60 @@ def render_executive(start: date, end: date) -> None:
             .map(cfg.ASSET_TO_GROUP)
         contacts_for_reps = contacts_for_reps[contacts_for_reps["group"] == group_filter]
 
-    col_sdr, col_sme = st.columns(2)
+    # SDR table — full width
+    st.subheader("SDR Performance")
+    st.caption("SDR books the 15-min discovery call. Tracks: leads worked → "
+               "discovery booked → discovery held.")
+    sdr = executive_sdr_rollup(contacts_for_reps, meetings)
+    if sdr.empty:
+        st.info("No SDR data for this window.")
+    else:
+        sdr_display = sdr.copy()
+        sdr_display["sdr_id"] = sdr_display["sdr_id"].map(cfg.resolve_owner)
+        sdr_display["schedule_rate"] = sdr_display["schedule_rate"].map(_fmt_pct)
+        sdr_display["show_rate"] = sdr_display["show_rate"].map(_fmt_pct)
+        sdr_display = sdr_display.rename(columns={
+            "sdr_id": "SDR Owner",
+            "leads_worked": "Leads Worked",
+            "discovery_booked": "Discovery Booked",
+            "schedule_rate": "Schedule %",
+            "discovery_held": "Discovery Held",
+            "show_rate": "Show %",
+        })
+        st.dataframe(sdr_display, use_container_width=True, hide_index=True)
 
-    with col_sdr:
-        st.subheader("SDR Performance")
-        sdr = executive_sdr_rollup(contacts_for_reps, meetings)
-        if sdr.empty:
-            st.info("No SDR data for this window.")
+    st.divider()
+
+    # BDS + SME side by side
+    col_bds, col_sme = st.columns(2)
+
+    with col_bds:
+        st.subheader("BDS Performance")
+        st.caption("BDS holds the 15-min and books the Strategy call. Tracks: "
+                   "discovery held → strategy set → strategy held.")
+        from dashboard.data.reconcile import executive_bds_rollup
+        bds = executive_bds_rollup(contacts_for_reps, meetings)
+        if bds.empty:
+            st.info("No BDS data for this window.")
         else:
-            sdr_display = sdr.copy()
-            sdr_display["sdr_id"] = sdr_display["sdr_id"].map(cfg.resolve_owner)
-            sdr_display["schedule_rate"] = sdr_display["schedule_rate"].map(_fmt_pct)
-            sdr_display["show_rate"] = sdr_display["show_rate"].map(_fmt_pct)
-            sdr_display = sdr_display.rename(columns={
-                "sdr_id": "SDR Owner",
-                "leads_worked": "Leads Worked",
-                "discovery_booked": "Discovery Booked",
-                "schedule_rate": "Schedule %",
+            bds_display = bds.copy()
+            bds_display["bds_id"] = bds_display["bds_id"].map(cfg.resolve_owner)
+            bds_display["set_rate"] = bds_display["set_rate"].map(_fmt_pct)
+            bds_display["show_rate"] = bds_display["show_rate"].map(_fmt_pct)
+            bds_display = bds_display.rename(columns={
+                "bds_id": "BDS",
                 "discovery_held": "Discovery Held",
+                "strategy_booked": "Strategy Booked",
+                "set_rate": "Set %",
+                "strategy_held": "Strategy Held",
                 "show_rate": "Show %",
             })
-            st.dataframe(sdr_display, use_container_width=True, hide_index=True)
+            st.dataframe(bds_display, use_container_width=True, hide_index=True)
 
     with col_sme:
         st.subheader("SME Performance")
+        st.caption("SME holds the Strategy call and closes the deal. Tracks: "
+                   "strategy held → deals closed → revenue.")
         sme = executive_sme_rollup(
             contacts_for_reps, meetings, contact_deals, deals,
             asset_to_group=cfg.ASSET_TO_GROUP,
@@ -209,8 +239,8 @@ def render_executive(start: date, end: date) -> None:
             sme_display["revenue"] = sme_display["revenue"].map(_fmt_money)
             sme_display["revenue_per_call"] = sme_display["revenue_per_call"].map(_fmt_money)
             sme_display = sme_display.rename(columns={
-                "sme_id": "SME (BDS)",
-                "sme_calls_held": "SME Calls Held",
+                "sme_id": "SME",
+                "sme_calls_held": "Strategy Held",
                 "deals_closed": "Deals Closed",
                 "close_rate": "Close %",
                 "revenue": "Revenue",
