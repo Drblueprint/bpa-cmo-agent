@@ -127,3 +127,17 @@ def resolve_owner(value) -> str:
     if s in HS_OWNER_NAMES:
         return HS_OWNER_NAMES[s]
     return f"{s} (unknown)"
+
+
+# --- Revenue fallback per group (Option C: HubSpot deal.amount preferred, this is the fallback) ---
+# Per Dr. Gumm, 2026-05-16.
+GROUP_DEFAULT_DEAL_AMOUNT: dict[str, float] = {
+    "Chiro":       47928.0,
+    "PT Recovery": 23928.0,
+    # TheraRay, EMX: not yet specified — defaults to 0 if a closed-won lands there
+}
+
+# --- Monthly payroll for CAC calc. None = "ad-only CAC" shown with a tooltip flag. ---
+# Provide real numbers when ready and CAC will auto-include them.
+SDR_PAYROLL_MONTHLY: float | None = None
+SME_PAYROLL_MONTHLY: float | None = None
