@@ -8,12 +8,19 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard import config as cfg
+from dashboard.data.aircall_loader import load_aircall_calls
 from dashboard.data.hubspot_loader import (
     load_contact_deals,
     load_deals_in_window,
     load_marketing_contacts,
+    load_meetings_for_contacts,
 )
-from dashboard.data.reconcile import owner_rollup, pipeline_funnel
+from dashboard.data.reconcile import (
+    compute_speed_to_lead,
+    owner_rollup,
+    pipeline_funnel,
+    sdr_call_activity,
+)
 
 
 def _fmt_money(x) -> str:
@@ -61,6 +68,25 @@ def render_sales(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"HubSpot deals unavailable: {e}")
         deals = pd.DataFrame()
+    try:
+        aircall_calls = load_aircall_calls(start, end)
+    except Exception as e:
+        st.warning(f"AirCall unavailable: {e}")
+        aircall_calls = pd.DataFrame(columns=[
+            "call_id", "started_at_utc", "answered_at_utc", "duration",
+            "direction", "status", "user_id", "user_name",
+            "raw_digits", "phone_normalized",
+        ])
+    try:
+        meetings = load_meetings_for_contacts(marketing["hs_id"].tolist()) \
+            if not marketing.empty else pd.DataFrame(columns=[
+                "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
+            ])
+    except Exception as e:
+        st.warning(f"HubSpot meetings unavailable: {e}")
+        meetings = pd.DataFrame(columns=[
+            "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
+        ])
 
     stages = _stage_groups()
 
@@ -83,6 +109,36 @@ def render_sales(start: date, end: date) -> None:
         f"{_fmt_int(_v(fn_mkt, 'Closed-Won'))} · "
         f"{_fmt_money(_v(fn_mkt, 'Closed-Won', 'revenue'))}",
     )
+
+    # === NEW: Speed to Lead KPI row ===
+    st.divider()
+    st.subheader("Speed to Lead")
+    speed_df = compute_speed_to_lead(marketing, aircall_calls)
+    speeds = speed_df["speed_to_lead_minutes"].dropna()
+
+    if speeds.empty:
+        median_speed = None
+        pct_under_5 = None
+        pct_under_60s = None
+    else:
+        median_speed = float(speeds.median())
+        pct_under_5 = float((speeds <= 5).mean())
+        pct_under_60s = float((speeds <= 1).mean())
+
+    s1, s2, s3 = st.columns(3)
+    s1.metric(
+        "Median Speed to Lead",
+        f"{median_speed:.1f} min" if median_speed is not None else "—",
+        help="Median minutes from HubSpot lead created to first outbound AirCall.")
+    s2.metric(
+        "% Under 5 min",
+        f"{pct_under_5*100:.0f}%" if pct_under_5 is not None else "—",
+        help="Share of leads whose first outbound call landed within 5 minutes "
+             "of creation. Hormozi's 80% target.")
+    s3.metric(
+        "% Under 60 sec",
+        f"{pct_under_60s*100:.0f}%" if pct_under_60s is not None else "—",
+        help="Share within 60 seconds. Hormozi's stretch goal (50%).")
 
     st.divider()
 
@@ -126,6 +182,53 @@ def render_sales(start: date, end: date) -> None:
                            owner_field="bds", stage_groups=stages)
         bds["owner"] = bds["owner"].map(cfg.resolve_owner)
         st.dataframe(bds, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # === NEW: SDR Call Activity table ===
+    st.subheader("SDR Call Activity (AirCall)")
+    st.caption("Outbound dial volume + connect rate + speed metrics per SDR. "
+               "A 'connect' is an outbound call where the prospect answered "
+               f"and the call lasted at least {cfg.AIRCALL_CONNECT_DURATION_SEC} seconds.")
+    activity = sdr_call_activity(
+        contacts=marketing,
+        calls=aircall_calls,
+        meetings=meetings,
+        aircall_user_names=cfg.AIRCALL_USER_NAMES,
+        excluded_users=cfg.AIRCALL_EXCLUDED_USERS,
+        connect_duration_sec=cfg.AIRCALL_CONNECT_DURATION_SEC,
+        conv_window_hours=cfg.AIRCALL_CONV_TO_DISCO_WINDOW_HOURS,
+    )
+
+    if activity.empty:
+        st.info("No AirCall data in this window.")
+    else:
+        display = activity.copy()
+        display["connect_rate"] = display["connect_rate"].map(
+            lambda x: f"{x*100:.0f}%" if pd.notna(x) and x is not None else "—"
+        )
+        display["conv_to_discovery_rate"] = display["conv_to_discovery_rate"].map(
+            lambda x: f"{x*100:.0f}%" if pd.notna(x) and x is not None else "—"
+        )
+        display["talk_time_min"] = display["talk_time_min"].map(
+            lambda x: f"{x:.0f}" if pd.notna(x) else "—"
+        )
+        display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(
+            lambda x: f"{x:.1f} min" if pd.notna(x) and x is not None else "—"
+        )
+        display = display[[
+            "user_name", "dials", "connects", "connect_rate",
+            "talk_time_min", "conv_to_discovery_rate", "median_speed_to_lead_min",
+        ]].rename(columns={
+            "user_name": "SDR",
+            "dials": "Dials",
+            "connects": "Connects",
+            "connect_rate": "Connect %",
+            "talk_time_min": "Talk Time (min)",
+            "conv_to_discovery_rate": "Conv → Discovery %",
+            "median_speed_to_lead_min": "Median Speed to Lead",
+        })
+        st.dataframe(display, use_container_width=True, hide_index=True)
 
     st.divider()
 
