@@ -64,7 +64,7 @@ def render_metrics() -> None:
     st.subheader("BPA Weekly Metrics")
     st.caption(
         f"{cfg.METRICS_WEEKS_BACK}-week rolling view · Weeks ending "
-        f"{ranges[0][1].strftime('%b %#d')} -> {ranges[-1][1].strftime('%b %#d, %Y')}"
+        f"{ranges[0][1].strftime('%b')} {ranges[0][1].day} -> {ranges[-1][1].strftime('%b')} {ranges[-1][1].day}, {ranges[-1][1].year}"
     )
 
     # --- Data loaders, each in its own try/except ---
@@ -142,8 +142,7 @@ def render_metrics() -> None:
     display = metrics.copy()
 
     # Rename week columns to date labels
-    week_labels = [ws.strftime("%b %#d") + " - " + we.strftime("%#d")
-                    for (ws, we) in ranges]
+    week_labels = [f"{ws.strftime('%b')} {ws.day} – {we.day}" for (ws, we) in ranges]
     rename_weeks = {f"w{i}": week_labels[i] for i in range(len(ranges))}
 
     # Format each row's values according to metric type
