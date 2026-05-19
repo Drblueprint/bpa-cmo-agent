@@ -90,6 +90,7 @@ ASSET_TO_GROUP: dict[str, str] = {
     "Recovery Program (PT) typeform": "PT Recovery",
     "EMX Fort Worth 2026":            "EMX",
     "EMX Kansas City":                "EMX",
+    "Alvin Dodson":                   "EMX",
     "Chiro Never Reach $1M ":         "Chiro",   # trailing space is in HubSpot value
     "Top 10 typeform":                "Chiro",
     "BPA Revenue Pyramid typeform":   "Chiro",
