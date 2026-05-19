@@ -69,6 +69,11 @@ STAGES_CLOSED_WON: set[str] = {
     # Reasoning: SALES-V2 is a legacy/closing pipeline; both stages count as revenue events.
 }
 
+# Stages for counting NEW customer wins. Per Dr. Gumm: only SALES-V2's
+# Closed-Won counts as a new BPA signup. The default Sales Pipeline's
+# 'closedwon' is something else and should NOT be counted as a new customer.
+NEW_CUSTOMER_STAGES: set[str] = {"24094605"}
+
 # --- Campaign group regex patterns ---
 # Match against FB campaign names like "DS | __Chiro__ Mixed Funnel Setup | CBO | USA"
 CAMPAIGN_GROUPS: list[tuple[str, re.Pattern[str]]] = [

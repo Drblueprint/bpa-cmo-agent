@@ -51,8 +51,14 @@ def _fmt_int(x) -> str:
 
 
 def _money_metric_ids() -> set[str]:
-    return {"chiro_ad_spend", "chiro_cpc", "pt_ad_spend", "pt_cpc",
+    """Whole-dollar money metrics (rounded to integer)."""
+    return {"chiro_ad_spend", "pt_ad_spend",
             "theraray_ad_spend", "emx_ad_spend"}
+
+
+def _cents_money_metric_ids() -> set[str]:
+    """Fractional money metrics (shown with cents)."""
+    return {"chiro_cpc", "pt_cpc"}
 
 
 def render_metrics() -> None:
@@ -130,6 +136,7 @@ def render_metrics() -> None:
         week_ranges=ranges,
         asset_to_group=cfg.ASSET_TO_GROUP,
         stages_closed_won=cfg.STAGES_CLOSED_WON,
+        new_customer_stages=cfg.NEW_CUSTOMER_STAGES,
         goals=cfg.METRICS_GOALS,
     )
 
@@ -165,6 +172,7 @@ def render_metrics() -> None:
 
     # --- Format the grid for display ---
     money_ids = _money_metric_ids()
+    cents_money_ids = _cents_money_metric_ids()
     week_cols = [c for c in metrics.columns if c.startswith("w")]
     display = metrics.copy()
 
@@ -177,12 +185,16 @@ def render_metrics() -> None:
         if value is None or pd.isna(value):
             return "—"
         if metric_id in money_ids:
-            return _fmt_money(value)
+            if is_goal:
+                return f"≥ ${value:,.0f}"
+            return f"${value:,.0f}"
+        if metric_id in cents_money_ids:
+            if is_goal:
+                return f"≥ ${value:,.2f}"
+            return f"${value:,.2f}"
         if is_goal:
-            if metric_id in money_ids:
-                return f">= {_fmt_money(value)}"
-            return f">= {_fmt_int(value)}"
-        return _fmt_int(value)
+            return f"≥ {int(value):,}"
+        return f"{int(value):,}"
 
     # Build a new DataFrame with formatted strings
     formatted_rows = []

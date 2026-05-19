@@ -921,7 +921,7 @@ _METRIC_LABELS: dict[str, str] = {
     "pt_lead_magnet_optins": "PT — Lead Magnet Opt-Ins",
     "pt_new_leads": "PT — New Leads",
     "theraray_ad_spend": "TheraRay — Ad Spend",
-    "theraray_leads": "TheraRay — Leads",
+    "theraray_leads": "TheraRay — Leads (FB)",
     "theraray_15min_scheduled": "TheraRay — 15 Min Call Scheduled",
     "emx_ad_spend": "EMX — Ad Spend",
     "emx_leads": "EMX — Leads",
@@ -975,6 +975,7 @@ def weekly_metrics(
     week_ranges: list[tuple[date, date]],
     asset_to_group: dict[str, str],
     stages_closed_won: set[str],
+    new_customer_stages: set[str] | None = None,
     goals: dict[str, float],
 ) -> pd.DataFrame:
     """Compute weekly metric counts.
@@ -1091,10 +1092,12 @@ def weekly_metrics(
             mask = mask & m_outcomes.str.startswith("COMPLETE")
         return int(mask.sum())
 
-    def _deals_won_in_week(start: date, end: date) -> int:
+    def _deals_won_in_week(start: date, end: date,
+                           stages_override: set[str] | None = None) -> int:
         if deals.empty:
             return 0
-        mask = d_won & d_close.between(start, end)
+        use_stages = stages_override if stages_override is not None else stages_closed_won
+        mask = deals["dealstage"].isin(use_stages) & d_close.between(start, end)
         return int(mask.sum())
 
     def _bofu_in_week(start: date, end: date) -> int:
@@ -1138,7 +1141,7 @@ def weekly_metrics(
             elif metric_id == "theraray_ad_spend":
                 weekly_values.append(_fb_sum("TheraRay", "spend", ws, we))
             elif metric_id == "theraray_leads":
-                weekly_values.append(_contacts_in_group_with_submit("TheraRay", ws, we))
+                weekly_values.append(_fb_leads("TheraRay", ws, we))
             elif metric_id == "theraray_15min_scheduled":
                 weekly_values.append(_meetings_count_group("15 min", "TheraRay", ws, we))
             elif metric_id == "emx_ad_spend":
@@ -1168,7 +1171,8 @@ def weekly_metrics(
             elif metric_id == "strategy_calls_completed":
                 weekly_values.append(_meetings_count("strategy", ws, we, completed_only=True))
             elif metric_id == "new_total_customers":
-                weekly_values.append(_deals_won_in_week(ws, we))
+                stages = new_customer_stages if new_customer_stages else stages_closed_won
+                weekly_values.append(_deals_won_in_week(ws, we, stages_override=stages))
             else:
                 weekly_values.append(0)
 
