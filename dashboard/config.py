@@ -142,3 +142,35 @@ GROUP_DEFAULT_DEAL_AMOUNT: dict[str, float] = {
 # Provide real numbers when ready and CAC will auto-include them.
 SDR_PAYROLL_MONTHLY: float | None = None
 SME_PAYROLL_MONTHLY: float | None = None
+
+# --- AirCall integration (Phase B) ---
+# AirCall env vars: AIRCALL_API_ID + AIRCALL_API_token (note lowercase 'token').
+
+# AirCall user_id → display name.
+AIRCALL_USER_NAMES: dict[str, str] = {
+    "1507558": "Toby Hughes",
+    "1523089": "Scott Warren",
+    "1551010": "Peyton Fulghum",
+    "1605109": "Garrett Hustedt",
+    "1630108": "Haley Stewart",
+    "1937276": "Callum Barton",
+}
+
+# AirCall user_id → HubSpot SDR owner_id (so we can attribute calls to SDR rollups).
+# Only SDRs/BDS who appear in HubSpot contact properties.
+AIRCALL_TO_SDR_OWNER: dict[str, str] = {
+    "1551010": "89638769",  # Peyton
+    "1605109": "79870794",  # Garrett
+    "1523089": "44815718",  # Scott (BDS — included for completeness)
+    "1630108": "568393136", # Haley
+}
+
+# AirCall users to EXCLUDE from SDR Call Activity (admins, always-closed seats, etc.).
+# Leave empty initially — include everyone and prune later if needed.
+AIRCALL_EXCLUDED_USERS: set[str] = set()
+
+# Connect threshold: outbound call with answered_at not null AND duration >= this.
+AIRCALL_CONNECT_DURATION_SEC: int = 10
+
+# Window after a connect during which a 15-min meeting booking is attributed to that call.
+AIRCALL_CONV_TO_DISCO_WINDOW_HOURS: int = 24
