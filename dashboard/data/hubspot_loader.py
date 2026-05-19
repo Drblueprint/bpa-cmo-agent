@@ -130,7 +130,8 @@ def load_deals_in_window(start: date, end: date) -> pd.DataFrame:
         "limit": 100,
     }
     results = _hs_search(token, "deals", body)
-    floor_ts = datetime.combine(cfg.DATA_FLOOR_DATE, datetime.min.time(),
+    from dashboard.config import data_floor_date
+    floor_ts = datetime.combine(data_floor_date(), datetime.min.time(),
                                  tzinfo=timezone.utc)
     rows = []
     for r in results:
@@ -257,7 +258,8 @@ def load_meetings_for_contacts(contact_ids: list[str]) -> pd.DataFrame:
             }
 
     # 3. Flatten
-    floor_ts = datetime.combine(cfg.DATA_FLOOR_DATE, datetime.min.time(),
+    from dashboard.config import data_floor_date
+    floor_ts = datetime.combine(data_floor_date(), datetime.min.time(),
                                  tzinfo=timezone.utc)
     rows = []
     for cid, mids in contact_to_meetings.items():

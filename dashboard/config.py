@@ -144,11 +144,14 @@ SDR_PAYROLL_MONTHLY: float | None = None
 SME_PAYROLL_MONTHLY: float | None = None
 
 # --- Stale-data floor (Dr. Gumm directive, 2026-05-19): ---
-# Drop any HubSpot meeting or deal record from before this date. Keeps the
-# dashboard focused on current operations and prevents 2023/2024 records
-# from sneaking into the per-rep tables.
-from datetime import date as _date
-DATA_FLOOR_DATE: _date = _date(2025, 1, 1)
+# Drop any HubSpot meeting or deal record older than this many days.
+# Rolling window: recomputed each time data_floor_date() is called.
+from datetime import date as _date, timedelta as _timedelta
+DATA_FLOOR_DAYS_BACK: int = 90
+
+def data_floor_date() -> _date:
+    """Return today minus DATA_FLOOR_DAYS_BACK. Records older than this are excluded."""
+    return _date.today() - _timedelta(days=DATA_FLOOR_DAYS_BACK)
 
 # --- AirCall integration (Phase B) ---
 # AirCall env vars: AIRCALL_API_ID + AIRCALL_API_token (note lowercase 'token').
