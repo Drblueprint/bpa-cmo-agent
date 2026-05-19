@@ -130,10 +130,21 @@ def load_deals_in_window(start: date, end: date) -> pd.DataFrame:
         "limit": 100,
     }
     results = _hs_search(token, "deals", body)
+    floor_ts = datetime.combine(cfg.DATA_FLOOR_DATE, datetime.min.time(),
+                                 tzinfo=timezone.utc)
     rows = []
     for r in results:
         p = r.get("properties", {})
         deal_id = r.get("id")
+        closedate_str = p.get("closedate") or ""
+        # Filter out deals closed before the data floor.
+        if closedate_str:
+            try:
+                close_dt = datetime.fromisoformat(closedate_str.replace("Z", "+00:00"))
+                if close_dt < floor_ts:
+                    continue
+            except (ValueError, TypeError):
+                pass
         rows.append({
             "deal_id": str(deal_id) if deal_id is not None else None,
             "dealname": p.get("dealname"),
@@ -246,15 +257,26 @@ def load_meetings_for_contacts(contact_ids: list[str]) -> pd.DataFrame:
             }
 
     # 3. Flatten
+    floor_ts = datetime.combine(cfg.DATA_FLOOR_DATE, datetime.min.time(),
+                                 tzinfo=timezone.utc)
     rows = []
     for cid, mids in contact_to_meetings.items():
         for mid in mids:
             m = meetings_props.get(mid, {})
+            start_str = m.get("start_time") or ""
+            # Filter out meetings before the data floor.
+            if start_str:
+                try:
+                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    if start_dt < floor_ts:
+                        continue
+                except (ValueError, TypeError):
+                    pass  # Unparseable timestamp — keep the row (rare)
             rows.append({
                 "meeting_id": mid,
                 "contact_id": cid,
                 "activity_type": m.get("activity_type", ""),
                 "outcome": m.get("outcome", ""),
-                "start_time": m.get("start_time", ""),
+                "start_time": start_str,
             })
     return pd.DataFrame(rows, columns=cols)

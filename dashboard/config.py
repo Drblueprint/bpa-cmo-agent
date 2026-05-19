@@ -143,6 +143,13 @@ GROUP_DEFAULT_DEAL_AMOUNT: dict[str, float] = {
 SDR_PAYROLL_MONTHLY: float | None = None
 SME_PAYROLL_MONTHLY: float | None = None
 
+# --- Stale-data floor (Dr. Gumm directive, 2026-05-19): ---
+# Drop any HubSpot meeting or deal record from before this date. Keeps the
+# dashboard focused on current operations and prevents 2023/2024 records
+# from sneaking into the per-rep tables.
+from datetime import date as _date
+DATA_FLOOR_DATE: _date = _date(2025, 1, 1)
+
 # --- AirCall integration (Phase B) ---
 # AirCall env vars: AIRCALL_API_ID + AIRCALL_API_token (note lowercase 'token').
 
