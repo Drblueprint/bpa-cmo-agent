@@ -39,7 +39,7 @@ def load_fb_insights(start: date, end: date,
     params = {
         "time_range": f'{{"since":"{start.isoformat()}","until":"{end.isoformat()}"}}',
         "level": "campaign",
-        "fields": "campaign_name,spend,impressions,clicks,actions,date_start,date_stop",
+        "fields": "campaign_name,spend,impressions,clicks,inline_link_clicks,actions,date_start,date_stop",
         "access_token": token,
         "limit": 500,
     }
@@ -58,6 +58,7 @@ def load_fb_insights(start: date, end: date,
             "spend": float(row.get("spend", 0)),
             "impressions": int(row.get("impressions", 0)),
             "clicks": int(row.get("clicks", 0)),
+            "inline_link_clicks": int(row.get("inline_link_clicks", 0)),
             "fb_leads": _action_value(row.get("actions"),
                                       "offsite_conversion.fb_pixel_lead")
                         or _action_value(row.get("actions"), "lead"),

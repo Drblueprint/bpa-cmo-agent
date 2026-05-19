@@ -1040,7 +1040,10 @@ def weekly_metrics(
         return float(fb.loc[mask, col].sum()) if mask.any() else 0.0
 
     def _fb_clicks(group: str, start: date, end: date) -> int:
-        return int(_fb_sum(group, "clicks", start, end))
+        """Link clicks (FB's inline_link_clicks). Falls back to 'clicks' if the
+        column is not present (e.g., older test fixtures)."""
+        col = "inline_link_clicks" if "inline_link_clicks" in fb.columns else "clicks"
+        return int(_fb_sum(group, col, start, end))
 
     def _fb_leads(group: str, start: date, end: date) -> int:
         return int(_fb_sum(group, "fb_leads", start, end))
