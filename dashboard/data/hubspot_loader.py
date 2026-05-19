@@ -67,6 +67,8 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             cfg.HS_PROP_UTM_SOURCE,
             cfg.HS_PROP_15MIN_CALL_DATE, cfg.HS_PROP_LIFECYCLE_STAGE,
             "phone", "mobilephone",
+            cfg.HS_PROP_WEBINAR_REG_DATE, cfg.HS_PROP_WEBINAR_COMPLETED_DATE,
+            cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
         ],
         "limit": 100,
     }
@@ -96,6 +98,10 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "lifecycle_stage": p.get(cfg.HS_PROP_LIFECYCLE_STAGE),
             "phone": p.get("phone"),
             "mobilephone": p.get("mobilephone"),
+            "webinar_registration_date": p.get(cfg.HS_PROP_WEBINAR_REG_DATE),
+            "webinar_completed_date": p.get(cfg.HS_PROP_WEBINAR_COMPLETED_DATE),
+            "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
+            "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
         })
     return pd.DataFrame(rows, columns=[
         "hs_id", "name", "email", "created",
@@ -103,6 +109,8 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
         "sdr_owner", "bds", "sme", "utm_source",
         "fifteen_min_call_date", "lifecycle_stage",
         "phone", "mobilephone",
+        "webinar_registration_date", "webinar_completed_date",
+        "pt_webinar_registration_date", "pt_webinar_completed_date",
     ])
 
 
@@ -301,6 +309,8 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
         "sdr_owner", "bds", "sme", "utm_source",
         "fifteen_min_call_date", "lifecycle_stage",
         "phone", "mobilephone",
+        "webinar_registration_date", "webinar_completed_date",
+        "pt_webinar_registration_date", "pt_webinar_completed_date",
     ]
     if not contact_ids:
         return pd.DataFrame(columns=cols)
@@ -322,6 +332,8 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
                     cfg.HS_PROP_UTM_SOURCE,
                     cfg.HS_PROP_15MIN_CALL_DATE, cfg.HS_PROP_LIFECYCLE_STAGE,
                     "phone", "mobilephone",
+                    cfg.HS_PROP_WEBINAR_REG_DATE, cfg.HS_PROP_WEBINAR_COMPLETED_DATE,
+                    cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
                 ],
                 "inputs": [{"id": cid} for cid in batch],
             },
@@ -351,6 +363,10 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
                 "lifecycle_stage": p.get(cfg.HS_PROP_LIFECYCLE_STAGE),
                 "phone": p.get("phone"),
                 "mobilephone": p.get("mobilephone"),
+                "webinar_registration_date": p.get(cfg.HS_PROP_WEBINAR_REG_DATE),
+                "webinar_completed_date": p.get(cfg.HS_PROP_WEBINAR_COMPLETED_DATE),
+                "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
+                "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
             })
 
     return pd.DataFrame(rows, columns=cols)
