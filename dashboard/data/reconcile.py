@@ -900,3 +900,286 @@ def sdr_call_activity(
         if rate_col in df.columns:
             df[rate_col] = pd.array([r.get(rate_col) for r in rows], dtype=object)
     return df.sort_values("dials", ascending=False).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Weekly Metrics aggregator
+# ---------------------------------------------------------------------------
+from datetime import date, datetime, timedelta, timezone  # noqa: E402
+
+
+# Metric label registry — keep aligned with config.METRICS_GOALS keys.
+_METRIC_LABELS: dict[str, str] = {
+    "chiro_ad_spend": "Chiro — Ad Spend",
+    "chiro_link_clicks": "Chiro — Link Clicks",
+    "chiro_cpc": "Chiro — Cost-Per-Click",
+    "chiro_lead_magnet_optins": "Chiro — Lead Magnet Opt-Ins",
+    "chiro_new_leads": "Chiro — New Leads",
+    "pt_ad_spend": "PT — Ad Spend",
+    "pt_link_clicks": "PT — Link Clicks",
+    "pt_cpc": "PT — Cost-Per-Click",
+    "pt_lead_magnet_optins": "PT — Lead Magnet Opt-Ins",
+    "pt_new_leads": "PT — New Leads",
+    "theraray_ad_spend": "TheraRay — Ad Spend",
+    "theraray_leads": "TheraRay — Leads",
+    "theraray_15min_scheduled": "TheraRay — 15 Min Call Scheduled",
+    "emx_ad_spend": "EMX — Ad Spend",
+    "emx_leads": "EMX — Leads",
+    "webinar_registrations": "Webinar Registrations",
+    "webinar_completions": "Webinar Completions",
+    "pt_webinar_registrations": "PT Webinar Registrations",
+    "pt_webinar_completions": "PT Webinar Completions",
+    "bofu_submissions_total": "BOFU Submissions (Total)",
+    "fifteen_min_scheduled": "15 Min Calls Scheduled",
+    "fifteen_min_completed": "15 Min Calls Completed",
+    "pt_fifteen_min_scheduled": "PT 15 Min Calls Scheduled",
+    "pt_fifteen_min_completed": "PT 15 Min Calls Completed",
+    "strategy_calls_total": "Strategy Calls — Total",
+    "strategy_calls_completed": "Strategy Calls — Completed",
+    "new_total_customers": "NEW Total Customers",
+}
+
+
+def _date_in_window(dt_str, start: date, end: date) -> bool:
+    """True if dt_str parses to a date in [start, end] inclusive."""
+    if not dt_str:
+        return False
+    try:
+        d = pd.to_datetime(dt_str, utc=True, errors="coerce")
+        if pd.isna(d):
+            return False
+        return start <= d.date() <= end
+    except Exception:
+        return False
+
+
+def _ts_ms_in_window(ts_ms, start: date, end: date) -> bool:
+    """True if Unix-ms timestamp falls in [start, end] inclusive."""
+    if ts_ms is None or pd.isna(ts_ms):
+        return False
+    try:
+        d = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).date()
+        return start <= d <= end
+    except Exception:
+        return False
+
+
+def weekly_metrics(
+    *,
+    fb: pd.DataFrame,
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    bofu_submissions: pd.DataFrame,
+    week_ranges: list[tuple[date, date]],
+    asset_to_group: dict[str, str],
+    stages_closed_won: set[str],
+    goals: dict[str, float],
+) -> pd.DataFrame:
+    """Compute weekly metric counts.
+
+    Returns a DataFrame with columns:
+        metric_id, metric_label, goal, sum, w0, w1, ..., w{N-1}
+    where N = len(week_ranges) and w0 = oldest, w{N-1} = newest.
+    """
+    n = len(week_ranges)
+    week_cols = [f"w{i}" for i in range(n)]
+
+    # Tag contacts with group via asset map
+    contacts = contacts.copy()
+    if not contacts.empty:
+        contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
+    else:
+        contacts["group"] = pd.Series(dtype=object)
+
+    # Pre-compute per-row date helpers used below
+    # Note: wrap in list() to force Python date objects (avoids NaT comparison issues
+    # when pandas keeps the series as DatetimeArray dtype).
+    def _to_date_series(col_name: str) -> pd.Series:
+        parsed = pd.to_datetime(contacts.get(col_name), utc=True, errors="coerce")
+        return pd.Series(
+            [d.date() if not pd.isna(d) else None for d in parsed],
+            index=contacts.index,
+            dtype=object,
+        )
+
+    if not contacts.empty:
+        contacts["_submit_date"] = _to_date_series("typeform_submission_date")
+        contacts["_webinar_reg"] = _to_date_series("webinar_registration_date")
+        contacts["_webinar_done"] = _to_date_series("webinar_completed_date")
+        contacts["_pt_webinar_reg"] = _to_date_series("pt_webinar_registration_date")
+        contacts["_pt_webinar_done"] = _to_date_series("pt_webinar_completed_date")
+
+    if not meetings.empty:
+        m_types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        m_outcomes = meetings["outcome"].fillna("").astype(str).str.upper()
+        m_start = pd.to_datetime(meetings["start_time"], utc=True, errors="coerce").dt.date
+    else:
+        m_types = pd.Series(dtype=str)
+        m_outcomes = pd.Series(dtype=str)
+        m_start = pd.Series(dtype=object)
+
+    if not deals.empty:
+        d_won = deals["dealstage"].isin(stages_closed_won)
+        d_close = pd.to_datetime(deals["closedate"], utc=True, errors="coerce").dt.date
+    else:
+        d_won = pd.Series(dtype=bool)
+        d_close = pd.Series(dtype=object)
+
+    if not fb.empty:
+        fb_start = pd.to_datetime(fb.get("date_start"), utc=True, errors="coerce").dt.date
+    else:
+        fb_start = pd.Series(dtype=object)
+
+    def _fb_sum(group: str, col: str, start: date, end: date) -> float:
+        if fb.empty:
+            return 0.0
+        mask = (fb["group"] == group) & fb_start.between(start, end)
+        return float(fb.loc[mask, col].sum()) if mask.any() else 0.0
+
+    def _fb_clicks(group: str, start: date, end: date) -> int:
+        return int(_fb_sum(group, "clicks", start, end))
+
+    def _fb_leads(group: str, start: date, end: date) -> int:
+        return int(_fb_sum(group, "fb_leads", start, end))
+
+    def _contacts_in_group_with_submit(group: str, start: date, end: date) -> int:
+        if contacts.empty:
+            return 0
+        in_window = contacts["_submit_date"].apply(
+            lambda d: d is not None and isinstance(d, date) and start <= d <= end
+        )
+        mask = (contacts["group"] == group) & in_window
+        return int(mask.sum())
+
+    def _contacts_property_in_window(prop_col: str, start: date, end: date) -> int:
+        if contacts.empty or prop_col not in contacts.columns:
+            return 0
+        col = contacts[prop_col]
+        # Column is object dtype with Python date or None; apply handles None safely
+        mask = col.apply(
+            lambda d: d is not None and isinstance(d, date) and start <= d <= end
+        )
+        return int(mask.sum())
+
+    def _meetings_count(token: str, start: date, end: date, *,
+                       completed_only: bool = False) -> int:
+        if meetings.empty:
+            return 0
+        mask = m_types.str.contains(token, na=False) & m_start.between(start, end)
+        if completed_only:
+            mask = mask & m_outcomes.str.startswith("COMPLETE")
+        return int(mask.sum())
+
+    def _meetings_count_group(token: str, group: str, start: date, end: date,
+                              *, completed_only: bool = False) -> int:
+        """15-min meetings for contacts whose typeform asset maps to a group."""
+        if meetings.empty or contacts.empty:
+            return 0
+        group_contact_ids = set(
+            contacts.loc[contacts["group"] == group, "hs_id"].astype(str)
+        )
+        if not group_contact_ids:
+            return 0
+        mask = (
+            m_types.str.contains(token, na=False)
+            & m_start.between(start, end)
+            & meetings["contact_id"].astype(str).isin(group_contact_ids)
+        )
+        if completed_only:
+            mask = mask & m_outcomes.str.startswith("COMPLETE")
+        return int(mask.sum())
+
+    def _deals_won_in_week(start: date, end: date) -> int:
+        if deals.empty:
+            return 0
+        mask = d_won & d_close.between(start, end)
+        return int(mask.sum())
+
+    def _bofu_in_week(start: date, end: date) -> int:
+        if bofu_submissions.empty:
+            return 0
+        mask = bofu_submissions["submitted_at"].apply(
+            lambda x: _ts_ms_in_window(x, start, end)
+        )
+        return int(mask.sum())
+
+    # Build per-week values per metric
+    metric_ids = list(_METRIC_LABELS.keys())
+    rows = []
+    for metric_id in metric_ids:
+        weekly_values = []
+        for (ws, we) in week_ranges:
+            if metric_id == "chiro_ad_spend":
+                weekly_values.append(_fb_sum("Chiro", "spend", ws, we))
+            elif metric_id == "chiro_link_clicks":
+                weekly_values.append(_fb_clicks("Chiro", ws, we))
+            elif metric_id == "chiro_cpc":
+                spend = _fb_sum("Chiro", "spend", ws, we)
+                clicks = _fb_clicks("Chiro", ws, we)
+                weekly_values.append(spend / clicks if clicks else 0.0)
+            elif metric_id == "chiro_lead_magnet_optins":
+                weekly_values.append(_fb_leads("Chiro", ws, we))
+            elif metric_id == "chiro_new_leads":
+                weekly_values.append(_contacts_in_group_with_submit("Chiro", ws, we))
+            elif metric_id == "pt_ad_spend":
+                weekly_values.append(_fb_sum("PT Recovery", "spend", ws, we))
+            elif metric_id == "pt_link_clicks":
+                weekly_values.append(_fb_clicks("PT Recovery", ws, we))
+            elif metric_id == "pt_cpc":
+                spend = _fb_sum("PT Recovery", "spend", ws, we)
+                clicks = _fb_clicks("PT Recovery", ws, we)
+                weekly_values.append(spend / clicks if clicks else 0.0)
+            elif metric_id == "pt_lead_magnet_optins":
+                weekly_values.append(_fb_leads("PT Recovery", ws, we))
+            elif metric_id == "pt_new_leads":
+                weekly_values.append(_contacts_in_group_with_submit("PT Recovery", ws, we))
+            elif metric_id == "theraray_ad_spend":
+                weekly_values.append(_fb_sum("TheraRay", "spend", ws, we))
+            elif metric_id == "theraray_leads":
+                weekly_values.append(_contacts_in_group_with_submit("TheraRay", ws, we))
+            elif metric_id == "theraray_15min_scheduled":
+                weekly_values.append(_meetings_count_group("15 min", "TheraRay", ws, we))
+            elif metric_id == "emx_ad_spend":
+                weekly_values.append(_fb_sum("EMX", "spend", ws, we))
+            elif metric_id == "emx_leads":
+                weekly_values.append(_contacts_in_group_with_submit("EMX", ws, we))
+            elif metric_id == "webinar_registrations":
+                weekly_values.append(_contacts_property_in_window("_webinar_reg", ws, we))
+            elif metric_id == "webinar_completions":
+                weekly_values.append(_contacts_property_in_window("_webinar_done", ws, we))
+            elif metric_id == "pt_webinar_registrations":
+                weekly_values.append(_contacts_property_in_window("_pt_webinar_reg", ws, we))
+            elif metric_id == "pt_webinar_completions":
+                weekly_values.append(_contacts_property_in_window("_pt_webinar_done", ws, we))
+            elif metric_id == "bofu_submissions_total":
+                weekly_values.append(_bofu_in_week(ws, we))
+            elif metric_id == "fifteen_min_scheduled":
+                weekly_values.append(_meetings_count("15 min", ws, we))
+            elif metric_id == "fifteen_min_completed":
+                weekly_values.append(_meetings_count("15 min", ws, we, completed_only=True))
+            elif metric_id == "pt_fifteen_min_scheduled":
+                weekly_values.append(_meetings_count("pt 15 min", ws, we))
+            elif metric_id == "pt_fifteen_min_completed":
+                weekly_values.append(_meetings_count("pt 15 min", ws, we, completed_only=True))
+            elif metric_id == "strategy_calls_total":
+                weekly_values.append(_meetings_count("strategy", ws, we))
+            elif metric_id == "strategy_calls_completed":
+                weekly_values.append(_meetings_count("strategy", ws, we, completed_only=True))
+            elif metric_id == "new_total_customers":
+                weekly_values.append(_deals_won_in_week(ws, we))
+            else:
+                weekly_values.append(0)
+
+        row = {
+            "metric_id": metric_id,
+            "metric_label": _METRIC_LABELS[metric_id],
+            "goal": goals.get(metric_id, 0),
+            "sum": sum(weekly_values),
+        }
+        for i, v in enumerate(weekly_values):
+            row[week_cols[i]] = v
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=["metric_id", "metric_label", "goal", "sum"] + week_cols)

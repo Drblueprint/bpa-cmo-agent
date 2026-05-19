@@ -811,3 +811,90 @@ def test_sdr_call_activity_basic():
     assert garrett["connect_rate"] == 1.0
     # Garrett's call was to a number with no contact match -> conv->discovery undefined
     assert garrett["conv_to_discovery_rate"] is None
+
+
+def test_weekly_metrics_basic_shape():
+    """weekly_metrics returns a DataFrame keyed by metric_id, columns are
+    metric_label, goal, sum, plus one column per week."""
+    from dashboard.data.reconcile import weekly_metrics
+    from datetime import date
+
+    # 2 weeks for compactness
+    week_ranges = [
+        (date(2026, 5, 5),  date(2026, 5, 11)),  # week 0 (older)
+        (date(2026, 5, 12), date(2026, 5, 18)),  # week 1 (newer)
+    ]
+
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__", "group": "Chiro",
+         "spend": 1000.0, "impressions": 0, "clicks": 100,
+         "fb_leads": 5, "date_start": "2026-05-12", "date_stop": "2026-05-18"},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro asset",
+         "typeform_submission_date": "2026-05-13T00:00:00Z",
+         "lifecycle_stage": "lead", "fifteen_min_call_date": None,
+         "sdr_owner": "x", "bds": "y", "sme": "z",
+         "phone": "", "mobilephone": "", "created": "2026-05-13T00:00:00Z",
+         "webinar_registration_date": "2026-05-14",  # week 1
+         "webinar_completed_date": None,
+         "pt_webinar_registration_date": None,
+         "pt_webinar_completed_date": None},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-05-14T10:00:00Z"},
+    ])
+    contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
+    deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount",
+                                   "createdate", "closedate"])
+    bofu_subs = pd.DataFrame([
+        {"form_id": "abc", "submission_id": "s1",
+         "submitted_at": int(pd.Timestamp("2026-05-14T00:00:00Z").timestamp() * 1000),
+         "email": ""},
+    ])
+
+    result = weekly_metrics(
+        fb=fb, contacts=contacts, meetings=meetings,
+        contact_deals=contact_deals, deals=deals, bofu_submissions=bofu_subs,
+        week_ranges=week_ranges,
+        asset_to_group={"Chiro asset": "Chiro"},
+        stages_closed_won=set(),
+        goals={"chiro_ad_spend": 0, "chiro_new_leads": 0,
+               "webinar_registrations": 12,
+               "fifteen_min_scheduled": 30, "fifteen_min_completed": 20,
+               "bofu_submissions_total": 0,
+               "new_total_customers": 5,
+               # Provide goals for every metric_id the function emits, even if 0
+               },
+    )
+
+    # Shape: each metric is one row, indexed by metric_id, with these columns:
+    #   metric_label, goal, sum, w0, w1
+    assert "metric_label" in result.columns
+    assert "goal" in result.columns
+    assert "sum" in result.columns
+    assert "w0" in result.columns
+    assert "w1" in result.columns
+
+    by_id = result.set_index("metric_id")
+
+    # Chiro Ad Spend: $1000 in w1 (FB date_start 2026-05-12), $0 in w0
+    assert by_id.loc["chiro_ad_spend", "w0"] == 0.0
+    assert by_id.loc["chiro_ad_spend", "w1"] == 1000.0
+    assert by_id.loc["chiro_ad_spend", "sum"] == 1000.0
+
+    # Chiro New Leads: 1 contact submitted in w1
+    assert by_id.loc["chiro_new_leads", "w1"] == 1
+    assert by_id.loc["chiro_new_leads", "w0"] == 0
+
+    # Webinar Registrations: 1 in w1
+    assert by_id.loc["webinar_registrations", "w1"] == 1
+    assert by_id.loc["webinar_registrations", "w0"] == 0
+
+    # 15 Min Calls Scheduled + Completed: 1 each in w1
+    assert by_id.loc["fifteen_min_scheduled", "w1"] == 1
+    assert by_id.loc["fifteen_min_completed", "w1"] == 1
+
+    # BOFU Total: 1 in w1
+    assert by_id.loc["bofu_submissions_total", "w1"] == 1
