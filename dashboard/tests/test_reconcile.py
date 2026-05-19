@@ -695,3 +695,119 @@ def test_executive_sme_rollup_uses_sme_field():
     lewis = by_id["24801837"]
     assert lewis["sme_calls_held"] == 1
     assert lewis["deals_closed"] == 0
+
+
+def test_normalize_phone_variants():
+    """All US phone formats normalize to last-10 digits."""
+    from dashboard.data.reconcile import normalize_phone
+    assert normalize_phone("+1 713-728-9200") == "7137289200"
+    assert normalize_phone("(713) 728-9200") == "7137289200"
+    assert normalize_phone("7137289200") == "7137289200"
+    assert normalize_phone("17137289200") == "7137289200"
+    assert normalize_phone("713.728.9200") == "7137289200"
+    assert normalize_phone("") == ""
+    assert normalize_phone(None) == ""
+    assert normalize_phone("123") == ""  # too short
+
+
+def test_compute_speed_to_lead_basic():
+    """For each contact, find first outbound AirCall to their phone after
+    contact creation. Returns per-contact minutes."""
+    from dashboard.data.reconcile import compute_speed_to_lead
+
+    # Contact created at 2026-05-19 10:00:00 UTC (epoch 1779184800)
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "phone": "(713) 728-9200", "mobilephone": "",
+         "created": "2026-05-19T10:00:00Z"},
+        # Contact 2: no calls match — should be excluded from median
+        {"hs_id": "2", "phone": "5551234567", "mobilephone": "",
+         "created": "2026-05-19T10:00:00Z"},
+    ])
+    calls = pd.DataFrame([
+        # Contact 1: first outbound call 3 minutes after creation
+        {"call_id": "c1", "phone_normalized": "7137289200",
+         "started_at_utc": 1779184800 + 180,   # +3 min
+         "direction": "outbound", "duration": 30, "answered_at_utc": 1779184800 + 185},
+        # Also an inbound call earlier — should be ignored (outbound only)
+        {"call_id": "c2", "phone_normalized": "7137289200",
+         "started_at_utc": 1779184800 - 60,    # before creation
+         "direction": "inbound", "duration": 30, "answered_at_utc": None},
+        # Contact 1: second outbound call later — should NOT be the "first touch"
+        {"call_id": "c3", "phone_normalized": "7137289200",
+         "started_at_utc": 1779184800 + 600,   # +10 min
+         "direction": "outbound", "duration": 30, "answered_at_utc": None},
+    ])
+
+    result = compute_speed_to_lead(contacts, calls)
+    by_id = {row["hs_id"]: row for _, row in result.iterrows()}
+
+    # Contact 1: 3 minutes
+    assert by_id["1"]["speed_to_lead_minutes"] == 3.0
+    # Contact 2: no match — minutes is NaN/None
+    assert pd.isna(by_id["2"]["speed_to_lead_minutes"])
+
+
+def test_sdr_call_activity_basic():
+    """Per-SDR dials, connects, connect rate, talk time, conv->discovery rate, speed."""
+    from dashboard.data.reconcile import sdr_call_activity
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "phone": "7137289200", "mobilephone": "",
+         "created": "2026-05-19T10:00:00Z"},
+    ])
+    calls = pd.DataFrame([
+        # Peyton outbound, 30s — counts as connect
+        {"call_id": "c1", "user_id": "1551010", "phone_normalized": "7137289200",
+         "started_at_utc": 1779184800 + 180, "direction": "outbound",
+         "duration": 30, "answered_at_utc": 1779184800 + 185},
+        # Peyton outbound, 5s — too short, dial but NOT connect
+        {"call_id": "c2", "user_id": "1551010", "phone_normalized": "9999999999",
+         "started_at_utc": 1779184800 + 200, "direction": "outbound",
+         "duration": 5, "answered_at_utc": None},
+        # Garrett outbound, 60s — connects
+        {"call_id": "c3", "user_id": "1605109", "phone_normalized": "8881234567",
+         "started_at_utc": 1779184800 + 300, "direction": "outbound",
+         "duration": 60, "answered_at_utc": 1779184800 + 305},
+        # Inbound — ignored entirely
+        {"call_id": "c4", "user_id": "1551010", "phone_normalized": "8881234567",
+         "started_at_utc": 1779184800 + 400, "direction": "inbound",
+         "duration": 60, "answered_at_utc": 1779184800 + 405},
+    ])
+    # A 15-min meeting booked for contact 1, 1 hour AFTER Peyton's connect call ->
+    # within 24h, counts toward Peyton's conv->discovery
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "SCHEDULED",
+         "start_time": "2026-05-15T11:30:00Z",  # +90min after call
+         "created_at_utc": 1779184800 + 180 + 3600},  # +1h after the connect
+    ])
+
+    aircall_user_names = {
+        "1551010": "Peyton Fulghum",
+        "1605109": "Garrett Hustedt",
+    }
+    excluded = set()
+
+    result = sdr_call_activity(
+        contacts=contacts, calls=calls, meetings=meetings,
+        aircall_user_names=aircall_user_names,
+        excluded_users=excluded,
+        connect_duration_sec=10,
+        conv_window_hours=24,
+    )
+    by_user = {row["user_id"]: row for _, row in result.iterrows()}
+
+    peyton = by_user["1551010"]
+    assert peyton["dials"] == 2          # c1 + c2
+    assert peyton["connects"] == 1       # c1 only (c2 too short)
+    assert peyton["connect_rate"] == 0.5
+    assert peyton["talk_time_min"] == 30 / 60  # 0.5 min
+    # c1's contact (#1) booked a 15-min within 24h -> conv->discovery = 1/1 = 1.0
+    assert peyton["conv_to_discovery_rate"] == 1.0
+
+    garrett = by_user["1605109"]
+    assert garrett["dials"] == 1
+    assert garrett["connects"] == 1
+    assert garrett["connect_rate"] == 1.0
+    # Garrett's call was to a number with no contact match -> conv->discovery undefined
+    assert garrett["conv_to_discovery_rate"] is None

@@ -716,3 +716,187 @@ def executive_bds_rollup(
             "show_rate": _safe_div(strat_held, strat_booked),
         })
     return pd.DataFrame(rows, columns=cols).sort_values("strategy_held", ascending=False)
+
+
+def normalize_phone(s) -> str:
+    """Last-10-digits normalization. US phone format-agnostic."""
+    if s is None:
+        return ""
+    digits = "".join(c for c in str(s) if c.isdigit())
+    return digits[-10:] if len(digits) >= 10 else ""
+
+
+def compute_speed_to_lead(
+    contacts: pd.DataFrame,
+    calls: pd.DataFrame,
+) -> pd.DataFrame:
+    """For each contact, find the first OUTBOUND AirCall to their phone AFTER
+    their HubSpot createdate. Returns DataFrame with columns:
+        hs_id, speed_to_lead_minutes (NaN if no match)
+    """
+    if contacts.empty:
+        return pd.DataFrame(columns=["hs_id", "speed_to_lead_minutes"])
+
+    contacts = contacts.copy()
+    contacts["phone_norm"] = contacts.apply(
+        lambda r: normalize_phone(r.get("phone")) or normalize_phone(r.get("mobilephone")),
+        axis=1,
+    )
+    contacts["created_ts"] = (
+        pd.to_datetime(contacts["created"], utc=True, errors="coerce")
+        .apply(lambda x: int(x.timestamp()) if pd.notna(x) else float("nan"))
+    )
+
+    outbound = calls[calls["direction"] == "outbound"] if not calls.empty else calls
+
+    rows = []
+    for _, contact in contacts.iterrows():
+        phone = contact["phone_norm"]
+        created_ts = contact["created_ts"]
+        if not phone or pd.isna(created_ts):
+            rows.append({"hs_id": contact["hs_id"],
+                         "speed_to_lead_minutes": float("nan")})
+            continue
+        matched = outbound[
+            (outbound["phone_normalized"] == phone)
+            & (outbound["started_at_utc"] >= created_ts)
+        ] if not outbound.empty else outbound
+        if matched.empty:
+            rows.append({"hs_id": contact["hs_id"],
+                         "speed_to_lead_minutes": float("nan")})
+            continue
+        first_ts = matched["started_at_utc"].min()
+        minutes = (first_ts - created_ts) / 60.0
+        rows.append({"hs_id": contact["hs_id"],
+                     "speed_to_lead_minutes": float(minutes)})
+
+    return pd.DataFrame(rows)
+
+
+def sdr_call_activity(
+    contacts: pd.DataFrame,
+    calls: pd.DataFrame,
+    meetings: pd.DataFrame,
+    *,
+    aircall_user_names: dict,
+    excluded_users: set,
+    connect_duration_sec: int,
+    conv_window_hours: int,
+) -> pd.DataFrame:
+    """Per-AirCall-user dial activity for the SALES tab SDR Call Activity table.
+
+    Columns: user_id, user_name, dials, connects, connect_rate, talk_time_min,
+             conv_to_discovery_rate, median_speed_to_lead_min.
+    """
+    cols = ["user_id", "user_name", "dials", "connects", "connect_rate",
+            "talk_time_min", "conv_to_discovery_rate", "median_speed_to_lead_min"]
+
+    if calls.empty:
+        return pd.DataFrame(columns=cols)
+
+    outbound = calls[calls["direction"] == "outbound"].copy()
+    if excluded_users:
+        outbound = outbound[~outbound["user_id"].isin(excluded_users)]
+
+    # Connect = outbound + answered + duration >= threshold
+    is_connect = (
+        outbound["answered_at_utc"].notna()
+        & (outbound["duration"] >= connect_duration_sec)
+    )
+    outbound = outbound.copy()
+    outbound["is_connect"] = is_connect
+
+    # Pre-compute speed to lead per contact for downstream attribution
+    speed_df = compute_speed_to_lead(contacts, calls)
+    speed_map = dict(zip(speed_df["hs_id"].astype(str),
+                         speed_df["speed_to_lead_minutes"]))
+
+    # Phone -> list of contact_ids for joining
+    contacts_x = contacts.copy()
+    if not contacts_x.empty:
+        contacts_x["phone_norm"] = contacts_x.apply(
+            lambda r: normalize_phone(r.get("phone")) or normalize_phone(r.get("mobilephone")),
+            axis=1,
+        )
+        phone_to_contacts: dict = {}
+        for _, c in contacts_x.iterrows():
+            phone_to_contacts.setdefault(c["phone_norm"], []).append(str(c["hs_id"]))
+    else:
+        phone_to_contacts = {}
+
+    # 15-min meetings indexed by contact_id + start ts
+    fifteen_meetings = pd.DataFrame()
+    if not meetings.empty:
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        fifteen_meetings = meetings[types.str.contains("15 min", na=False)].copy()
+        if not fifteen_meetings.empty:
+            # Prefer an explicit created_at_utc if present; else parse start_time
+            if "created_at_utc" not in fifteen_meetings.columns:
+                fifteen_meetings["created_at_utc"] = (
+                    pd.to_datetime(fifteen_meetings["start_time"], utc=True, errors="coerce")
+                    .apply(lambda x: int(x.timestamp()) if pd.notna(x) else float("nan"))
+                )
+            fifteen_meetings["contact_id"] = fifteen_meetings["contact_id"].astype(str)
+
+    conv_window_sec = conv_window_hours * 3600
+
+    rows = []
+    for user_id, grp in outbound.groupby("user_id"):
+        if not user_id:
+            continue
+        dials = int(len(grp))
+        connects = int(grp["is_connect"].sum())
+        connect_rate = _safe_div(connects, dials)
+        talk_time_min = float(grp.loc[grp["is_connect"], "duration"].sum() / 60.0)
+
+        # Conv -> Discovery: of the connects, what fraction had a 15-min booked
+        # for any matched contact within the window AFTER the call?
+        connect_rows = grp[grp["is_connect"]]
+        if connect_rows.empty or fifteen_meetings.empty:
+            conv_to_discovery_rate = None
+        else:
+            attributable = 0
+            countable = 0
+            for _, call_row in connect_rows.iterrows():
+                phone = call_row["phone_normalized"]
+                cids = phone_to_contacts.get(phone, [])
+                if not cids:
+                    continue
+                countable += 1
+                call_ts = call_row["started_at_utc"]
+                # Did ANY of these contacts get a 15-min booked within window?
+                booked = fifteen_meetings[
+                    fifteen_meetings["contact_id"].isin(cids)
+                    & (fifteen_meetings["created_at_utc"] >= call_ts)
+                    & (fifteen_meetings["created_at_utc"] <= call_ts + conv_window_sec)
+                ]
+                if not booked.empty:
+                    attributable += 1
+            conv_to_discovery_rate = _safe_div(attributable, countable)
+
+        # Median speed-to-lead across contacts this user called
+        user_speeds = []
+        for phone in grp["phone_normalized"].unique():
+            for cid in phone_to_contacts.get(phone, []):
+                m = speed_map.get(cid)
+                if m is not None and not pd.isna(m):
+                    user_speeds.append(m)
+        median_speed = float(pd.Series(user_speeds).median()) if user_speeds else None
+
+        rows.append({
+            "user_id": str(user_id),
+            "user_name": aircall_user_names.get(str(user_id), f"(user {user_id})"),
+            "dials": dials,
+            "connects": connects,
+            "connect_rate": connect_rate,
+            "talk_time_min": talk_time_min,
+            "conv_to_discovery_rate": conv_to_discovery_rate,
+            "median_speed_to_lead_min": median_speed,
+        })
+
+    # Build as object dtype first to preserve None vs NaN distinction for rate columns.
+    df = pd.DataFrame(rows, columns=cols)
+    for rate_col in ("connect_rate", "conv_to_discovery_rate", "median_speed_to_lead_min"):
+        if rate_col in df.columns:
+            df[rate_col] = pd.array([r.get(rate_col) for r in rows], dtype=object)
+    return df.sort_values("dials", ascending=False).reset_index(drop=True)
