@@ -72,7 +72,7 @@ STAGES_CLOSED_WON: set[str] = {
 # --- Campaign group regex patterns ---
 # Match against FB campaign names like "DS | __Chiro__ Mixed Funnel Setup | CBO | USA"
 CAMPAIGN_GROUPS: list[tuple[str, re.Pattern[str]]] = [
-    ("EMX",         re.compile(r"__EMX__", re.IGNORECASE)),
+    ("EMX",         re.compile(r"__EMX__|\bEMX\b", re.IGNORECASE)),
     ("Chiro",       re.compile(r"__Chiro__", re.IGNORECASE)),
     ("PT Recovery", re.compile(r"__PT__|__Recovery__", re.IGNORECASE)),
     ("TheraRay",    re.compile(r"__Theraray__", re.IGNORECASE)),
