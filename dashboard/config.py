@@ -186,3 +186,53 @@ AIRCALL_CONNECT_DURATION_SEC: int = 10
 
 # Window after a connect during which a 15-min meeting booking is attributed to that call.
 AIRCALL_CONV_TO_DISCO_WINDOW_HOURS: int = 24
+
+# --- Weekly Metrics tab (2026-05-19) ---
+
+# HubSpot form IDs counted toward BOFU Submissions (Total).
+# Just the two Master Forms per Dr. Gumm — other BOFU-named forms (YT, FB-1,
+# Email Link, Manually Distributed, BOFU-to-15-Min) intentionally excluded.
+BOFU_FORM_IDS: list[str] = [
+    "71839f2a-34e7-463c-9ac5-d885caa6eb23",  # NB | Master Forms | Booking Form | BOFU
+    "233f88f1-bd89-45f1-bf2b-41f4d10632d3",  # KK | Master Forms | Booking Form | BOFU (PT Market)
+]
+
+# Webinar contact properties (confirmed via probe on 2026-05-19).
+HS_PROP_WEBINAR_REG_DATE = "webinar_registration_date"
+HS_PROP_WEBINAR_COMPLETED_DATE = "webinar_completed_date"
+HS_PROP_PT_WEBINAR_REG_DATE = "pt_webinar_registration_date"
+HS_PROP_PT_WEBINAR_COMPLETED_DATE = "pt_webinar_completed_date"
+
+# Number of weeks shown by default in the METRICS tab.
+METRICS_WEEKS_BACK: int = 8
+
+# Goals (≥ threshold). Edit here to update targets — version-controlled.
+METRICS_GOALS: dict[str, float] = {
+    "chiro_ad_spend": 0,
+    "chiro_link_clicks": 0,
+    "chiro_cpc": 0,
+    "chiro_lead_magnet_optins": 0,
+    "chiro_new_leads": 0,
+    "pt_ad_spend": 0,
+    "pt_link_clicks": 0,
+    "pt_cpc": 0,
+    "pt_lead_magnet_optins": 0,
+    "pt_new_leads": 0,
+    "theraray_ad_spend": 0,
+    "theraray_leads": 0,
+    "theraray_15min_scheduled": 2,
+    "emx_ad_spend": 0,
+    "emx_leads": 0,
+    "webinar_registrations": 12,
+    "webinar_completions": 8,
+    "pt_webinar_registrations": 0,
+    "pt_webinar_completions": 0,
+    "bofu_submissions_total": 0,
+    "fifteen_min_scheduled": 30,
+    "fifteen_min_completed": 20,
+    "pt_fifteen_min_scheduled": 3,
+    "pt_fifteen_min_completed": 2,
+    "strategy_calls_total": 15,
+    "strategy_calls_completed": 10,
+    "new_total_customers": 5,
+}
