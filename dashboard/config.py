@@ -96,6 +96,10 @@ ASSET_TO_GROUP: dict[str, str] = {
     "BPA Revenue Pyramid typeform":   "Chiro",
     "Can we help you scale typeform": "Chiro",
     "Referral ":                      "Chiro",   # trailing space per Dr. Gumm
+    "5 Million Dollar Practice Secrets typeform": "Chiro",
+    "The Informed Chiro typeform":    "Chiro",
+    "EMX Forth Worth typeform":       "EMX",     # typo "Forth" matches HubSpot's stored value
+    "EMX Kansas City 2026":           "EMX",     # year-suffixed variant
 }
 
 # --- HubSpot owner ID -> human name mapping ---

@@ -23,11 +23,15 @@ def _action_value(actions: list | None, atype: str) -> float:
 
 
 @st.cache_data(ttl=900, show_spinner="Pulling Facebook Ads...")
-def load_fb_insights(start: date, end: date) -> pd.DataFrame:
+def load_fb_insights(start: date, end: date,
+                     time_increment_days: int | None = None) -> pd.DataFrame:
     """Return a dataframe with columns: campaign_name, group, spend, impressions,
     clicks, fb_leads, date_start, date_stop.
 
     One row per campaign. Caches for 15 minutes per date range.
+
+    If time_increment_days is set, FB returns one row per campaign per period
+    of that many days. E.g., time_increment_days=7 -> weekly breakdown.
     """
     token = st.secrets["FB_ADS_TOKEN"]
     acct = st.secrets["FB_AD_ACCOUNT_ID"]
@@ -39,6 +43,8 @@ def load_fb_insights(start: date, end: date) -> pd.DataFrame:
         "access_token": token,
         "limit": 500,
     }
+    if time_increment_days:
+        params["time_increment"] = time_increment_days
     r = requests.get(f"{FB_API}/act_{acct}/insights", params=params, timeout=60)
     r.raise_for_status()
     rows = r.json().get("data", [])

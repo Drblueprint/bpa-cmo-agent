@@ -20,15 +20,15 @@ from dashboard.data.reconcile import weekly_metrics
 
 
 def _week_ranges(weeks_back: int) -> list[tuple[date, date]]:
-    """Return Mon->Sun ranges for the last N weeks, oldest first.
+    """Return Mon->Sun ranges for the last N weeks, NEWEST FIRST.
 
-    Wk-0 = current calendar week ending the upcoming Sunday.
+    Index 0 = current week, index 1 = one week back, etc.
     """
     today = date.today()
     # Find this week's Monday (Mon=0..Sun=6)
     this_monday = today - timedelta(days=today.weekday())
     ranges = []
-    for i in range(weeks_back - 1, -1, -1):
+    for i in range(weeks_back):
         start = this_monday - timedelta(days=7 * i)
         end = start + timedelta(days=6)
         ranges.append((start, end))
@@ -57,19 +57,20 @@ def _money_metric_ids() -> set[str]:
 
 def render_metrics() -> None:
     ranges = _week_ranges(cfg.METRICS_WEEKS_BACK)
-    # Overall load window = earliest week start to latest week end
-    overall_start = ranges[0][0]
-    overall_end = ranges[-1][1]
+    # ranges[0] = newest week, ranges[-1] = oldest week
+    overall_start = ranges[-1][0]   # oldest week start
+    overall_end = ranges[0][1]      # newest week end
 
     st.subheader("BPA Weekly Metrics")
     st.caption(
-        f"{cfg.METRICS_WEEKS_BACK}-week rolling view · Weeks ending "
-        f"{ranges[0][1].strftime('%b')} {ranges[0][1].day} -> {ranges[-1][1].strftime('%b')} {ranges[-1][1].day}, {ranges[-1][1].year}"
+        f"{cfg.METRICS_WEEKS_BACK}-week rolling view · Newest week ending "
+        f"{ranges[0][1].strftime('%b')} {ranges[0][1].day}, {ranges[0][1].year} · "
+        f"oldest week starting {ranges[-1][0].strftime('%b')} {ranges[-1][0].day}"
     )
 
     # --- Data loaders, each in its own try/except ---
     try:
-        fb = load_fb_insights(overall_start, overall_end)
+        fb = load_fb_insights(overall_start, overall_end, time_increment_days=7)
     except Exception as e:
         st.warning(f"FB Ads unavailable: {e}")
         fb = pd.DataFrame(columns=["campaign_name", "group", "spend",
@@ -136,6 +137,32 @@ def render_metrics() -> None:
         st.info("No metric data to display.")
         return
 
+    # --- Spike detection: warn if any New Leads week is 5x+ the median ---
+    chiro_new_row = metrics[metrics["metric_id"] == "chiro_new_leads"]
+    pt_new_row = metrics[metrics["metric_id"] == "pt_new_leads"]
+    week_cols = [c for c in metrics.columns if c.startswith("w")]
+
+    def _has_spike(row_df) -> bool:
+        if row_df.empty:
+            return False
+        vals = [float(row_df.iloc[0][c]) for c in week_cols]
+        nonzero = [v for v in vals if v > 0]
+        if len(nonzero) < 3:
+            return False
+        nonzero_sorted = sorted(nonzero)
+        median = nonzero_sorted[len(nonzero_sorted) // 2]
+        return any(v >= 5 * median for v in vals)
+
+    if _has_spike(chiro_new_row) or _has_spike(pt_new_row):
+        st.info(
+            "One or more weeks show a New Leads count far above the others. "
+            "This is real data, not a calculation bug - most likely a HubSpot "
+            "bulk import or a workflow that retroactively stamped "
+            "`typeform_submission_date` on historical contacts. The other weekly "
+            "numbers are accurate.",
+            icon="ℹ️",
+        )
+
     # --- Format the grid for display ---
     money_ids = _money_metric_ids()
     week_cols = [c for c in metrics.columns if c.startswith("w")]
@@ -164,7 +191,6 @@ def render_metrics() -> None:
         out = {
             "Metric": row["metric_label"],
             "Goal": _fmt_cell(mid, row["goal"], is_goal=True),
-            "Sum": _fmt_cell(mid, row["sum"]),
         }
         for i, label in enumerate(week_labels):
             out[label] = _fmt_cell(mid, row[f"w{i}"])
