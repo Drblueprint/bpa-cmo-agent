@@ -282,3 +282,75 @@ def load_meetings_for_contacts(contact_ids: list[str]) -> pd.DataFrame:
                 "start_time": start_str,
             })
     return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_data(ttl=900, show_spinner="Pulling contact asset details...")
+def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
+    """Batch-fetch contact properties by HubSpot contact ID.
+
+    Used for closed-deal attribution: when a deal closes but the contact
+    submitted their typeform outside the current dashboard window, we still
+    need the contact's typeform_asset_download to attribute revenue to the
+    right group.
+
+    Returns DataFrame with the same shape as load_marketing_contacts.
+    """
+    cols = [
+        "hs_id", "name", "email", "created",
+        "typeform_asset_download", "typeform_submission_date",
+        "sdr_owner", "bds", "sme", "utm_source",
+        "fifteen_min_call_date", "lifecycle_stage",
+        "phone", "mobilephone",
+    ]
+    if not contact_ids:
+        return pd.DataFrame(columns=cols)
+
+    token = st.secrets["HUBSPOT_TOKEN"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    rows = []
+    for i in range(0, len(contact_ids), 100):
+        batch = contact_ids[i:i+100]
+        r = requests.post(
+            f"{HS_API}/crm/v3/objects/contacts/batch/read",
+            headers=headers,
+            json={
+                "properties": [
+                    "firstname", "lastname", "email", "createdate",
+                    cfg.HS_PROP_TYPEFORM_ASSET, cfg.HS_PROP_TYPEFORM_SUBMISSION_DATE,
+                    cfg.HS_PROP_SDR_OWNER, cfg.HS_PROP_BDS, cfg.HS_PROP_SME,
+                    cfg.HS_PROP_UTM_SOURCE,
+                    cfg.HS_PROP_15MIN_CALL_DATE, cfg.HS_PROP_LIFECYCLE_STAGE,
+                    "phone", "mobilephone",
+                ],
+                "inputs": [{"id": cid} for cid in batch],
+            },
+            timeout=60,
+        )
+        if r.status_code >= 400:
+            continue  # Batch failure: skip rather than crash
+        for c in r.json().get("results", []):
+            p = c.get("properties") or {}
+            fn = (p.get("firstname") or "").strip().lower()
+            ln = (p.get("lastname") or "").strip().lower()
+            if fn == "test" or ln == "test":
+                continue  # Same TEST-contact filter as load_marketing_contacts
+            hs_id = c.get("id")
+            rows.append({
+                "hs_id": str(hs_id) if hs_id is not None else None,
+                "name": f"{p.get('firstname','')} {p.get('lastname','')}".strip(),
+                "email": p.get("email"),
+                "created": p.get("createdate"),
+                "typeform_asset_download": p.get(cfg.HS_PROP_TYPEFORM_ASSET),
+                "typeform_submission_date": p.get(cfg.HS_PROP_TYPEFORM_SUBMISSION_DATE),
+                "sdr_owner": p.get(cfg.HS_PROP_SDR_OWNER),
+                "bds": p.get(cfg.HS_PROP_BDS),
+                "sme": p.get(cfg.HS_PROP_SME),
+                "utm_source": p.get(cfg.HS_PROP_UTM_SOURCE),
+                "fifteen_min_call_date": p.get(cfg.HS_PROP_15MIN_CALL_DATE),
+                "lifecycle_stage": p.get(cfg.HS_PROP_LIFECYCLE_STAGE),
+                "phone": p.get("phone"),
+                "mobilephone": p.get("mobilephone"),
+            })
+
+    return pd.DataFrame(rows, columns=cols)

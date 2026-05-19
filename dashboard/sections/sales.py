@@ -88,6 +88,25 @@ def render_sales(start: date, end: date) -> None:
             "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
         ])
 
+    # Closed-deal attribution: pull any contact tied to a closed-won deal in
+    # the window who isn't already in our fresh-leads pull. Sales cycles can
+    # be 3-6 months; this preserves asset attribution for long-cycle closes.
+    try:
+        from dashboard.data.hubspot_loader import load_contacts_by_ids
+        if not deals.empty and not contact_deals.empty:
+            won_deal_ids = set(deals.loc[deals["dealstage"].isin(cfg.STAGES_CLOSED_WON), "deal_id"])
+            won_contact_ids = set(
+                contact_deals.loc[contact_deals["deal_id"].isin(won_deal_ids), "contact_id"].astype(str)
+            )
+            known_ids = set(marketing["hs_id"].astype(str)) if not marketing.empty else set()
+            missing_ids = list(won_contact_ids - known_ids)
+            if missing_ids:
+                extra = load_contacts_by_ids(missing_ids)
+                if not extra.empty:
+                    marketing = pd.concat([marketing, extra], ignore_index=True)
+    except Exception as e:
+        st.warning(f"Closed-deal attribution lookup failed: {e}")
+
     stages = _stage_groups()
 
     fn_mkt = pipeline_funnel(marketing, contact_deals, deals,
