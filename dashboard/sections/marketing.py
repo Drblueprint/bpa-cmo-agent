@@ -161,6 +161,14 @@ def render_marketing(start: date, end: date) -> None:
         st.info("No marketing leads in this window.")
     else:
         detail = contacts.copy()
+
+        # Default sort: newest typeform submission first
+        detail["_sort_ts"] = pd.to_datetime(
+            detail["typeform_submission_date"], utc=True, errors="coerce"
+        )
+        detail = detail.sort_values("_sort_ts", ascending=False, na_position="last")
+        detail = detail.drop(columns=["_sort_ts"])
+
         detail["group"] = detail["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
         detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
 

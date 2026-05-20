@@ -275,6 +275,14 @@ def render_sales(start: date, end: date) -> None:
         latest_deal[["hs_id", "dealstage", "amount"]],
         on="hs_id", how="left",
     )
+
+    # Default sort: newest typeform submission first
+    detail["_sort_ts"] = pd.to_datetime(
+        detail["typeform_submission_date"], utc=True, errors="coerce"
+    )
+    detail = detail.sort_values("_sort_ts", ascending=False, na_position="last")
+    detail = detail.drop(columns=["_sort_ts"])
+
     detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
     detail["bds"] = detail["bds"].map(cfg.resolve_owner)
     detail["hubspot_link"] = detail["hs_id"].apply(cfg.hubspot_contact_url)
