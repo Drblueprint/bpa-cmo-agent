@@ -1288,14 +1288,30 @@ def build_closed_deals_table(
         # Option C: deal.amount if > 0, else group default
         effective_amt = amt if amt > 0 else float(group_default_amount.get(group, 0.0))
 
-        # Sales cycle: typeform_submission_date -> closedate
+        # Sales cycle: prefer typeform_submission_date as lead-start; fall back
+        # to HubSpot createdate when submission is missing OR appears to be
+        # after the close (data anomaly — typeform_submission_date was bulk-
+        # updated in some cases, corrupting older closes). Returns None when no
+        # valid lead-start is available; None values are excluded from the
+        # median rather than being clamped to 0.
         cycle_days = None
         try:
             submit_ts = pd.to_datetime(primary_contact.get("typeform_submission_date"),
                                         utc=True, errors="coerce")
-            close_ts = pd.to_datetime(deal.get("closedate"), utc=True, errors="coerce")
-            if pd.notna(submit_ts) and pd.notna(close_ts):
-                cycle_days = max(0, (close_ts - submit_ts).days)
+            created_ts = pd.to_datetime(primary_contact.get("created"),
+                                         utc=True, errors="coerce")
+            close_ts = pd.to_datetime(deal.get("closedate"),
+                                       utc=True, errors="coerce")
+            if pd.notna(close_ts):
+                lead_start_ts = None
+                # Prefer submission_date when it's a valid (pre-close) timestamp
+                if pd.notna(submit_ts) and submit_ts <= close_ts:
+                    lead_start_ts = submit_ts
+                # Else fall back to createdate when it's valid
+                elif pd.notna(created_ts) and created_ts <= close_ts:
+                    lead_start_ts = created_ts
+                if lead_start_ts is not None:
+                    cycle_days = int((close_ts - lead_start_ts).days)
         except Exception:
             pass
 
