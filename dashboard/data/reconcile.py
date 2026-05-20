@@ -1234,6 +1234,7 @@ def build_closed_deals_table(
     asset_to_group: dict[str, str],
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
+    stage_source_fallback: dict | None = None,
 ) -> pd.DataFrame:
     """Build a row-per-deal detail table for closed-won deals.
 
@@ -1277,8 +1278,11 @@ def build_closed_deals_table(
             group = asset_to_group.get(asset)
             is_marketing = True
         elif override:
-            # Override-attributed
+            # Email-based override
             source, group, is_marketing = override
+        elif stage_source_fallback and str(deal.get("dealstage")) in stage_source_fallback:
+            # Stage-based fallback (e.g., DIY, 90-Day)
+            source, group, is_marketing = stage_source_fallback[str(deal.get("dealstage"))]
         else:
             # Unknown source
             source = "(unattributed)"
@@ -1352,6 +1356,7 @@ def compute_ytd_money(
     asset_to_group: dict[str, str],
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
+    stage_source_fallback: dict | None = None,
 ) -> dict:
     """Compute YTD money KPIs in TWO views: Total (all closed) + Marketing-only.
 
@@ -1362,6 +1367,7 @@ def compute_ytd_money(
         asset_to_group=asset_to_group,
         group_default_amount=group_default_amount,
         source_overrides=source_overrides,
+        stage_source_fallback=stage_source_fallback,
     )
 
     def _kpis(df: pd.DataFrame) -> dict:

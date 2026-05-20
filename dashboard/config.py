@@ -284,6 +284,17 @@ METRICS_GOALS: dict[str, float] = {
 # Format: {email_lowercase: (source_label, group, is_marketing)}
 # is_marketing = True for lead-magnet/event-form/marketing-list sources;
 #                False for cold sales outreach + referrals.
+# Stage-based source fallback: when a closed deal's contact has no typeform
+# attribution AND no email-based CONTACT_SOURCE_OVERRIDES entry, the deal's
+# stage itself serves as the source label.
+# Tuple format: (source_label, default_group, is_marketing)
+# 90-Day and DIY are sales-driven program types (not marketing), so
+# is_marketing defaults to False; default group is Chiro (most BPA customers).
+STAGE_SOURCE_FALLBACK: dict[str, tuple[str, str, bool]] = {
+    "1163151789": ("DIY Program", "Chiro", False),     # SALES-V2 DIY stage
+    "1123458844": ("90-Day Program", "Chiro", False),  # SALES-V2 90-Day stage
+}
+
 CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
     # Sales outreach (not marketing)
     "drjoehuffman@gmail.com":          ("VEMX Cold Outreach", "Chiro", False),

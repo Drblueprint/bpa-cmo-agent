@@ -337,6 +337,7 @@ def render_sales(start: date, end: date) -> None:
         asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+        stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
     )
     if deals_table.empty:
         st.info("No closed-won deals YTD.")
