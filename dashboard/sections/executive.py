@@ -344,6 +344,16 @@ def render_executive(start: date, end: date) -> None:
         fifteen_detail = meetings_x[types.str.contains("15 min", na=False)].copy()
         strategy_detail = meetings_x[types.str.contains("strategy", na=False)].copy()
 
+        # One row per contact — keep only the most recent meeting per contact
+        if not fifteen_detail.empty:
+            fifteen_detail = fifteen_detail.sort_values(
+                "start_time", ascending=False, na_position="last"
+            ).drop_duplicates(subset="contact_id", keep="first").reset_index(drop=True)
+        if not strategy_detail.empty:
+            strategy_detail = strategy_detail.sort_values(
+                "start_time", ascending=False, na_position="last"
+            ).drop_duplicates(subset="contact_id", keep="first").reset_index(drop=True)
+
         st.divider()
         st.subheader("BDS Call Detail")
         st.caption("Every 15-min discovery call, with the BDS assigned to hold it.")
