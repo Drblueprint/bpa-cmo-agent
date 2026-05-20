@@ -46,6 +46,7 @@ def _stage_groups() -> dict[str, set[str]]:
 
 
 def render_sales(start: date, end: date) -> None:
+    floor_days = st.session_state.get("data_floor_days_back", 90)
     st.info(
         '**"Marketing-attributed"** below = HubSpot contact has '
         '`typeform_asset_download` populated.',
@@ -64,7 +65,7 @@ def render_sales(start: date, end: date) -> None:
         st.warning(f"HubSpot contact-deal associations unavailable: {e}")
         contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
     try:
-        deals = load_deals_in_window(start, end)
+        deals = load_deals_in_window(start, end, data_floor_days_back=floor_days)
     except Exception as e:
         st.warning(f"HubSpot deals unavailable: {e}")
         deals = pd.DataFrame()
@@ -78,7 +79,8 @@ def render_sales(start: date, end: date) -> None:
             "raw_digits", "phone_normalized",
         ])
     try:
-        meetings = load_meetings_for_contacts(marketing["hs_id"].tolist()) \
+        meetings = load_meetings_for_contacts(marketing["hs_id"].tolist(),
+                                              data_floor_days_back=floor_days) \
             if not marketing.empty else pd.DataFrame(columns=[
                 "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
             ])

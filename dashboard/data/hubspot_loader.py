@@ -115,7 +115,11 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner="Pulling HubSpot deals...")
-def load_deals_in_window(start: date, end: date) -> pd.DataFrame:
+def load_deals_in_window(
+    start: date,
+    end: date,
+    data_floor_days_back: int = 90,
+) -> pd.DataFrame:
     """Return deals modified or created in the window.
 
     Columns: deal_id, dealname, amount, dealstage, pipeline, createdate,
@@ -139,8 +143,11 @@ def load_deals_in_window(start: date, end: date) -> pd.DataFrame:
     }
     results = _hs_search(token, "deals", body)
     from dashboard.config import data_floor_date
-    floor_ts = datetime.combine(data_floor_date(), datetime.min.time(),
-                                 tzinfo=timezone.utc)
+    floor_ts = datetime.combine(
+        data_floor_date(data_floor_days_back),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
     rows = []
     for r in results:
         p = r.get("properties", {})
@@ -202,7 +209,10 @@ def load_contact_deals(contact_ids: list[str]) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner="Pulling HubSpot meetings...")
-def load_meetings_for_contacts(contact_ids: list[str]) -> pd.DataFrame:
+def load_meetings_for_contacts(
+    contact_ids: list[str],
+    data_floor_days_back: int = 90,
+) -> pd.DataFrame:
     """Return meetings associated with the given contact IDs.
 
     Columns: meeting_id, contact_id, activity_type, outcome, start_time.
@@ -267,8 +277,11 @@ def load_meetings_for_contacts(contact_ids: list[str]) -> pd.DataFrame:
 
     # 3. Flatten
     from dashboard.config import data_floor_date
-    floor_ts = datetime.combine(data_floor_date(), datetime.min.time(),
-                                 tzinfo=timezone.utc)
+    floor_ts = datetime.combine(
+        data_floor_date(data_floor_days_back),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
     rows = []
     for cid, mids in contact_to_meetings.items():
         for mid in mids:

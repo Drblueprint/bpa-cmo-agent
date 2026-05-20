@@ -154,15 +154,18 @@ GROUP_DEFAULT_DEAL_AMOUNT: dict[str, float] = {
 SDR_PAYROLL_MONTHLY: float | None = None
 SME_PAYROLL_MONTHLY: float | None = None
 
-# --- Stale-data floor (Dr. Gumm directive, 2026-05-19): ---
-# Drop any HubSpot meeting or deal record older than this many days.
-# Rolling window: recomputed each time data_floor_date() is called.
+# --- Stale-data floor (configurable per session) ---
+# Default = 90 days. UI selector allows 120 and 180 for longer-cycle reviews.
 from datetime import date as _date, timedelta as _timedelta
 DATA_FLOOR_DAYS_BACK: int = 90
+DATA_FLOOR_OPTIONS: list[int] = [90, 120, 180]
 
-def data_floor_date() -> _date:
-    """Return today minus DATA_FLOOR_DAYS_BACK. Records older than this are excluded."""
-    return _date.today() - _timedelta(days=DATA_FLOOR_DAYS_BACK)
+
+def data_floor_date(days_back: int | None = None) -> _date:
+    """Return today minus N days. Defaults to DATA_FLOOR_DAYS_BACK when not provided."""
+    if days_back is None:
+        days_back = DATA_FLOOR_DAYS_BACK
+    return _date.today() - _timedelta(days=days_back)
 
 # HubSpot portal ID — used to build contact-record URLs for click-through.
 # Sourced from .env earlier (portal 9089349). Confirm with HubSpot URL pattern:

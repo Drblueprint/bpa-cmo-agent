@@ -62,6 +62,7 @@ def _cents_money_metric_ids() -> set[str]:
 
 
 def render_metrics() -> None:
+    floor_days = st.session_state.get("data_floor_days_back", 90)
     ranges = _week_ranges(cfg.METRICS_WEEKS_BACK)
     # ranges[0] = newest week, ranges[-1] = oldest week
     overall_start = ranges[-1][0]   # oldest week start
@@ -94,12 +95,14 @@ def render_metrics() -> None:
         st.warning(f"HubSpot contact-deal associations unavailable: {e}")
         contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
     try:
-        deals = load_deals_in_window(overall_start, overall_end)
+        deals = load_deals_in_window(overall_start, overall_end,
+                                     data_floor_days_back=floor_days)
     except Exception as e:
         st.warning(f"HubSpot deals unavailable: {e}")
         deals = pd.DataFrame()
     try:
-        meetings = load_meetings_for_contacts(contacts["hs_id"].tolist()) \
+        meetings = load_meetings_for_contacts(contacts["hs_id"].tolist(),
+                                              data_floor_days_back=floor_days) \
             if not contacts.empty else pd.DataFrame(columns=[
                 "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
             ])

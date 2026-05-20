@@ -31,6 +31,7 @@ def _fmt_int(x) -> str:
 
 
 def render_marketing(start: date, end: date) -> None:
+    floor_days = st.session_state.get("data_floor_days_back", 90)
     try:
         fb = load_fb_insights(start, end)
     except Exception as e:
@@ -54,12 +55,13 @@ def render_marketing(start: date, end: date) -> None:
         st.warning(f"HubSpot contact-deal associations unavailable: {e}")
         contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
     try:
-        deals = load_deals_in_window(start, end)
+        deals = load_deals_in_window(start, end, data_floor_days_back=floor_days)
     except Exception as e:
         st.warning(f"HubSpot deals unavailable: {e}")
         deals = pd.DataFrame()
     try:
-        meetings = load_meetings_for_contacts(contacts["hs_id"].tolist()) \
+        meetings = load_meetings_for_contacts(contacts["hs_id"].tolist(),
+                                              data_floor_days_back=floor_days) \
             if not contacts.empty else pd.DataFrame(columns=[
                 "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
             ])
