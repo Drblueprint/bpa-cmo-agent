@@ -626,16 +626,18 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
 
 
 @st.cache_data(ttl=900, show_spinner="Pulling list members...")
-def load_list_membership_contact_ids(list_id: str) -> list[str]:
-    """Return all contact IDs that are currently members of the given
-    HubSpot list. Uses the v3 list memberships endpoint."""
+def load_list_memberships(list_id: str) -> pd.DataFrame:
+    """Return DataFrame of (contact_id, membership_timestamp) for the given
+    HubSpot list. `membership_timestamp` is when the contact joined the list
+    (NOT the contact's createdate)."""
+    cols = ["contact_id", "membership_timestamp"]
     if not list_id:
-        return []
+        return pd.DataFrame(columns=cols)
 
     token = st.secrets["HUBSPOT_TOKEN"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    ids: list[str] = []
+    rows: list[dict] = []
     after = None
     while True:
         params = {"limit": 250}
@@ -650,10 +652,19 @@ def load_list_membership_contact_ids(list_id: str) -> list[str]:
         data = r.json()
         for m in data.get("results", []):
             rid = m.get("recordId")
+            ts = m.get("membershipTimestamp")
             if rid is not None:
-                ids.append(str(rid))
+                rows.append({"contact_id": str(rid),
+                              "membership_timestamp": ts})
         after = (data.get("paging") or {}).get("next", {}).get("after")
         if not after:
             break
 
-    return ids
+    return pd.DataFrame(rows, columns=cols)
+
+
+# Backward-compatible alias for any callers that only need IDs
+@st.cache_data(ttl=900, show_spinner="Pulling list members...")
+def load_list_membership_contact_ids(list_id: str) -> list[str]:
+    df = load_list_memberships(list_id)
+    return df["contact_id"].tolist() if not df.empty else []

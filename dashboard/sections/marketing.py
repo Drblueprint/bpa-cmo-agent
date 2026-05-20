@@ -48,32 +48,41 @@ def render_marketing(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Hyros unavailable: {e}")
         hyros = pd.DataFrame()
-    # Pull TheraRay-attributed contacts via HubSpot list 6280 (auto-populated
-    # when someone fills the TheraRay User Request Form). Cleaner than
-    # matching FB campaign IDs via utm_campaign.
+    # Pull TheraRay-attributed contacts via HubSpot list 6280.
+    # Filter by `membershipTimestamp` (when they joined the list), NOT contact
+    # createdate — some TheraRay leads are pre-existing contacts who recently
+    # filled the TheraRay form.
     theraray_contacts = pd.DataFrame()
     try:
         from dashboard.data.hubspot_loader import (
-            load_list_membership_contact_ids,
+            load_list_memberships,
             load_contacts_by_ids,
         )
-        theraray_ids = load_list_membership_contact_ids(cfg.THERARAY_HUBSPOT_LIST_ID)
-        if theraray_ids:
-            theraray_contacts = load_contacts_by_ids(theraray_ids)
-            if not theraray_contacts.empty:
-                # Filter to the dashboard window (by createdate)
-                created_ts = pd.to_datetime(theraray_contacts["created"],
-                                              utc=True, errors="coerce")
-                start_ts = pd.Timestamp(year=start.year, month=start.month,
-                                         day=start.day, tz="UTC")
-                end_ts = pd.Timestamp(year=end.year, month=end.month,
-                                       day=end.day, tz="UTC") + pd.Timedelta(days=1)
-                theraray_contacts = theraray_contacts[
-                    (created_ts >= start_ts) & (created_ts < end_ts)
-                ].copy()
+        memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
+        if not memberships.empty:
+            # Filter memberships to the dashboard window first
+            mt = pd.to_datetime(memberships["membership_timestamp"],
+                                 utc=True, errors="coerce")
+            start_ts = pd.Timestamp(year=start.year, month=start.month,
+                                     day=start.day, tz="UTC")
+            end_ts = pd.Timestamp(year=end.year, month=end.month,
+                                   day=end.day, tz="UTC") + pd.Timedelta(days=1)
+            in_window = memberships[(mt >= start_ts) & (mt < end_ts)]
+            window_ids = in_window["contact_id"].tolist()
+            if window_ids:
+                theraray_contacts = load_contacts_by_ids(window_ids)
                 if not theraray_contacts.empty:
-                    # Tag with synthetic asset so group mapping recognizes them
+                    # Join membership timestamp onto contacts so we can use it
+                    # as the "submitted" date instead of stale createdate
+                    ts_map = dict(zip(in_window["contact_id"].astype(str),
+                                      in_window["membership_timestamp"]))
+                    theraray_contacts = theraray_contacts.copy()
                     theraray_contacts["typeform_asset_download"] = "TheraRay FB Lead"
+                    # Override typeform_submission_date with the membership
+                    # timestamp so the "Submitted (CT)" column shows the right value
+                    theraray_contacts["typeform_submission_date"] = (
+                        theraray_contacts["hs_id"].astype(str).map(ts_map)
+                    )
                     cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
     except Exception as e:
         st.warning(f"TheraRay contacts unavailable: {e}")
