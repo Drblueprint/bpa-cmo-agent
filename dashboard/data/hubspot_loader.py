@@ -414,23 +414,61 @@ def load_closed_deals_ytd(
         "pt_webinar_registration_date", "pt_webinar_completed_date",
     ]
 
+    from datetime import date as _date, datetime as _datetime
+    from datetime import timezone as _timezone
     year_start = _date(_date.today().year, 1, 1)
     today = _date.today()
+    start_ms = int(_datetime.combine(year_start, _datetime.min.time(),
+                                       tzinfo=_timezone.utc).timestamp() * 1000)
+    end_ms = int(_datetime.combine(today, _datetime.max.time(),
+                                     tzinfo=_timezone.utc).timestamp() * 1000)
 
-    # 1. Pull deals across the full YTD window, with a 200-day floor so the
-    #    standard floor doesn't truncate
-    deals = load_deals_in_window(year_start, today, data_floor_days_back=200)
-    if deals.empty:
-        return (pd.DataFrame(columns=deal_cols),
-                pd.DataFrame(columns=assoc_cols),
-                pd.DataFrame(columns=contact_cols))
+    closed_set = list(closed_won_stages)
+    token = st.secrets["HUBSPOT_TOKEN"]
+    headers = {"Authorization": f"Bearer {token}"}
 
-    # 2. Filter to closed-won stages + closedate in YTD
-    closed_set = set(closed_won_stages)
-    won_mask = deals["dealstage"].isin(closed_set)
-    closed_dt = pd.to_datetime(deals["closedate"], utc=True, errors="coerce")
-    ytd_mask = closed_dt >= pd.Timestamp(year=year_start.year, month=1, day=1, tz="UTC")
-    deals_ytd = deals[won_mask & ytd_mask].reset_index(drop=True)
+    body = {
+        "filterGroups": [{
+            "filters": [
+                {"propertyName": "dealstage", "operator": "IN",
+                 "values": closed_set},
+                {"propertyName": "closedate", "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        }],
+        "properties": ["dealname", "amount", "dealstage", "pipeline",
+                       "createdate", "closedate"],
+        "limit": 100,
+    }
+    deal_rows = []
+    after = None
+    while True:
+        b = dict(body)
+        if after:
+            b["after"] = after
+        r = requests.post(
+            f"{HS_API}/crm/v3/objects/deals/search",
+            headers=headers, json=b, timeout=60,
+        )
+        r.raise_for_status()
+        data = r.json()
+        for d in data.get("results", []):
+            p = d.get("properties") or {}
+            did = d.get("id")
+            deal_rows.append({
+                "deal_id": str(did) if did is not None else None,
+                "dealname": p.get("dealname"),
+                "amount": float(p.get("amount") or 0),
+                "dealstage": p.get("dealstage"),
+                "pipeline": p.get("pipeline"),
+                "createdate": p.get("createdate"),
+                "closedate": p.get("closedate"),
+            })
+        after = (data.get("paging") or {}).get("next", {}).get("after")
+        if not after or len(deal_rows) >= 10000:
+            break
+
+    deals_ytd = pd.DataFrame(deal_rows, columns=deal_cols)
 
     if deals_ytd.empty:
         return (deals_ytd,
