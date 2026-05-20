@@ -164,6 +164,23 @@ def data_floor_date() -> _date:
     """Return today minus DATA_FLOOR_DAYS_BACK. Records older than this are excluded."""
     return _date.today() - _timedelta(days=DATA_FLOOR_DAYS_BACK)
 
+# HubSpot portal ID — used to build contact-record URLs for click-through.
+# Sourced from .env earlier (portal 9089349). Confirm with HubSpot URL pattern:
+# https://app.hubspot.com/contacts/{portal_id}/record/0-1/{contact_id}
+HUBSPOT_PORTAL_ID: str = "9089349"
+
+
+def hubspot_contact_url(hs_id) -> str:
+    """Build a clickable URL to the contact record in HubSpot.
+
+    Returns empty string if hs_id is empty/None so the UI shows blank instead
+    of a broken link.
+    """
+    if hs_id is None or str(hs_id).strip() == "":
+        return ""
+    return f"https://app.hubspot.com/contacts/{HUBSPOT_PORTAL_ID}/record/0-1/{hs_id}"
+
+
 # --- AirCall integration (Phase B) ---
 # AirCall env vars: AIRCALL_API_ID + AIRCALL_API_token (note lowercase 'token').
 

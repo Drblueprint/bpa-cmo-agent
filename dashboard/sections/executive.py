@@ -301,10 +301,13 @@ def render_executive(start: date, end: date) -> None:
             st.info("No 15-min calls in this window.")
         else:
             fifteen_detail["bds"] = fifteen_detail["bds"].map(cfg.resolve_owner)
+            fifteen_detail["hubspot_link"] = fifteen_detail["contact_id"].apply(cfg.hubspot_contact_url)
             fifteen_view = fifteen_detail[[
+                "hubspot_link",
                 "bds", "name", "email", "typeform_asset_download",
                 "outcome", "scheduled_ct",
             ]].rename(columns={
+                "hubspot_link": "Open",
                 "bds": "BDS",
                 "name": "Contact",
                 "email": "Email",
@@ -312,7 +315,18 @@ def render_executive(start: date, end: date) -> None:
                 "outcome": "Outcome",
                 "scheduled_ct": "Scheduled (CT)",
             }).sort_values(["BDS", "Scheduled (CT)"], ascending=[True, False])
-            st.dataframe(fifteen_view, use_container_width=True, hide_index=True)
+            st.dataframe(
+                fifteen_view,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Open": st.column_config.LinkColumn(
+                        "Open",
+                        help="Open contact in HubSpot",
+                        display_text="HubSpot ↗",
+                    ),
+                },
+            )
 
         st.divider()
         st.subheader("SME Call Detail")
@@ -321,10 +335,13 @@ def render_executive(start: date, end: date) -> None:
             st.info("No Strategy calls in this window.")
         else:
             strategy_detail["sme"] = strategy_detail["sme"].map(cfg.resolve_owner)
+            strategy_detail["hubspot_link"] = strategy_detail["contact_id"].apply(cfg.hubspot_contact_url)
             strategy_view = strategy_detail[[
+                "hubspot_link",
                 "sme", "name", "email", "typeform_asset_download",
                 "outcome", "scheduled_ct",
             ]].rename(columns={
+                "hubspot_link": "Open",
                 "sme": "SME",
                 "name": "Contact",
                 "email": "Email",
@@ -332,4 +349,15 @@ def render_executive(start: date, end: date) -> None:
                 "outcome": "Outcome",
                 "scheduled_ct": "Scheduled (CT)",
             }).sort_values(["SME", "Scheduled (CT)"], ascending=[True, False])
-            st.dataframe(strategy_view, use_container_width=True, hide_index=True)
+            st.dataframe(
+                strategy_view,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Open": st.column_config.LinkColumn(
+                        "Open",
+                        help="Open contact in HubSpot",
+                        display_text="HubSpot ↗",
+                    ),
+                },
+            )

@@ -275,11 +275,14 @@ def render_sales(start: date, end: date) -> None:
     )
     detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
     detail["bds"] = detail["bds"].map(cfg.resolve_owner)
+    detail["hubspot_link"] = detail["hs_id"].apply(cfg.hubspot_contact_url)
     detail = detail[[
+        "hubspot_link",
         "name", "email", "typeform_asset_download", "typeform_submission_date",
         "fifteen_min_call_date", "lifecycle_stage",
         "sdr_owner", "bds", "dealstage", "amount",
     ]].rename(columns={
+        "hubspot_link": "Open",
         "typeform_asset_download": "Asset",
         "typeform_submission_date": "Submitted",
         "fifteen_min_call_date": "15-min Call Date",
@@ -289,4 +292,15 @@ def render_sales(start: date, end: date) -> None:
         "dealstage": "Current Stage",
         "amount": "Deal $",
     })
-    st.dataframe(detail, use_container_width=True, hide_index=True)
+    st.dataframe(
+        detail,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Open": st.column_config.LinkColumn(
+                "Open",
+                help="Open contact in HubSpot",
+                display_text="HubSpot ↗",
+            ),
+        },
+    )

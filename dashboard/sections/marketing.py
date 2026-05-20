@@ -181,11 +181,14 @@ def render_marketing(start: date, end: date) -> None:
         detail[["fifteen_min_status", "strategy_status", "closed_won"]] = \
             detail[["fifteen_min_status", "strategy_status", "closed_won"]].fillna("")
 
+        detail["hubspot_link"] = detail["hs_id"].apply(cfg.hubspot_contact_url)
         detail = detail[[
+            "hubspot_link",
             "name", "email", "group", "typeform_asset_download",
             "typeform_submission_date", "sdr_owner",
             "fifteen_min_status", "strategy_status", "closed_won",
         ]].rename(columns={
+            "hubspot_link": "Open",
             "name": "Name",
             "email": "Email",
             "group": "Group",
@@ -196,4 +199,15 @@ def render_marketing(start: date, end: date) -> None:
             "strategy_status": "Strategy Call",
             "closed_won": "Closed Won",
         })
-        st.dataframe(detail, use_container_width=True, hide_index=True)
+        st.dataframe(
+            detail,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Open": st.column_config.LinkColumn(
+                    "Open",
+                    help="Open contact in HubSpot",
+                    display_text="HubSpot ↗",
+                ),
+            },
+        )
