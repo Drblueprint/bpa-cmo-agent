@@ -29,14 +29,49 @@ require_password()
 # --- Global header ---
 st.title("BPA CMO Dashboard")
 
-col_dates, col_floor, col_refresh = st.columns([3, 1, 1])
+col_preset, col_dates, col_floor, col_refresh = st.columns([1.2, 2.5, 1, 1])
+
+with col_preset:
+    preset = st.selectbox(
+        "Quick range",
+        ["Custom", "Last 7 days", "Last 14 days", "Last 30 days",
+         "This Month", "Last Month", "Last 90 days", "Year to Date"],
+        index=1,
+        key="date_preset",
+        help="Pick a preset and the date range updates automatically. "
+             "Choose 'Custom' to set dates manually.",
+    )
+
 with col_dates:
     today = date.today()
-    default_start = today - timedelta(days=7)
+    if preset == "Last 7 days":
+        preset_start, preset_end = today - timedelta(days=7), today
+    elif preset == "Last 14 days":
+        preset_start, preset_end = today - timedelta(days=14), today
+    elif preset == "Last 30 days":
+        preset_start, preset_end = today - timedelta(days=30), today
+    elif preset == "This Month":
+        preset_start = today.replace(day=1)
+        preset_end = today
+    elif preset == "Last Month":
+        first_of_this_month = today.replace(day=1)
+        last_of_prev = first_of_this_month - timedelta(days=1)
+        preset_start = last_of_prev.replace(day=1)
+        preset_end = last_of_prev
+    elif preset == "Last 90 days":
+        preset_start, preset_end = today - timedelta(days=90), today
+    elif preset == "Year to Date":
+        preset_start = date(today.year, 1, 1)
+        preset_end = today
+    else:  # Custom — default to last 7 days as a starting point
+        preset_start, preset_end = today - timedelta(days=7), today
+
+    # Key includes the preset name so the widget refreshes when preset changes
     date_range = st.date_input(
         "Date range",
-        value=(default_start, today),
+        value=(preset_start, preset_end),
         max_value=today,
+        key=f"date_range_{preset}",
     )
 with col_floor:
     from dashboard.config import DATA_FLOOR_OPTIONS, DATA_FLOOR_DAYS_BACK
