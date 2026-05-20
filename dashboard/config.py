@@ -128,6 +128,7 @@ HS_OWNER_NAMES: dict[str, str] = {
     "176135509": "Scott Warren",   # HubSpot owner-ID variant (same person as 44815718)
     "77643349": "Dr. Eric Smith",
     "24801837": "Dr. William Lewis",
+    "79162996": "Dr. William Lewis",  # HubSpot owner-ID variant
     "61097347": "Haley",
     "568393136": "Haley",
     "1266266951": "Self Booking",   # Kurt Kleinpeter — leads who self-booked
