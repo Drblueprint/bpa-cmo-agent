@@ -536,3 +536,90 @@ def load_closed_deals_ytd(
         else pd.DataFrame(columns=contact_cols)
 
     return deals_ytd, contact_deals_df, contacts_df
+
+
+@st.cache_data(ttl=900, show_spinner="Pulling TheraRay contacts...")
+def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
+                                    start: date,
+                                    end: date) -> pd.DataFrame:
+    """Pull HubSpot contacts whose utm_campaign matches any of the given FB
+    campaign IDs AND createdate is in window.
+
+    Used for TheraRay-style leads that don't fill a typeform but ARE
+    identifiable via the FB campaign ID their utm_campaign carries.
+
+    Returns the same DataFrame shape as load_marketing_contacts.
+    """
+    cols = [
+        "hs_id", "name", "email", "created",
+        "typeform_asset_download", "typeform_submission_date",
+        "sdr_owner", "bds", "sme", "utm_source",
+        "fifteen_min_call_date", "lifecycle_stage",
+        "phone", "mobilephone",
+        "webinar_registration_date", "webinar_completed_date",
+        "pt_webinar_registration_date", "pt_webinar_completed_date",
+        "contract_tier",
+    ]
+    if not campaign_ids:
+        return pd.DataFrame(columns=cols)
+
+    token = st.secrets["HUBSPOT_TOKEN"]
+    headers = {"Authorization": f"Bearer {token}"}
+    start_ms = int(datetime.combine(start, datetime.min.time(),
+                                     tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime.combine(end, datetime.max.time(),
+                                   tzinfo=timezone.utc).timestamp() * 1000)
+
+    body = {
+        "filterGroups": [{
+            "filters": [
+                {"propertyName": "utm_campaign", "operator": "IN",
+                 "values": list(campaign_ids)},
+                {"propertyName": "createdate", "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        }],
+        "properties": [
+            "firstname", "lastname", "email", "createdate",
+            cfg.HS_PROP_TYPEFORM_ASSET, cfg.HS_PROP_TYPEFORM_SUBMISSION_DATE,
+            cfg.HS_PROP_SDR_OWNER, cfg.HS_PROP_BDS, cfg.HS_PROP_SME,
+            cfg.HS_PROP_UTM_SOURCE,
+            cfg.HS_PROP_15MIN_CALL_DATE, cfg.HS_PROP_LIFECYCLE_STAGE,
+            "phone", "mobilephone",
+            cfg.HS_PROP_WEBINAR_REG_DATE, cfg.HS_PROP_WEBINAR_COMPLETED_DATE,
+            cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
+            cfg.HS_PROP_CONTRACT_TIER,
+        ],
+        "limit": 100,
+    }
+    results = _hs_search(token, "contacts", body)
+    rows = []
+    for r in results:
+        p = r.get("properties", {})
+        fn = (p.get("firstname") or "").strip().lower()
+        ln = (p.get("lastname") or "").strip().lower()
+        if fn == "test" or ln == "test":
+            continue
+        hs_id = r.get("id")
+        rows.append({
+            "hs_id": str(hs_id) if hs_id is not None else None,
+            "name": f"{p.get('firstname','')} {p.get('lastname','')}".strip(),
+            "email": p.get("email"),
+            "created": p.get("createdate"),
+            "typeform_asset_download": p.get(cfg.HS_PROP_TYPEFORM_ASSET),
+            "typeform_submission_date": p.get(cfg.HS_PROP_TYPEFORM_SUBMISSION_DATE),
+            "sdr_owner": p.get(cfg.HS_PROP_SDR_OWNER),
+            "bds": p.get(cfg.HS_PROP_BDS),
+            "sme": p.get(cfg.HS_PROP_SME),
+            "utm_source": p.get(cfg.HS_PROP_UTM_SOURCE),
+            "fifteen_min_call_date": p.get(cfg.HS_PROP_15MIN_CALL_DATE),
+            "lifecycle_stage": p.get(cfg.HS_PROP_LIFECYCLE_STAGE),
+            "phone": p.get("phone"),
+            "mobilephone": p.get("mobilephone"),
+            "webinar_registration_date": p.get(cfg.HS_PROP_WEBINAR_REG_DATE),
+            "webinar_completed_date": p.get(cfg.HS_PROP_WEBINAR_COMPLETED_DATE),
+            "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
+            "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
+            "contract_tier": p.get(cfg.HS_PROP_CONTRACT_TIER),
+        })
+    return pd.DataFrame(rows, columns=cols)

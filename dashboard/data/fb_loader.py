@@ -39,7 +39,7 @@ def load_fb_insights(start: date, end: date,
     params = {
         "time_range": f'{{"since":"{start.isoformat()}","until":"{end.isoformat()}"}}',
         "level": "campaign",
-        "fields": "campaign_name,spend,impressions,clicks,inline_link_clicks,actions,date_start,date_stop",
+        "fields": "campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,date_start,date_stop",
         "access_token": token,
         "limit": 500,
     }
@@ -53,6 +53,7 @@ def load_fb_insights(start: date, end: date,
     for row in rows:
         name = row.get("campaign_name", "")
         records.append({
+            "campaign_id": row.get("campaign_id"),  # NEW
             "campaign_name": name,
             "group": match_group(name),
             "spend": float(row.get("spend", 0)),

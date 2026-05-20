@@ -48,6 +48,34 @@ def render_marketing(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Hyros unavailable: {e}")
         hyros = pd.DataFrame()
+    # Pull TheraRay-attributed contacts (no typeform; matched via FB campaign IDs)
+    theraray_contacts = pd.DataFrame()
+    try:
+        from dashboard.data.hubspot_loader import load_contacts_by_utm_campaigns
+        if not fb.empty and "campaign_id" in fb.columns:
+            theraray_ids = tuple(
+                str(cid) for cid in fb.loc[fb["group"] == "TheraRay", "campaign_id"].dropna().unique()
+            )
+            if theraray_ids:
+                theraray_contacts = load_contacts_by_utm_campaigns(
+                    theraray_ids, start, end)
+                # Tag these as TheraRay so the downstream group mapping recognizes them
+                if not theraray_contacts.empty:
+                    theraray_contacts = theraray_contacts.copy()
+                    theraray_contacts["typeform_asset_download"] = "TheraRay FB Lead"
+                    # Add to ASSET_TO_GROUP at runtime
+                    cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
+    except Exception as e:
+        st.warning(f"TheraRay contacts unavailable: {e}")
+
+    # Merge into the main contacts dataframe (deduplicate by hs_id)
+    if not theraray_contacts.empty:
+        if contacts.empty:
+            contacts = theraray_contacts
+        else:
+            combined = pd.concat([contacts, theraray_contacts], ignore_index=True)
+            contacts = combined.drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
+
     try:
         contact_deals = load_contact_deals(contacts["hs_id"].tolist()) \
             if not contacts.empty else pd.DataFrame(columns=["contact_id", "deal_id"])
