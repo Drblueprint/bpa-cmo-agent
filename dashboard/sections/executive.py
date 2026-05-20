@@ -466,6 +466,20 @@ def render_executive(start: date, end: date) -> None:
             "bds": "BDS",
             "sme": "SME",
         })
+        total_in_view = int(len(display))
+        # Compute the marketing subset count for context
+        marketing_count = int(deals_table["is_marketing"].sum()) if "is_marketing" in deals_table.columns else None
+        if show_marketing_only:
+            st.caption(f"Showing {total_in_view} marketing-attributed deal(s).")
+        else:
+            if marketing_count is not None:
+                st.caption(
+                    f"Showing {total_in_view} closed deal(s) total · "
+                    f"{marketing_count} marketing-attributed · "
+                    f"{total_in_view - marketing_count} non-marketing."
+                )
+            else:
+                st.caption(f"Showing {total_in_view} closed deal(s) total.")
         st.dataframe(
             display, use_container_width=True, hide_index=True,
             column_config={
