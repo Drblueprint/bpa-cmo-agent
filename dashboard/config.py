@@ -304,6 +304,17 @@ STAGE_SOURCE_FALLBACK: dict[str, tuple[str, str, bool]] = {
     "1123458844": ("90-Day Program", "Chiro", False),  # SALES-V2 90-Day stage
 }
 
+# Manual exclusion list: contacts to remove from all marketing views regardless
+# of their typeform_asset_download value. Use for known false-positives (e.g.,
+# contact filled a form for testing, partner referral, or some other reason
+# the marketing team doesn't want them counted).
+# Key by email (lowercase).
+MARKETING_EXCLUDED_EMAILS: set[str] = {
+    # Casey Berry — filled EMX Kansas City form, but wasn't from marketing.
+    # Per Dr. Gumm, 2026-05-20.
+    "drberry2608@gmail.com",
+}
+
 CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
     # Sales outreach (not marketing)
     "drjoehuffman@gmail.com":          ("VEMX Cold Outreach", "Chiro", False),

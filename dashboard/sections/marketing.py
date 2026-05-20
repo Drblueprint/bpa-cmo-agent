@@ -72,6 +72,12 @@ def render_marketing(start: date, end: date) -> None:
             if window_ids:
                 theraray_contacts = load_contacts_by_ids(window_ids)
                 if not theraray_contacts.empty:
+                    # Apply marketing exclusion list
+                    theraray_contacts = theraray_contacts[
+                        ~theraray_contacts["email"].fillna("").str.lower()
+                        .isin(cfg.MARKETING_EXCLUDED_EMAILS)
+                    ].copy()
+                if not theraray_contacts.empty:
                     # Join membership timestamp onto contacts so we can use it
                     # as the "submitted" date instead of stale createdate
                     ts_map = dict(zip(in_window["contact_id"].astype(str),

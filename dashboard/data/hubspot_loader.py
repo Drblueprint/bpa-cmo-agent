@@ -83,6 +83,9 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
         _ln = (p.get("lastname") or "").strip().lower()
         if _fn == "test" or _ln == "test":
             continue
+        _em = (p.get("email") or "").strip().lower()
+        if _em in cfg.MARKETING_EXCLUDED_EMAILS:
+            continue
         hs_id = r.get("id")
         rows.append({
             "hs_id": str(hs_id) if hs_id is not None else None,
@@ -365,6 +368,9 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
             ln = (p.get("lastname") or "").strip().lower()
             if fn == "test" or ln == "test":
                 continue  # Same TEST-contact filter as load_marketing_contacts
+            em = (p.get("email") or "").strip().lower()
+            if em in cfg.MARKETING_EXCLUDED_EMAILS:
+                continue
             hs_id = c.get("id")
             rows.append({
                 "hs_id": str(hs_id) if hs_id is not None else None,
@@ -599,6 +605,9 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
         fn = (p.get("firstname") or "").strip().lower()
         ln = (p.get("lastname") or "").strip().lower()
         if fn == "test" or ln == "test":
+            continue
+        em = (p.get("email") or "").strip().lower()
+        if em in cfg.MARKETING_EXCLUDED_EMAILS:
             continue
         hs_id = r.get("id")
         rows.append({
