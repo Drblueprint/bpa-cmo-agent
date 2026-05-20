@@ -69,6 +69,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "phone", "mobilephone",
             cfg.HS_PROP_WEBINAR_REG_DATE, cfg.HS_PROP_WEBINAR_COMPLETED_DATE,
             cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
+            cfg.HS_PROP_CONTRACT_TIER,
         ],
         "limit": 100,
     }
@@ -102,6 +103,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "webinar_completed_date": p.get(cfg.HS_PROP_WEBINAR_COMPLETED_DATE),
             "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
             "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
+            "contract_tier": p.get(cfg.HS_PROP_CONTRACT_TIER),
         })
     return pd.DataFrame(rows, columns=[
         "hs_id", "name", "email", "created",
@@ -111,6 +113,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
         "phone", "mobilephone",
         "webinar_registration_date", "webinar_completed_date",
         "pt_webinar_registration_date", "pt_webinar_completed_date",
+        "contract_tier",
     ])
 
 
@@ -324,6 +327,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
         "phone", "mobilephone",
         "webinar_registration_date", "webinar_completed_date",
         "pt_webinar_registration_date", "pt_webinar_completed_date",
+        "contract_tier",
     ]
     if not contact_ids:
         return pd.DataFrame(columns=cols)
@@ -347,6 +351,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
                     "phone", "mobilephone",
                     cfg.HS_PROP_WEBINAR_REG_DATE, cfg.HS_PROP_WEBINAR_COMPLETED_DATE,
                     cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
+                    cfg.HS_PROP_CONTRACT_TIER,
                 ],
                 "inputs": [{"id": cid} for cid in batch],
             },
@@ -380,6 +385,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
                 "webinar_completed_date": p.get(cfg.HS_PROP_WEBINAR_COMPLETED_DATE),
                 "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
                 "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
+                "contract_tier": p.get(cfg.HS_PROP_CONTRACT_TIER),
             })
 
     return pd.DataFrame(rows, columns=cols)

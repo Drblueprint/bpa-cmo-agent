@@ -1243,8 +1243,8 @@ def build_closed_deals_table(
     sales_cycle_days (typeform_submission to closedate), sdr_owner, bds, sme.
     """
     cols = ["hs_id", "contact_name", "email", "group", "asset", "source",
-            "is_marketing", "closedate", "deal_amount", "sales_cycle_days",
-            "sdr_owner", "bds", "sme"]
+            "tier", "is_marketing", "closedate", "deal_amount",
+            "sales_cycle_days", "sdr_owner", "bds", "sme"]
     if deals.empty or contact_deals.empty or contacts.empty:
         return pd.DataFrame(columns=cols)
 
@@ -1331,6 +1331,7 @@ def build_closed_deals_table(
             "group": group or "(unmapped)",
             "asset": asset or source,  # show source label when no typeform
             "source": source,
+            "tier": primary_contact.get("contract_tier") or "",
             "is_marketing": bool(is_marketing),
             "closedate": (deal.get("closedate") or deal.get("createdate")),
             "deal_amount": effective_amt,

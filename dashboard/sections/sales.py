@@ -367,7 +367,7 @@ def render_sales(start: date, end: date) -> None:
             lambda x: f"{int(x)}" if pd.notna(x) else "—")
         display_ytd = display_ytd[[
             "hubspot_link", "closedate", "contact_name", "email",
-            "group", "source", "deal_amount", "sales_cycle_days",
+            "group", "tier", "source", "deal_amount", "sales_cycle_days",
             "sdr_owner", "bds", "sme",
         ]].rename(columns={
             "hubspot_link": "Open",
@@ -375,6 +375,7 @@ def render_sales(start: date, end: date) -> None:
             "contact_name": "Contact",
             "email": "Email",
             "group": "Group",
+            "tier": "Plan",
             "source": "Source",
             "deal_amount": "Deal $",
             "sales_cycle_days": "Cycle (days)",
