@@ -48,22 +48,32 @@ def render_marketing(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Hyros unavailable: {e}")
         hyros = pd.DataFrame()
-    # Pull TheraRay-attributed contacts (no typeform; matched via FB campaign IDs)
+    # Pull TheraRay-attributed contacts via HubSpot list 6280 (auto-populated
+    # when someone fills the TheraRay User Request Form). Cleaner than
+    # matching FB campaign IDs via utm_campaign.
     theraray_contacts = pd.DataFrame()
     try:
-        from dashboard.data.hubspot_loader import load_contacts_by_utm_campaigns
-        if not fb.empty and "campaign_id" in fb.columns:
-            theraray_ids = tuple(
-                str(cid) for cid in fb.loc[fb["group"] == "TheraRay", "campaign_id"].dropna().unique()
-            )
-            if theraray_ids:
-                theraray_contacts = load_contacts_by_utm_campaigns(
-                    theraray_ids, start, end)
-                # Tag these as TheraRay so the downstream group mapping recognizes them
+        from dashboard.data.hubspot_loader import (
+            load_list_membership_contact_ids,
+            load_contacts_by_ids,
+        )
+        theraray_ids = load_list_membership_contact_ids(cfg.THERARAY_HUBSPOT_LIST_ID)
+        if theraray_ids:
+            theraray_contacts = load_contacts_by_ids(theraray_ids)
+            if not theraray_contacts.empty:
+                # Filter to the dashboard window (by createdate)
+                created_ts = pd.to_datetime(theraray_contacts["created"],
+                                              utc=True, errors="coerce")
+                start_ts = pd.Timestamp(year=start.year, month=start.month,
+                                         day=start.day, tz="UTC")
+                end_ts = pd.Timestamp(year=end.year, month=end.month,
+                                       day=end.day, tz="UTC") + pd.Timedelta(days=1)
+                theraray_contacts = theraray_contacts[
+                    (created_ts >= start_ts) & (created_ts < end_ts)
+                ].copy()
                 if not theraray_contacts.empty:
-                    theraray_contacts = theraray_contacts.copy()
+                    # Tag with synthetic asset so group mapping recognizes them
                     theraray_contacts["typeform_asset_download"] = "TheraRay FB Lead"
-                    # Add to ASSET_TO_GROUP at runtime
                     cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
     except Exception as e:
         st.warning(f"TheraRay contacts unavailable: {e}")

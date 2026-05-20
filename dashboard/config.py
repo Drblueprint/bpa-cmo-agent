@@ -239,6 +239,11 @@ BOFU_FORM_IDS: list[str] = [
     "233f88f1-bd89-45f1-bf2b-41f4d10632d3",  # KK | Master Forms | Booking Form | BOFU (PT Market)
 ]
 
+# HubSpot list IDs for non-typeform marketing groups.
+# TheraRay leads fill the "TheraRay User Request Form" which auto-adds them
+# to this segment list. Cleaner than matching FB campaign IDs via utm_campaign.
+THERARAY_HUBSPOT_LIST_ID: str = "6280"
+
 # Webinar contact properties (confirmed via probe on 2026-05-19).
 HS_PROP_WEBINAR_REG_DATE = "webinar_registration_date"
 HS_PROP_WEBINAR_COMPLETED_DATE = "webinar_completed_date"

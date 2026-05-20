@@ -623,3 +623,37 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
             "contract_tier": p.get(cfg.HS_PROP_CONTRACT_TIER),
         })
     return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_data(ttl=900, show_spinner="Pulling list members...")
+def load_list_membership_contact_ids(list_id: str) -> list[str]:
+    """Return all contact IDs that are currently members of the given
+    HubSpot list. Uses the v3 list memberships endpoint."""
+    if not list_id:
+        return []
+
+    token = st.secrets["HUBSPOT_TOKEN"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    ids: list[str] = []
+    after = None
+    while True:
+        params = {"limit": 250}
+        if after:
+            params["after"] = after
+        r = requests.get(
+            f"{HS_API}/crm/v3/lists/{list_id}/memberships",
+            headers=headers, params=params, timeout=60,
+        )
+        if r.status_code >= 400:
+            break
+        data = r.json()
+        for m in data.get("results", []):
+            rid = m.get("recordId")
+            if rid is not None:
+                ids.append(str(rid))
+        after = (data.get("paging") or {}).get("next", {}).get("after")
+        if not after:
+            break
+
+    return ids
