@@ -718,10 +718,12 @@ def test_compute_speed_to_lead_basic():
     # Contact created at 2026-05-19 10:00:00 UTC (epoch 1779184800)
     contacts = pd.DataFrame([
         {"hs_id": "1", "phone": "(713) 728-9200", "mobilephone": "",
-         "created": "2026-05-19T10:00:00Z"},
+         "typeform_submission_date": "2026-05-19T10:00:00Z",
+         "created": "2024-01-01T00:00:00Z"},  # old createdate proves we use submission_date
         # Contact 2: no calls match — should be excluded from median
         {"hs_id": "2", "phone": "5551234567", "mobilephone": "",
-         "created": "2026-05-19T10:00:00Z"},
+         "typeform_submission_date": "2026-05-19T10:00:00Z",
+         "created": "2024-01-01T00:00:00Z"},
     ])
     calls = pd.DataFrame([
         # Contact 1: first outbound call 3 minutes after creation
@@ -753,7 +755,8 @@ def test_sdr_call_activity_basic():
 
     contacts = pd.DataFrame([
         {"hs_id": "1", "phone": "7137289200", "mobilephone": "",
-         "created": "2026-05-19T10:00:00Z"},
+         "typeform_submission_date": "2026-05-19T10:00:00Z",
+         "created": "2024-01-01T00:00:00Z"},
     ])
     calls = pd.DataFrame([
         # Peyton outbound, 30s — counts as connect

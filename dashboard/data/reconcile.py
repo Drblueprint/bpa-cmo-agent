@@ -731,8 +731,10 @@ def compute_speed_to_lead(
     calls: pd.DataFrame,
 ) -> pd.DataFrame:
     """For each contact, find the first OUTBOUND AirCall to their phone AFTER
-    their HubSpot createdate. Returns DataFrame with columns:
-        hs_id, speed_to_lead_minutes (NaN if no match)
+    their typeform_submission_date. (Falls back to HubSpot createdate if the
+    submission timestamp is missing.)
+
+    Returns DataFrame with columns: hs_id, speed_to_lead_minutes (NaN if no match).
     """
     if contacts.empty:
         return pd.DataFrame(columns=["hs_id", "speed_to_lead_minutes"])
@@ -742,31 +744,45 @@ def compute_speed_to_lead(
         lambda r: normalize_phone(r.get("phone")) or normalize_phone(r.get("mobilephone")),
         axis=1,
     )
-    contacts["created_ts"] = (
-        pd.to_datetime(contacts["created"], utc=True, errors="coerce")
-        .apply(lambda x: int(x.timestamp()) if pd.notna(x) else float("nan"))
-    )
+
+    # Lead-in moment: typeform submission timestamp (when they actually filled
+    # the form this cycle). Falls back to createdate only when submission_date
+    # is missing -- rare, for contacts that pre-date the typeform property.
+    def _lead_in_ts(row) -> float:
+        for col in ("typeform_submission_date", "created"):
+            val = row.get(col)
+            if val is None or (isinstance(val, float) and pd.isna(val)) or val == "":
+                continue
+            try:
+                ts = pd.to_datetime(val, utc=True, errors="coerce")
+                if pd.notna(ts):
+                    return int(ts.timestamp())
+            except Exception:
+                continue
+        return float("nan")
+
+    contacts["lead_in_ts"] = contacts.apply(_lead_in_ts, axis=1)
 
     outbound = calls[calls["direction"] == "outbound"] if not calls.empty else calls
 
     rows = []
     for _, contact in contacts.iterrows():
         phone = contact["phone_norm"]
-        created_ts = contact["created_ts"]
-        if not phone or pd.isna(created_ts):
+        lead_in_ts = contact["lead_in_ts"]
+        if not phone or pd.isna(lead_in_ts):
             rows.append({"hs_id": contact["hs_id"],
                          "speed_to_lead_minutes": float("nan")})
             continue
         matched = outbound[
             (outbound["phone_normalized"] == phone)
-            & (outbound["started_at_utc"] >= created_ts)
+            & (outbound["started_at_utc"] >= lead_in_ts)
         ] if not outbound.empty else outbound
         if matched.empty:
             rows.append({"hs_id": contact["hs_id"],
                          "speed_to_lead_minutes": float("nan")})
             continue
         first_ts = matched["started_at_utc"].min()
-        minutes = (first_ts - created_ts) / 60.0
+        minutes = (first_ts - lead_in_ts) / 60.0
         rows.append({"hs_id": contact["hs_id"],
                      "speed_to_lead_minutes": float(minutes)})
 
