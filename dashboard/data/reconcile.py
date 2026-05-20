@@ -1233,15 +1233,16 @@ def build_closed_deals_table(
     *,
     asset_to_group: dict[str, str],
     group_default_amount: dict[str, float],
+    source_overrides: dict | None = None,
 ) -> pd.DataFrame:
     """Build a row-per-deal detail table for closed-won deals.
 
-    Each row: hs_id (for link), contact_name, email, group, asset, closedate,
-    deal_amount (Option C fallback), sales_cycle_days (typeform_submission to
-    closedate), sdr_owner, bds, sme.
+    Each row: hs_id (for link), contact_name, email, group, asset, source,
+    is_marketing, closedate, deal_amount (Option C fallback),
+    sales_cycle_days (typeform_submission to closedate), sdr_owner, bds, sme.
     """
-    cols = ["hs_id", "contact_name", "email", "group", "asset",
-            "closedate", "deal_amount", "sales_cycle_days",
+    cols = ["hs_id", "contact_name", "email", "group", "asset", "source",
+            "is_marketing", "closedate", "deal_amount", "sales_cycle_days",
             "sdr_owner", "bds", "sme"]
     if deals.empty or contact_deals.empty or contacts.empty:
         return pd.DataFrame(columns=cols)
@@ -1265,7 +1266,25 @@ def build_closed_deals_table(
         if primary_contact is None:
             continue  # deal has no matched contact; skip
 
-        group = primary_contact.get("group")
+        # Determine source attribution
+        email = (primary_contact.get("email") or "").strip().lower()
+        asset = primary_contact.get("typeform_asset_download") or ""
+        override = source_overrides.get(email) if source_overrides else None
+
+        if asset and asset_to_group.get(asset):
+            # Typeform-attributed: marketing
+            source = asset
+            group = asset_to_group.get(asset)
+            is_marketing = True
+        elif override:
+            # Override-attributed
+            source, group, is_marketing = override
+        else:
+            # Unknown source
+            source = "(unattributed)"
+            group = primary_contact.get("group")
+            is_marketing = False
+
         # Option C: deal.amount if > 0, else group default
         effective_amt = amt if amt > 0 else float(group_default_amount.get(group, 0.0))
 
@@ -1285,7 +1304,9 @@ def build_closed_deals_table(
             "contact_name": primary_contact.get("name") or "",
             "email": primary_contact.get("email") or "",
             "group": group or "(unmapped)",
-            "asset": primary_contact.get("typeform_asset_download") or "",
+            "asset": asset or source,  # show source label when no typeform
+            "source": source,
+            "is_marketing": bool(is_marketing),
             "closedate": deal.get("closedate"),
             "deal_amount": effective_amt,
             "sales_cycle_days": cycle_days,
@@ -1309,26 +1330,42 @@ def compute_ytd_money(
     *,
     asset_to_group: dict[str, str],
     group_default_amount: dict[str, float],
+    source_overrides: dict | None = None,
 ) -> dict:
-    """Compute YTD money KPIs from the closed deals table.
+    """Compute YTD money KPIs in TWO views: Total (all closed) + Marketing-only.
 
-    Returns: {ytd_new_revenue, ytd_avg_deal_size, ytd_new_customers,
-              ytd_sales_cycle_median}.
+    Returns a dict with prefix keys: total_* and mkt_*.
     """
     table = build_closed_deals_table(
         deals, contact_deals, contacts,
         asset_to_group=asset_to_group,
         group_default_amount=group_default_amount,
+        source_overrides=source_overrides,
     )
-    n_customers = int(len(table))
-    revenue = float(table["deal_amount"].sum()) if not table.empty else 0.0
-    avg = (revenue / n_customers) if n_customers else None
-    cycle_vals = table["sales_cycle_days"].dropna().tolist()
-    cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
+
+    def _kpis(df: pd.DataFrame) -> dict:
+        n = int(len(df))
+        revenue = float(df["deal_amount"].sum()) if not df.empty else 0.0
+        avg = (revenue / n) if n else None
+        cycle_vals = df["sales_cycle_days"].dropna().tolist()
+        cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
+        return {
+            "new_revenue": revenue,
+            "avg_deal_size": avg,
+            "new_customers": n,
+            "sales_cycle_median": cycle_median,
+        }
+
+    total = _kpis(table)
+    marketing = _kpis(table[table["is_marketing"] == True]) if not table.empty else _kpis(table)
 
     return {
-        "ytd_new_revenue": revenue,
-        "ytd_avg_deal_size": avg,
-        "ytd_new_customers": n_customers,
-        "ytd_sales_cycle_median": cycle_median,
+        "total_new_revenue": total["new_revenue"],
+        "total_avg_deal_size": total["avg_deal_size"],
+        "total_new_customers": total["new_customers"],
+        "total_sales_cycle_median": total["sales_cycle_median"],
+        "mkt_new_revenue": marketing["new_revenue"],
+        "mkt_avg_deal_size": marketing["avg_deal_size"],
+        "mkt_new_customers": marketing["new_customers"],
+        "mkt_sales_cycle_median": marketing["sales_cycle_median"],
     }

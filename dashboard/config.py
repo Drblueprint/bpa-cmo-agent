@@ -265,3 +265,47 @@ METRICS_GOALS: dict[str, float] = {
     "strategy_calls_completed": 10,
     "new_total_customers": 5,
 }
+
+# --- Closed-deal source overrides ---
+# Per Dr. Gumm (2026-05-20): these 27 YTD closed-won contacts lack
+# typeform_asset_download in HubSpot but were sourced via known channels.
+# This override map fills the gap so they're properly attributed AND classified
+# as marketing vs non-marketing.
+#
+# Format: {email_lowercase: (source_label, group, is_marketing)}
+# is_marketing = True for lead-magnet/event-form/marketing-list sources;
+#                False for cold sales outreach + referrals.
+CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
+    # Sales outreach (not marketing)
+    "drjoehuffman@gmail.com":          ("VEMX Cold Outreach", "Chiro", False),
+    "liveforwellnesschiro@gmail.com":  ("Sales Outreach", "Chiro", False),
+    "garrettwilder9@gmail.com":        ("Sales Outreach", "Chiro", False),
+    "leonemv3@gmail.com":              ("Sales Outreach", "Chiro", False),
+    "dr@rivercitywellnessatx.com":     ("Sales Outreach", "Chiro", False),
+    "robertlzahn@gmail.com":           ("Sales Outreach", "Chiro", False),
+    "drbriandillon@gmail.com":         ("Sales Outreach", "Chiro", False),
+    "drjames2015@icloud.com":          ("Sales Outreach", "Chiro", False),
+    "jamie.mchugh@mchughhealth.com":   ("Sales Outreach", "Chiro", False),
+    "nathan@coleschiro.com":           ("Sales Outreach", "Chiro", False),
+    "tyleredgedc@gmail.com":           ("Sales Outreach", "Chiro", False),
+    "drtsmithdc@gmail.com":            ("Sales Outreach", "Chiro", False),
+    "info@thebodymax.com":             ("Sales Outreach", "Chiro", False),
+    "ndumayne@yahoo.com":              ("Sales Outreach", "Chiro", False),
+
+    # Referrals (not marketing)
+    "desiredhealthdc@yahoo.com":       ("Referral", "Chiro", False),
+    "tpchiropractic@gmail.com":        ("Referral", "Chiro", False),
+    "hondo1119@aol.com":               ("Referral", "Chiro", False),
+    "bcunninghamdc@gmail.com":         ("Referral", "Chiro", False),
+    "aj_bentley@sbcglobal.net":        ("Referral", "Chiro", False),
+    "rvawellnesscenter@gmail.com":     ("Referral", "Chiro", False),
+
+    # Marketing-sourced (counts as marketing)
+    "sterling@sterlingtherapy.com":               ("APTA Event Form", "PT Recovery", True),
+    "drgracesyn90277@hotmail.com":                ("VEMX Marketing", "Chiro", True),
+    "quintanilla_jesse@yahoo.com":                ("VEMX Marketing", "Chiro", True),
+    "hackbartchiro@gmail.com":                    ("VEMX Marketing", "Chiro", True),
+    "danielle@keldermanstherapyservices.com":     ("5 Mil Practice Secrets Marketing", "PT Recovery", True),
+    "info@loomislifecare.com":                    ("Top 10 Marketing Lead", "Chiro", True),
+    "rich@newhealthmadison.com":                  ("Chiro Economics Email Blast", "Chiro", True),
+}

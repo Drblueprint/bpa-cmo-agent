@@ -129,6 +129,7 @@ def render_executive(start: date, end: date) -> None:
         deals_ytd, contact_deals_ytd, contacts_ytd,
         asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
     )
 
     kpis = executive_kpis(
@@ -205,18 +206,26 @@ def render_executive(start: date, end: date) -> None:
 
     st.divider()
 
-    # === MONEY -- YEAR TO DATE ===
-    st.subheader("Money — Year to Date")
-    st.caption("Closed-won deals from January 1 of the current year through today.")
-    y1, y2, y3, y4 = st.columns(4)
-    y1.metric("YTD New Revenue", _fmt_money(ytd_money["ytd_new_revenue"]))
-    y2.metric("YTD Avg Deal Size", _fmt_money(ytd_money["ytd_avg_deal_size"]))
-    y3.metric("YTD New Customers", _fmt_int(ytd_money["ytd_new_customers"]))
-    y4.metric(
-        "YTD Sales Cycle (median)",
-        _fmt_days(ytd_money["ytd_sales_cycle_median"]),
-        help="Median days from typeform submission to deal close-won.",
-    )
+    # === MONEY — YEAR TO DATE ===
+    st.subheader("Money — Year to Date (Total)")
+    st.caption("All closed-won deals since Jan 1 — includes sales outreach and referrals.")
+    t1, t2, t3, t4 = st.columns(4)
+    t1.metric("New Revenue", _fmt_money(ytd_money["total_new_revenue"]))
+    t2.metric("Avg Deal Size", _fmt_money(ytd_money["total_avg_deal_size"]))
+    t3.metric("New Customers", _fmt_int(ytd_money["total_new_customers"]))
+    t4.metric("Sales Cycle (median)",
+              _fmt_days(ytd_money["total_sales_cycle_median"]),
+              help="Median days from typeform submission to close. Excludes "
+                   "non-marketing leads (no submission date).")
+
+    st.subheader("Money — Year to Date (From Marketing)")
+    st.caption("Subset: closed-won deals attributed to marketing efforts only.")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Marketing Revenue", _fmt_money(ytd_money["mkt_new_revenue"]))
+    m2.metric("Marketing Avg Deal", _fmt_money(ytd_money["mkt_avg_deal_size"]))
+    m3.metric("Marketing Customers", _fmt_int(ytd_money["mkt_new_customers"]))
+    m4.metric("Marketing Sales Cycle",
+              _fmt_days(ytd_money["mkt_sales_cycle_median"]))
 
     st.divider()
 
@@ -408,10 +417,20 @@ def render_executive(start: date, end: date) -> None:
         deals_ytd, contact_deals_ytd, contacts_ytd,
         asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
     )
     if deals_table.empty:
         st.info("No closed-won deals YTD.")
     else:
+        # Filter toggle
+        show_marketing_only = st.checkbox(
+            "Show marketing-attributed deals only",
+            value=False,
+            key="closed_deals_marketing_filter",
+        )
+        if show_marketing_only and not deals_table.empty:
+            deals_table = deals_table[deals_table["is_marketing"] == True]
+
         display = deals_table.copy()
         display["hubspot_link"] = display["hs_id"].apply(cfg.hubspot_contact_url)
         display["sdr_owner"] = display["sdr_owner"].map(cfg.resolve_owner)
@@ -428,7 +447,7 @@ def render_executive(start: date, end: date) -> None:
             lambda x: f"{int(x)}" if pd.notna(x) else "—")
         display = display[[
             "hubspot_link", "closedate", "contact_name", "email",
-            "group", "asset", "deal_amount", "sales_cycle_days",
+            "group", "source", "deal_amount", "sales_cycle_days",
             "sdr_owner", "bds", "sme",
         ]].rename(columns={
             "hubspot_link": "Open",
@@ -436,7 +455,7 @@ def render_executive(start: date, end: date) -> None:
             "contact_name": "Contact",
             "email": "Email",
             "group": "Group",
-            "asset": "Asset",
+            "source": "Source",
             "deal_amount": "Deal $",
             "sales_cycle_days": "Cycle (days)",
             "sdr_owner": "SDR",

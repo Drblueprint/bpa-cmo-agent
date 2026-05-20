@@ -336,10 +336,20 @@ def render_sales(start: date, end: date) -> None:
         deals_ytd, contact_deals_ytd, contacts_ytd,
         asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
     )
     if deals_table.empty:
         st.info("No closed-won deals YTD.")
     else:
+        # Filter toggle
+        show_marketing_only = st.checkbox(
+            "Show marketing-attributed deals only",
+            value=False,
+            key="sales_closed_deals_marketing_filter",
+        )
+        if show_marketing_only and not deals_table.empty:
+            deals_table = deals_table[deals_table["is_marketing"] == True]
+
         display_ytd = deals_table.copy()
         display_ytd["hubspot_link"] = display_ytd["hs_id"].apply(cfg.hubspot_contact_url)
         display_ytd["sdr_owner"] = display_ytd["sdr_owner"].map(cfg.resolve_owner)
@@ -356,7 +366,7 @@ def render_sales(start: date, end: date) -> None:
             lambda x: f"{int(x)}" if pd.notna(x) else "—")
         display_ytd = display_ytd[[
             "hubspot_link", "closedate", "contact_name", "email",
-            "group", "asset", "deal_amount", "sales_cycle_days",
+            "group", "source", "deal_amount", "sales_cycle_days",
             "sdr_owner", "bds", "sme",
         ]].rename(columns={
             "hubspot_link": "Open",
@@ -364,7 +374,7 @@ def render_sales(start: date, end: date) -> None:
             "contact_name": "Contact",
             "email": "Email",
             "group": "Group",
-            "asset": "Asset",
+            "source": "Source",
             "deal_amount": "Deal $",
             "sales_cycle_days": "Cycle (days)",
             "sdr_owner": "SDR",
