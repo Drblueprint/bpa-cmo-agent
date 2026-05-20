@@ -1302,6 +1302,11 @@ def build_closed_deals_table(
                                          utc=True, errors="coerce")
             close_ts = pd.to_datetime(deal.get("closedate"),
                                        utc=True, errors="coerce")
+            # Fallback: use deal createdate when deal has no closedate
+            # (DIY / 90-Day stages)
+            if pd.isna(close_ts):
+                close_ts = pd.to_datetime(deal.get("createdate"),
+                                           utc=True, errors="coerce")
             if pd.notna(close_ts):
                 lead_start_ts = None
                 # Prefer submission_date when it's a valid (pre-close) timestamp
@@ -1323,7 +1328,7 @@ def build_closed_deals_table(
             "asset": asset or source,  # show source label when no typeform
             "source": source,
             "is_marketing": bool(is_marketing),
-            "closedate": deal.get("closedate"),
+            "closedate": (deal.get("closedate") or deal.get("createdate")),
             "deal_amount": effective_amt,
             "sales_cycle_days": cycle_days,
             "sdr_owner": primary_contact.get("sdr_owner") or "",

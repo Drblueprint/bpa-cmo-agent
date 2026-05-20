@@ -427,15 +427,38 @@ def load_closed_deals_ytd(
     token = st.secrets["HUBSPOT_TOKEN"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    body = {
-        "filterGroups": [{
+    # Import the stages-without-closedate set (defaults to empty if unset)
+    try:
+        from dashboard.config import STAGES_CLOSED_WON_NO_CLOSEDATE
+        no_closedate_stages = list(STAGES_CLOSED_WON_NO_CLOSEDATE)
+    except ImportError:
+        no_closedate_stages = []
+
+    # closedate_stages = those WITH a closedate (filter by closedate)
+    closedate_stages = [s for s in closed_set if s not in set(no_closedate_stages)]
+
+    filter_groups = []
+    if closedate_stages:
+        filter_groups.append({
             "filters": [
                 {"propertyName": "dealstage", "operator": "IN",
-                 "values": closed_set},
+                 "values": closedate_stages},
                 {"propertyName": "closedate", "operator": "BETWEEN",
                  "value": start_ms, "highValue": end_ms},
             ]
-        }],
+        })
+    if no_closedate_stages:
+        filter_groups.append({
+            "filters": [
+                {"propertyName": "dealstage", "operator": "IN",
+                 "values": no_closedate_stages},
+                {"propertyName": "createdate", "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        })
+
+    body = {
+        "filterGroups": filter_groups,
         "properties": ["dealname", "amount", "dealstage", "pipeline",
                        "createdate", "closedate"],
         "limit": 100,

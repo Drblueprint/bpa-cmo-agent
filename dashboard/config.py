@@ -66,13 +66,22 @@ STAGES_STRATEGY_HELD: set[str] = {
 STAGES_CLOSED_WON: set[str] = {
     "closedwon",  # Sales Pipeline (id=default): Closed Won
     "24094605",   # SALES - V2 (id=8346417): CLOSED - Won
-    # Reasoning: SALES-V2 is a legacy/closing pipeline; both stages count as revenue events.
+    "1163151789", # SALES - V2: DIY (no closedate; uses createdate)
+    "1123458844", # SALES - V2: 90-Day (no closedate; uses createdate)
+}
+
+# Stages that don't have a HubSpot closedate set -- use createdate instead for
+# YTD bucketing. Per Dr. Gumm: these deals are signed-and-counted even though
+# HubSpot's `probability` < 1.0 keeps them out of standard "won" queries.
+STAGES_CLOSED_WON_NO_CLOSEDATE: set[str] = {
+    "1163151789",  # DIY
+    "1123458844",  # 90-Day
 }
 
 # Stages for counting NEW customer wins. Per Dr. Gumm: only SALES-V2's
 # Closed-Won counts as a new BPA signup. The default Sales Pipeline's
 # 'closedwon' is something else and should NOT be counted as a new customer.
-NEW_CUSTOMER_STAGES: set[str] = {"24094605"}
+NEW_CUSTOMER_STAGES: set[str] = {"24094605", "1163151789", "1123458844"}
 
 # --- Campaign group regex patterns ---
 # Match against FB campaign names like "DS | __Chiro__ Mixed Funnel Setup | CBO | USA"
