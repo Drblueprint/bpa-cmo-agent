@@ -448,7 +448,7 @@ def render_executive(start: date, end: date) -> None:
         display["sales_cycle_days"] = display["sales_cycle_days"].map(
             lambda x: f"{int(x)}" if pd.notna(x) else "—")
         display = display[[
-            "hubspot_link", "closedate", "contact_name", "email",
+            "hubspot_link", "closedate", "contact_name", "email", "typeform",
             "group", "tier", "source", "deal_amount", "sales_cycle_days",
             "sdr_owner", "bds", "sme",
         ]].rename(columns={
@@ -456,6 +456,7 @@ def render_executive(start: date, end: date) -> None:
             "closedate": "Closed",
             "contact_name": "Contact",
             "email": "Email",
+            "typeform": "Typeform",
             "group": "Group",
             "tier": "Plan",
             "source": "Source",

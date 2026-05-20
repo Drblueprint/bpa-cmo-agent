@@ -7,6 +7,27 @@ from typing import Iterable
 import pandas as pd
 
 
+def _group_from_tier(tier: str | None) -> str | None:
+    """Derive group (Chiro / PT Recovery) from contract_tier suffix.
+
+    Tiers follow pattern '<n> <PLAN> - <SUFFIX>' where suffix is:
+      C / CC  -> Chiro
+      PT / PTC -> PT Recovery
+
+    Returns None for unrecognized or missing tiers.
+    """
+    if not tier:
+        return None
+    t = str(tier).upper().strip()
+    # Check suffix tokens (most-specific first)
+    if t.endswith(" - PTC") or t.endswith(" - PT") or t.endswith("- PT"):
+        return "PT Recovery"
+    if t.endswith(" - CC") or t.endswith(" - C") or t.endswith("- C"):
+        return "Chiro"
+    # Free-form tiers (METABOLIC, TRIAL, BASIC - NOT CERTIFIED, etc.)
+    return None
+
+
 def _safe_div(num: float, den: float) -> float | None:
     if not den:
         return None
@@ -1242,7 +1263,7 @@ def build_closed_deals_table(
     is_marketing, closedate, deal_amount (Option C fallback),
     sales_cycle_days (typeform_submission to closedate), sdr_owner, bds, sme.
     """
-    cols = ["hs_id", "contact_name", "email", "group", "asset", "source",
+    cols = ["hs_id", "contact_name", "email", "typeform", "group", "asset", "source",
             "tier", "is_marketing", "closedate", "deal_amount",
             "sales_cycle_days", "sdr_owner", "bds", "sme"]
     if deals.empty or contact_deals.empty or contacts.empty:
@@ -1324,14 +1345,27 @@ def build_closed_deals_table(
         except Exception:
             pass
 
+        # Group derivation: prefer contract_tier suffix (more reliable than
+        # typeform asset for non-marketing closes), fall back to asset map,
+        # then to override's group, else "(unmapped)".
+        tier_val = primary_contact.get("contract_tier") or ""
+        group_from_tier = _group_from_tier(tier_val)
+        if group_from_tier:
+            final_group = group_from_tier
+        elif group:  # group already set by typeform asset OR override branch above
+            final_group = group
+        else:
+            final_group = "(unmapped)"
+
         rows.append({
             "hs_id": str(primary_contact.get("hs_id")),
             "contact_name": primary_contact.get("name") or "",
             "email": primary_contact.get("email") or "",
-            "group": group or "(unmapped)",
+            "typeform": primary_contact.get("typeform_asset_download") or "",
+            "group": final_group,
             "asset": asset or source,  # show source label when no typeform
             "source": source,
-            "tier": primary_contact.get("contract_tier") or "",
+            "tier": tier_val,
             "is_marketing": bool(is_marketing),
             "closedate": (deal.get("closedate") or deal.get("createdate")),
             "deal_amount": effective_amt,
