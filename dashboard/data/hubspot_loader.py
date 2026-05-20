@@ -383,3 +383,89 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
             })
 
     return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_data(ttl=900, show_spinner="Pulling YTD closed deals...")
+def load_closed_deals_ytd(
+    closed_won_stages: tuple[str, ...],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Pull all deals closed-won YTD (Jan 1 of current year -> today), plus their
+    associated contacts. Always uses a 200-day floor to cover the full YTD
+    range regardless of the user's data-lookback selector.
+
+    Returns: (deals_df, contact_deals_df, contacts_df) -- same shapes as the
+    other loaders.
+
+    The deals_df is filtered to only closed-won stages in `closed_won_stages`
+    AND closedate >= Jan 1 of current year.
+    """
+    from datetime import date as _date
+
+    deal_cols = ["deal_id", "dealname", "amount", "dealstage",
+                 "pipeline", "createdate", "closedate"]
+    assoc_cols = ["contact_id", "deal_id"]
+    contact_cols = [
+        "hs_id", "name", "email", "created",
+        "typeform_asset_download", "typeform_submission_date",
+        "sdr_owner", "bds", "sme", "utm_source",
+        "fifteen_min_call_date", "lifecycle_stage",
+        "phone", "mobilephone",
+        "webinar_registration_date", "webinar_completed_date",
+        "pt_webinar_registration_date", "pt_webinar_completed_date",
+    ]
+
+    year_start = _date(_date.today().year, 1, 1)
+    today = _date.today()
+
+    # 1. Pull deals across the full YTD window, with a 200-day floor so the
+    #    standard floor doesn't truncate
+    deals = load_deals_in_window(year_start, today, data_floor_days_back=200)
+    if deals.empty:
+        return (pd.DataFrame(columns=deal_cols),
+                pd.DataFrame(columns=assoc_cols),
+                pd.DataFrame(columns=contact_cols))
+
+    # 2. Filter to closed-won stages + closedate in YTD
+    closed_set = set(closed_won_stages)
+    won_mask = deals["dealstage"].isin(closed_set)
+    closed_dt = pd.to_datetime(deals["closedate"], utc=True, errors="coerce")
+    ytd_mask = closed_dt >= pd.Timestamp(year=year_start.year, month=1, day=1, tz="UTC")
+    deals_ytd = deals[won_mask & ytd_mask].reset_index(drop=True)
+
+    if deals_ytd.empty:
+        return (deals_ytd,
+                pd.DataFrame(columns=assoc_cols),
+                pd.DataFrame(columns=contact_cols))
+
+    # 3. Get associated contact IDs for these deals
+    # -- here we have deal_ids, so we use a deal->contact lookup directly.
+    token = st.secrets["HUBSPOT_TOKEN"]
+    headers = {"Authorization": f"Bearer {token}"}
+    deal_ids = deals_ytd["deal_id"].tolist()
+
+    assoc_rows = []
+    for i in range(0, len(deal_ids), 100):
+        batch = deal_ids[i:i+100]
+        r = requests.post(
+            f"{HS_API}/crm/v4/associations/deals/contacts/batch/read",
+            headers=headers,
+            json={"inputs": [{"id": did} for did in batch]},
+            timeout=60,
+        )
+        if r.status_code >= 400:
+            continue
+        for item in r.json().get("results", []):
+            deal_id = str(item.get("from", {}).get("id"))
+            for t in item.get("to", []):
+                cid = t.get("toObjectId")
+                if cid is not None:
+                    assoc_rows.append({"contact_id": str(cid), "deal_id": deal_id})
+
+    contact_deals_df = pd.DataFrame(assoc_rows, columns=assoc_cols)
+
+    # 4. Pull contact details for those contact_ids
+    contact_ids = list({r["contact_id"] for r in assoc_rows})
+    contacts_df = load_contacts_by_ids(contact_ids) if contact_ids \
+        else pd.DataFrame(columns=contact_cols)
+
+    return deals_ytd, contact_deals_df, contacts_df

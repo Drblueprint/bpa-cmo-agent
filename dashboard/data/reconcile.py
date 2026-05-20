@@ -1220,3 +1220,115 @@ def weekly_metrics(
         rows.append(row)
 
     return pd.DataFrame(rows, columns=["metric_id", "metric_label", "goal", "sum"] + week_cols)
+
+
+# ---------------------------------------------------------------------------
+# Closed-deal detail table helpers
+# ---------------------------------------------------------------------------
+
+def build_closed_deals_table(
+    deals: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    contacts: pd.DataFrame,
+    *,
+    asset_to_group: dict[str, str],
+    group_default_amount: dict[str, float],
+) -> pd.DataFrame:
+    """Build a row-per-deal detail table for closed-won deals.
+
+    Each row: hs_id (for link), contact_name, email, group, asset, closedate,
+    deal_amount (Option C fallback), sales_cycle_days (typeform_submission to
+    closedate), sdr_owner, bds, sme.
+    """
+    cols = ["hs_id", "contact_name", "email", "group", "asset",
+            "closedate", "deal_amount", "sales_cycle_days",
+            "sdr_owner", "bds", "sme"]
+    if deals.empty or contact_deals.empty or contacts.empty:
+        return pd.DataFrame(columns=cols)
+
+    contacts = contacts.copy()
+    contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
+    contacts_by_id = {str(r["hs_id"]): r for _, r in contacts.iterrows()}
+
+    rows = []
+    for _, deal in deals.iterrows():
+        deal_id = deal["deal_id"]
+        amt = float(deal.get("amount") or 0)
+        cd_rows = contact_deals[contact_deals["deal_id"] == deal_id]
+        contact_ids = [str(c) for c in cd_rows["contact_id"].tolist()]
+        primary_contact = None
+        for cid in contact_ids:
+            if cid in contacts_by_id:
+                primary_contact = contacts_by_id[cid]
+                break
+
+        if primary_contact is None:
+            continue  # deal has no matched contact; skip
+
+        group = primary_contact.get("group")
+        # Option C: deal.amount if > 0, else group default
+        effective_amt = amt if amt > 0 else float(group_default_amount.get(group, 0.0))
+
+        # Sales cycle: typeform_submission_date -> closedate
+        cycle_days = None
+        try:
+            submit_ts = pd.to_datetime(primary_contact.get("typeform_submission_date"),
+                                        utc=True, errors="coerce")
+            close_ts = pd.to_datetime(deal.get("closedate"), utc=True, errors="coerce")
+            if pd.notna(submit_ts) and pd.notna(close_ts):
+                cycle_days = max(0, (close_ts - submit_ts).days)
+        except Exception:
+            pass
+
+        rows.append({
+            "hs_id": str(primary_contact.get("hs_id")),
+            "contact_name": primary_contact.get("name") or "",
+            "email": primary_contact.get("email") or "",
+            "group": group or "(unmapped)",
+            "asset": primary_contact.get("typeform_asset_download") or "",
+            "closedate": deal.get("closedate"),
+            "deal_amount": effective_amt,
+            "sales_cycle_days": cycle_days,
+            "sdr_owner": primary_contact.get("sdr_owner") or "",
+            "bds": primary_contact.get("bds") or "",
+            "sme": primary_contact.get("sme") or "",
+        })
+
+    df = pd.DataFrame(rows, columns=cols)
+    # Sort newest close first
+    df["_sort_ts"] = pd.to_datetime(df["closedate"], utc=True, errors="coerce")
+    df = df.sort_values("_sort_ts", ascending=False, na_position="last")
+    df = df.drop(columns=["_sort_ts"])
+    return df
+
+
+def compute_ytd_money(
+    deals: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    contacts: pd.DataFrame,
+    *,
+    asset_to_group: dict[str, str],
+    group_default_amount: dict[str, float],
+) -> dict:
+    """Compute YTD money KPIs from the closed deals table.
+
+    Returns: {ytd_new_revenue, ytd_avg_deal_size, ytd_new_customers,
+              ytd_sales_cycle_median}.
+    """
+    table = build_closed_deals_table(
+        deals, contact_deals, contacts,
+        asset_to_group=asset_to_group,
+        group_default_amount=group_default_amount,
+    )
+    n_customers = int(len(table))
+    revenue = float(table["deal_amount"].sum()) if not table.empty else 0.0
+    avg = (revenue / n_customers) if n_customers else None
+    cycle_vals = table["sales_cycle_days"].dropna().tolist()
+    cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
+
+    return {
+        "ytd_new_revenue": revenue,
+        "ytd_avg_deal_size": avg,
+        "ytd_new_customers": n_customers,
+        "ytd_sales_cycle_median": cycle_median,
+    }

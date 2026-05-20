@@ -13,11 +13,15 @@ from dashboard.data.hubspot_loader import (
     load_deals_in_window,
     load_marketing_contacts,
     load_meetings_for_contacts,
+    load_contacts_by_ids,
+    load_closed_deals_ytd,
 )
 from dashboard.data.reconcile import (
     executive_kpis,
     executive_sdr_rollup,
     executive_sme_rollup,
+    build_closed_deals_table,
+    compute_ytd_money,
 )
 
 
@@ -110,6 +114,23 @@ def render_executive(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Closed-deal attribution lookup failed: {e}")
 
+    # === YTD closed-deal data (separate pull -- always Jan 1 -> today) ===
+    try:
+        deals_ytd, contact_deals_ytd, contacts_ytd = load_closed_deals_ytd(
+            closed_won_stages=tuple(cfg.STAGES_CLOSED_WON),
+        )
+    except Exception as e:
+        st.warning(f"YTD closed deals unavailable: {e}")
+        deals_ytd = pd.DataFrame()
+        contact_deals_ytd = pd.DataFrame(columns=["contact_id", "deal_id"])
+        contacts_ytd = pd.DataFrame()
+
+    ytd_money = compute_ytd_money(
+        deals_ytd, contact_deals_ytd, contacts_ytd,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+    )
+
     kpis = executive_kpis(
         fb=fb, contacts=contacts, meetings=meetings,
         contact_deals=contact_deals, deals=deals,
@@ -181,6 +202,21 @@ def render_executive(start: date, end: date) -> None:
               help="Median days from lead created to deal closed-won.")
     c5.metric("LTGP : CAC", "—",
               help="Phase C: needs retention + cost-to-serve data.")
+
+    st.divider()
+
+    # === MONEY -- YEAR TO DATE ===
+    st.subheader("Money — Year to Date")
+    st.caption("Closed-won deals from January 1 of the current year through today.")
+    y1, y2, y3, y4 = st.columns(4)
+    y1.metric("YTD New Revenue", _fmt_money(ytd_money["ytd_new_revenue"]))
+    y2.metric("YTD Avg Deal Size", _fmt_money(ytd_money["ytd_avg_deal_size"]))
+    y3.metric("YTD New Customers", _fmt_int(ytd_money["ytd_new_customers"]))
+    y4.metric(
+        "YTD Sales Cycle (median)",
+        _fmt_days(ytd_money["ytd_sales_cycle_median"]),
+        help="Median days from typeform submission to deal close-won.",
+    )
 
     st.divider()
 
@@ -363,3 +399,55 @@ def render_executive(start: date, end: date) -> None:
                     ),
                 },
             )
+
+    # === CLOSED DEALS (YTD) -- full detail ===
+    st.divider()
+    st.subheader("Closed Deals — Year to Date")
+    st.caption("Every closed-won deal since Jan 1, with original asset attribution + sales cycle days.")
+    deals_table = build_closed_deals_table(
+        deals_ytd, contact_deals_ytd, contacts_ytd,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+    )
+    if deals_table.empty:
+        st.info("No closed-won deals YTD.")
+    else:
+        display = deals_table.copy()
+        display["hubspot_link"] = display["hs_id"].apply(cfg.hubspot_contact_url)
+        display["sdr_owner"] = display["sdr_owner"].map(cfg.resolve_owner)
+        display["bds"] = display["bds"].map(cfg.resolve_owner)
+        display["sme"] = display["sme"].map(cfg.resolve_owner)
+        # Format close date to CT
+        close_dt = pd.to_datetime(display["closedate"], utc=True, errors="coerce")
+        close_ct = close_dt.dt.tz_convert("America/Chicago")
+        display["closedate"] = close_ct.apply(
+            lambda x: x.strftime("%m/%d/%Y") if pd.notna(x) else "")
+        display["deal_amount"] = display["deal_amount"].map(
+            lambda x: f"${x:,.0f}" if pd.notna(x) and x > 0 else "—")
+        display["sales_cycle_days"] = display["sales_cycle_days"].map(
+            lambda x: f"{int(x)}" if pd.notna(x) else "—")
+        display = display[[
+            "hubspot_link", "closedate", "contact_name", "email",
+            "group", "asset", "deal_amount", "sales_cycle_days",
+            "sdr_owner", "bds", "sme",
+        ]].rename(columns={
+            "hubspot_link": "Open",
+            "closedate": "Closed",
+            "contact_name": "Contact",
+            "email": "Email",
+            "group": "Group",
+            "asset": "Asset",
+            "deal_amount": "Deal $",
+            "sales_cycle_days": "Cycle (days)",
+            "sdr_owner": "SDR",
+            "bds": "BDS",
+            "sme": "SME",
+        })
+        st.dataframe(
+            display, use_container_width=True, hide_index=True,
+            column_config={
+                "Open": st.column_config.LinkColumn(
+                    "Open", help="Open contact in HubSpot",
+                    display_text="HubSpot ↗"),
+            },
+        )
