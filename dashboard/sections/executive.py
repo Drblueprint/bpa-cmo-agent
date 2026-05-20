@@ -133,6 +133,22 @@ def render_executive(start: date, end: date) -> None:
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
     )
 
+    # YTD ad spend for Marketing CAC calculation
+    from datetime import date as _date
+    try:
+        ytd_ad_spend_df = load_fb_insights(
+            _date(_date.today().year, 1, 1), _date.today(),
+            time_increment_days=None,  # one row per campaign, full window
+        )
+        ytd_total_ad_spend = float(ytd_ad_spend_df["spend"].sum()) \
+            if not ytd_ad_spend_df.empty else 0.0
+    except Exception as e:
+        st.warning(f"YTD ad spend unavailable: {e}")
+        ytd_total_ad_spend = 0.0
+
+    mkt_customers = ytd_money["mkt_new_customers"]
+    marketing_cac = (ytd_total_ad_spend / mkt_customers) if mkt_customers else None
+
     kpis = executive_kpis(
         fb=fb, contacts=contacts, meetings=meetings,
         contact_deals=contact_deals, deals=deals,
@@ -188,25 +204,6 @@ def render_executive(start: date, end: date) -> None:
 
     st.divider()
 
-    # === ROW 3 — MONEY ===
-    st.subheader("Money")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("New Revenue", _fmt_money(kpis["new_revenue"]))
-    c2.metric("Avg Deal Size", _fmt_money(kpis["avg_deal_size"]))
-    cac_label = "CAC"
-    cac_value = kpis["cac_full"] if kpis["cac_full"] is not None else kpis["cac_ad_only"]
-    cac_help = "Customer Acquisition Cost."
-    if kpis["cac_full"] is None:
-        cac_label = "CAC (ad-only)"
-        cac_help += " SDR / SME payroll not yet wired — actual CAC is higher."
-    c3.metric(cac_label, _fmt_money(cac_value), help=cac_help)
-    c4.metric("Sales Cycle", _fmt_days(kpis["sales_cycle_days"]),
-              help="Median days from lead created to deal closed-won.")
-    c5.metric("LTGP : CAC", "—",
-              help="Phase C: needs retention + cost-to-serve data.")
-
-    st.divider()
-
     # === MONEY — YEAR TO DATE ===
     st.subheader("Money — Year to Date (Total)")
     st.caption("All closed-won deals since Jan 1 — includes sales outreach and referrals.")
@@ -221,12 +218,17 @@ def render_executive(start: date, end: date) -> None:
 
     st.subheader("Money — Year to Date (From Marketing)")
     st.caption("Subset: closed-won deals attributed to marketing efforts only.")
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Marketing Revenue", _fmt_money(ytd_money["mkt_new_revenue"]))
     m2.metric("Marketing Avg Deal", _fmt_money(ytd_money["mkt_avg_deal_size"]))
     m3.metric("Marketing Customers", _fmt_int(ytd_money["mkt_new_customers"]))
     m4.metric("Marketing Sales Cycle",
               _fmt_days(ytd_money["mkt_sales_cycle_median"]))
+    m5.metric("Marketing CAC",
+              _fmt_money(marketing_cac),
+              help=f"YTD ad spend ({_fmt_money(ytd_total_ad_spend)}) ÷ "
+                   f"marketing customers ({_fmt_int(mkt_customers)}). "
+                   f"Ad-only — sales team commissions/payouts not yet included.")
 
     st.divider()
 
