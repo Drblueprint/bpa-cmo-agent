@@ -95,24 +95,34 @@ def render_executive(start: date, end: date) -> None:
             "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
         ])
 
-    # Closed-deal attribution: pull any contact tied to a closed-won deal in
-    # the window who isn't already in our fresh-leads pull. Sales cycles can
-    # be 3-6 months; this preserves asset attribution for long-cycle closes.
+    # Full-window contact attribution: reverse-lookup every deal in the window
+    # back to its contacts so older typeform-attributed leads whose activity
+    # is happening now still count as marketing. Then refresh contact_deals +
+    # meetings for the expanded set so downstream rollups see the full picture.
     try:
-        from dashboard.data.hubspot_loader import load_contacts_by_ids
-        if not deals.empty and not contact_deals.empty:
-            won_deal_ids = set(deals.loc[deals["dealstage"].isin(cfg.STAGES_CLOSED_WON), "deal_id"])
-            won_contact_ids = set(
-                contact_deals.loc[contact_deals["deal_id"].isin(won_deal_ids), "contact_id"].astype(str)
-            )
+        from dashboard.data.hubspot_loader import load_deal_contacts
+        if not deals.empty:
+            deal_contact_map = load_deal_contacts(deals["deal_id"].astype(str).tolist())
+            all_window_contact_ids = set(
+                deal_contact_map["contact_id"].astype(str)
+            ) if not deal_contact_map.empty else set()
             known_ids = set(contacts["hs_id"].astype(str)) if not contacts.empty else set()
-            missing_ids = list(won_contact_ids - known_ids)
+            missing_ids = list(all_window_contact_ids - known_ids)
             if missing_ids:
                 extra = load_contacts_by_ids(missing_ids)
                 if not extra.empty:
                     contacts = pd.concat([contacts, extra], ignore_index=True)
+            if not contacts.empty:
+                contact_deals = load_contact_deals(contacts["hs_id"].tolist())
+                try:
+                    meetings = load_meetings_for_contacts(
+                        contacts["hs_id"].tolist(),
+                        data_floor_days_back=floor_days,
+                    )
+                except Exception as me:
+                    st.warning(f"Expanded meeting reload failed: {me}")
     except Exception as e:
-        st.warning(f"Closed-deal attribution lookup failed: {e}")
+        st.warning(f"Window contact attribution lookup failed: {e}")
 
     # === YTD closed-deal data (separate pull -- always Jan 1 -> today) ===
     try:

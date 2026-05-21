@@ -129,24 +129,41 @@ def render_sales(start: date, end: date) -> None:
             "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
         ])
 
-    # Closed-deal attribution: pull any contact tied to a closed-won deal in
-    # the window who isn't already in our fresh-leads pull. Sales cycles can
-    # be 3-6 months; this preserves asset attribution for long-cycle closes.
+    # Full-window contact attribution: pull every contact tied to a deal in
+    # the window so marketing-attribution works across long sales cycles.
+    # Without this, a contact who filled the typeform in March but had their
+    # 15-min in May would NOT count as marketing (because load_marketing_contacts
+    # filters by typeform_submission_date in window). The reverse lookup
+    # (deal -> contacts) closes the gap.
     try:
-        from dashboard.data.hubspot_loader import load_contacts_by_ids
-        if not deals.empty and not contact_deals.empty:
-            won_deal_ids = set(deals.loc[deals["dealstage"].isin(cfg.STAGES_CLOSED_WON), "deal_id"])
-            won_contact_ids = set(
-                contact_deals.loc[contact_deals["deal_id"].isin(won_deal_ids), "contact_id"].astype(str)
-            )
+        from dashboard.data.hubspot_loader import (
+            load_contacts_by_ids, load_deal_contacts,
+        )
+        if not deals.empty:
+            deal_contact_map = load_deal_contacts(deals["deal_id"].astype(str).tolist())
+            all_window_contact_ids = set(
+                deal_contact_map["contact_id"].astype(str)
+            ) if not deal_contact_map.empty else set()
             known_ids = set(marketing["hs_id"].astype(str)) if not marketing.empty else set()
-            missing_ids = list(won_contact_ids - known_ids)
+            missing_ids = list(all_window_contact_ids - known_ids)
             if missing_ids:
                 extra = load_contacts_by_ids(missing_ids)
                 if not extra.empty:
                     marketing = pd.concat([marketing, extra], ignore_index=True)
+            # Refresh contact_deals + meetings so they cover the expanded
+            # marketing set — otherwise pipeline_funnel(marketing_only=True) and
+            # the BDS/SME rollups will still see the original narrow set.
+            if not marketing.empty:
+                contact_deals = load_contact_deals(marketing["hs_id"].tolist())
+                try:
+                    meetings = load_meetings_for_contacts(
+                        marketing["hs_id"].tolist(),
+                        data_floor_days_back=floor_days,
+                    )
+                except Exception as me:
+                    st.warning(f"Expanded meeting reload failed: {me}")
     except Exception as e:
-        st.warning(f"Closed-deal attribution lookup failed: {e}")
+        st.warning(f"Window contact attribution lookup failed: {e}")
 
     # YTD closed deals (used by Money cards + Closed Deals YTD section)
     try:

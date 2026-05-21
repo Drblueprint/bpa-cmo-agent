@@ -214,6 +214,40 @@ def load_contact_deals(contact_ids: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["contact_id", "deal_id"])
 
 
+@st.cache_data(ttl=900, show_spinner="Pulling deal -> contact associations...")
+def load_deal_contacts(deal_ids: list[str]) -> pd.DataFrame:
+    """For each deal id, return its associated contact ids (reverse direction
+    of load_contact_deals). Lets the SALES tab pull every contact tied to a
+    deal in the window — including contacts who submitted their typeform
+    weeks/months ago and whose 15-min/Strategy/Close is happening now.
+
+    Columns: deal_id, contact_id.
+    """
+    if not deal_ids:
+        return pd.DataFrame(columns=["deal_id", "contact_id"])
+
+    token = st.secrets["HUBSPOT_TOKEN"]
+    rows = []
+    for i in range(0, len(deal_ids), 100):
+        batch = deal_ids[i:i+100]
+        r = requests.post(
+            f"{HS_API}/crm/v4/associations/deals/contacts/batch/read",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"inputs": [{"id": did} for did in batch]},
+            timeout=60,
+        )
+        r.raise_for_status()
+        for item in r.json().get("results", []):
+            did = item.get("from", {}).get("id")
+            for t in item.get("to", []):
+                cid = t.get("toObjectId")
+                rows.append({
+                    "deal_id": str(did) if did is not None else None,
+                    "contact_id": str(cid) if cid is not None else None,
+                })
+    return pd.DataFrame(rows, columns=["deal_id", "contact_id"])
+
+
 @st.cache_data(ttl=900, show_spinner="Pulling HubSpot meetings...")
 def load_meetings_for_contacts(
     contact_ids: list[str],
