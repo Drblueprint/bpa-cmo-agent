@@ -225,14 +225,8 @@ def render_marketing(start: date, end: date) -> None:
         detail["group"] = detail["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
         detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
 
-        # Convert UTC ISO timestamps to America/Chicago, MM/DD/YYYY hh:mm AM/PM.
-        # Use errors="coerce" so unparseable values become NaT instead of raising.
-        submitted_utc = pd.to_datetime(
-            detail["typeform_submission_date"], utc=True, errors="coerce"
-        )
-        submitted_cst = submitted_utc.dt.tz_convert("America/Chicago")
-        detail["typeform_submission_date"] = submitted_cst.apply(
-            lambda x: x.strftime("%m/%d/%Y %I:%M %p") if pd.notna(x) else ""
+        detail["typeform_submission_date"] = cfg.format_ct_series(
+            detail["typeform_submission_date"]
         )
 
         from dashboard.data.reconcile import per_contact_journey

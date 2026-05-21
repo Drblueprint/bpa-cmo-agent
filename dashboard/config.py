@@ -216,6 +216,27 @@ def hubspot_contact_url(hs_id) -> str:
     return f"https://app.hubspot.com/contacts/{HUBSPOT_PORTAL_ID}/record/0-1/{hs_id}"
 
 
+# --- Timestamp display ---
+# All HubSpot/AirCall timestamps land in UTC. Convert to America/Chicago for
+# display so the sales floor sees CT consistently across every tab.
+DISPLAY_TIMEZONE = "America/Chicago"
+DEFAULT_DATETIME_FORMAT = "%m/%d/%Y %I:%M %p"
+DEFAULT_DATE_FORMAT = "%m/%d/%Y"
+
+
+def format_ct_series(series, fmt: str = DEFAULT_DATETIME_FORMAT):
+    """Convert a UTC timestamp series to America/Chicago and format.
+
+    Returns a pandas Series of formatted strings, with empty string for NaT.
+    Accepts ISO strings, datetime objects, or anything pd.to_datetime handles.
+    Use fmt=DEFAULT_DATE_FORMAT for date-only display.
+    """
+    import pandas as _pd  # local import keeps config.py import-light
+    parsed = _pd.to_datetime(series, utc=True, errors="coerce")
+    converted = parsed.dt.tz_convert(DISPLAY_TIMEZONE)
+    return converted.apply(lambda x: x.strftime(fmt) if _pd.notna(x) else "")
+
+
 # --- AirCall integration (Phase B) ---
 # AirCall env vars: AIRCALL_API_ID + AIRCALL_API_token (note lowercase 'token').
 

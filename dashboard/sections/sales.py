@@ -505,6 +505,12 @@ def render_sales(start: date, end: date) -> None:
     detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
     detail["bds"] = detail["bds"].map(cfg.resolve_owner)
     detail["hubspot_link"] = detail["hs_id"].apply(cfg.hubspot_contact_url)
+    detail["typeform_submission_date"] = cfg.format_ct_series(
+        detail["typeform_submission_date"]
+    )
+    detail["fifteen_min_call_date"] = cfg.format_ct_series(
+        detail["fifteen_min_call_date"]
+    )
     detail = detail[[
         "hubspot_link",
         "name", "email", "typeform_asset_download", "typeform_submission_date",
@@ -513,8 +519,8 @@ def render_sales(start: date, end: date) -> None:
     ]].rename(columns={
         "hubspot_link": "Open",
         "typeform_asset_download": "Asset",
-        "typeform_submission_date": "Submitted",
-        "fifteen_min_call_date": "15-min Call Date",
+        "typeform_submission_date": "Submitted (CT)",
+        "fifteen_min_call_date": "15-min Call Date (CT)",
         "lifecycle_stage": "Lifecycle",
         "sdr_owner": "SDR Owner",
         "bds": "BDS",
@@ -561,10 +567,9 @@ def render_sales(start: date, end: date) -> None:
         display_ytd["sdr_owner"] = display_ytd["sdr_owner"].map(cfg.resolve_owner)
         display_ytd["bds"] = display_ytd["bds"].map(cfg.resolve_owner)
         display_ytd["sme"] = display_ytd["sme"].map(cfg.resolve_owner)
-        close_dt = pd.to_datetime(display_ytd["closedate"], utc=True, errors="coerce")
-        close_ct = close_dt.dt.tz_convert("America/Chicago")
-        display_ytd["closedate"] = close_ct.apply(
-            lambda x: x.strftime("%m/%d/%Y") if pd.notna(x) else "")
+        display_ytd["closedate"] = cfg.format_ct_series(
+            display_ytd["closedate"], fmt=cfg.DEFAULT_DATE_FORMAT
+        )
         display_ytd["deal_amount"] = display_ytd["deal_amount"].map(
             lambda x: f"${x:,.0f}" if pd.notna(x) and x > 0 else "—")
         display_ytd["sales_cycle_days"] = display_ytd["sales_cycle_days"].map(

@@ -334,11 +334,7 @@ def render_executive(start: date, end: date) -> None:
         meetings_x = meetings_x.merge(contact_lookup, on="contact_id", how="inner")
 
         # Format start_time to Central Time
-        st_dt = pd.to_datetime(meetings_x["start_time"], utc=True, errors="coerce")
-        st_dt_ct = st_dt.dt.tz_convert("America/Chicago")
-        meetings_x["scheduled_ct"] = st_dt_ct.apply(
-            lambda x: x.strftime("%m/%d/%Y %I:%M %p") if pd.notna(x) else ""
-        )
+        meetings_x["scheduled_ct"] = cfg.format_ct_series(meetings_x["start_time"])
 
         types = meetings_x["activity_type"].fillna("").astype(str).str.lower()
         fifteen_detail = meetings_x[types.str.contains("15 min", na=False)].copy()
@@ -451,10 +447,9 @@ def render_executive(start: date, end: date) -> None:
         display["bds"] = display["bds"].map(cfg.resolve_owner)
         display["sme"] = display["sme"].map(cfg.resolve_owner)
         # Format close date to CT
-        close_dt = pd.to_datetime(display["closedate"], utc=True, errors="coerce")
-        close_ct = close_dt.dt.tz_convert("America/Chicago")
-        display["closedate"] = close_ct.apply(
-            lambda x: x.strftime("%m/%d/%Y") if pd.notna(x) else "")
+        display["closedate"] = cfg.format_ct_series(
+            display["closedate"], fmt=cfg.DEFAULT_DATE_FORMAT
+        )
         display["deal_amount"] = display["deal_amount"].map(
             lambda x: f"${x:,.0f}" if pd.notna(x) and x > 0 else "—")
         display["sales_cycle_days"] = display["sales_cycle_days"].map(
