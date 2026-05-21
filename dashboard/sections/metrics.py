@@ -62,7 +62,7 @@ def _cents_money_metric_ids() -> set[str]:
 
 
 def render_metrics() -> None:
-    floor_days = st.session_state.get("data_floor_days_back", 90)
+    floor_days = st.session_state.get("data_floor_days_back", 180)
     ranges = _week_ranges(cfg.METRICS_WEEKS_BACK)
     # ranges[0] = newest week, ranges[-1] = oldest week
     overall_start = ranges[-1][0]   # oldest week start

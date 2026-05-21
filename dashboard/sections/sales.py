@@ -48,7 +48,7 @@ def _stage_groups() -> dict[str, set[str]]:
 
 
 def render_sales(start: date, end: date) -> None:
-    floor_days = st.session_state.get("data_floor_days_back", 90)
+    floor_days = st.session_state.get("data_floor_days_back", 180)
     st.info(
         '**"Marketing-attributed"** below = HubSpot contact has '
         '`typeform_asset_download` populated.',

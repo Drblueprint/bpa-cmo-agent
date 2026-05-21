@@ -50,7 +50,7 @@ def _fmt_days(x) -> str:
 
 
 def render_executive(start: date, end: date) -> None:
-    floor_days = st.session_state.get("data_floor_days_back", 90)
+    floor_days = st.session_state.get("data_floor_days_back", 180)
     # --- Group filter (inside the tab, not global) ---
     group_filter = st.radio(
         "Group",

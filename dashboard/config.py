@@ -170,7 +170,7 @@ SME_PAYROLL_MONTHLY: float | None = None
 # --- Stale-data floor (configurable per session) ---
 # Default = 90 days. UI selector allows 120 and 180 for longer-cycle reviews.
 from datetime import date as _date, timedelta as _timedelta
-DATA_FLOOR_DAYS_BACK: int = 90
+DATA_FLOOR_DAYS_BACK: int = 180
 DATA_FLOOR_OPTIONS: list[int] = [90, 120, 180]
 
 

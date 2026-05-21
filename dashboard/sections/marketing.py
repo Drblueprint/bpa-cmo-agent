@@ -31,7 +31,7 @@ def _fmt_int(x) -> str:
 
 
 def render_marketing(start: date, end: date) -> None:
-    floor_days = st.session_state.get("data_floor_days_back", 90)
+    floor_days = st.session_state.get("data_floor_days_back", 180)
     try:
         fb = load_fb_insights(start, end)
     except Exception as e:

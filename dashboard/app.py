@@ -29,7 +29,7 @@ require_password()
 # --- Global header ---
 st.title("BPA CMO Dashboard")
 
-col_preset, col_dates, col_floor, col_refresh = st.columns([1.2, 2.5, 1, 1])
+col_preset, col_dates, col_refresh = st.columns([1.2, 3, 1])
 
 with col_preset:
     preset = st.selectbox(
@@ -72,16 +72,6 @@ with col_dates:
         value=(preset_start, preset_end),
         max_value=today,
         key=f"date_range_{preset}",
-    )
-with col_floor:
-    from dashboard.config import DATA_FLOOR_OPTIONS, DATA_FLOOR_DAYS_BACK
-    floor_days = st.selectbox(
-        "Lookback",
-        DATA_FLOOR_OPTIONS,
-        index=DATA_FLOOR_OPTIONS.index(DATA_FLOOR_DAYS_BACK),
-        key="data_floor_days_back",
-        help="How far back to pull meeting + deal data. Use 120 or 180 to "
-             "include longer sales cycles.",
     )
 with col_refresh:
     st.write("")  # spacing
