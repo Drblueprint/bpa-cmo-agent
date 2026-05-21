@@ -173,6 +173,14 @@ GROUP_DEFAULT_DEAL_AMOUNT: dict[str, float] = {
     # TheraRay, EMX: not yet specified — defaults to 0 if a closed-won lands there
 }
 
+# Cash collection per closed deal per group. Per Dr. Gumm — for now this
+# matches GROUP_DEFAULT_DEAL_AMOUNT (the standard cash-up-front amount).
+# When payment-plan tracking is wired, this will diverge from contract revenue.
+GROUP_CASH_COLLECTED_PER_DEAL: dict[str, float] = {
+    "Chiro":       47928.0,
+    "PT Recovery": 23928.0,
+}
+
 # --- Monthly payroll for CAC calc. None = "ad-only CAC" shown with a tooltip flag. ---
 # Provide real numbers when ready and CAC will auto-include them.
 SDR_PAYROLL_MONTHLY: float | None = None

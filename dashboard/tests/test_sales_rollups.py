@@ -61,13 +61,49 @@ def test_sales_sdr_rollup_basic():
         conv_window_hours=24,
     )
     by_user = out.set_index("user_name")
+    # Peyton: 2 dials, 1 pick-up (k1 answered), 1 contact_made (k1 ≥10s)
     assert by_user.loc["Peyton Fulghum", "dials"] == 2
     assert by_user.loc["Peyton Fulghum", "pick_ups"] == 1
+    assert by_user.loc["Peyton Fulghum", "contacts_made"] == 1
     assert by_user.loc["Peyton Fulghum", "appointments_booked"] == 2
+    # Booking rate now = appts_booked / contacts_made
     assert by_user.loc["Peyton Fulghum", "booking_rate"] == 2.0
+    # Garrett: 1 dial, 1 pick-up, 1 contact_made (30s ≥10s)
     assert by_user.loc["Garrett Hustedt", "dials"] == 1
     assert by_user.loc["Garrett Hustedt", "pick_ups"] == 1
+    assert by_user.loc["Garrett Hustedt", "contacts_made"] == 1
     assert by_user.loc["Garrett Hustedt", "appointments_booked"] == 0
+
+
+def test_sales_sdr_pick_up_excludes_voicemail():
+    """A short answered call (<10s) counts as a Pick Up but NOT a Contact Made."""
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "sdr_owner": "89638769", "bds": "", "sme": "",
+         "phone": "555-0101", "mobilephone": None,
+         "typeform_asset_download": "Top 10 typeform",
+         "typeform_submission_date": "2026-05-19T10:00:00Z"},
+    ])
+    calls = pd.DataFrame([
+        # Answered but only 5 seconds — voicemail/quick-hangup
+        {"call_id": "k1", "started_at_utc": 1747663200,
+         "answered_at_utc": 1747663205, "duration": 5, "direction": "outbound",
+         "status": "answered", "user_id": "1551010", "user_name": "Peyton",
+         "raw_digits": "5550101", "phone_normalized": "5550101"},
+    ])
+    meetings = pd.DataFrame(columns=[
+        "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
+    ])
+    out = sales_sdr_rollup(
+        contacts=contacts, calls=calls, meetings=meetings,
+        aircall_user_names={"1551010": "Peyton"},
+        excluded_users=set(),
+        aircall_to_sdr_owner={"1551010": "89638769"},
+        connect_duration_sec=10, conv_window_hours=24,
+    )
+    row = out.iloc[0]
+    assert row["dials"] == 1
+    assert row["pick_ups"] == 1
+    assert row["contacts_made"] == 0
 
 
 def test_sales_bds_rollup_with_dq():
@@ -168,8 +204,61 @@ def test_sales_sme_rollup_with_dq():
     assert by_sme.loc["77643349", "close_rate"] == 0.5
     assert by_sme.loc["77643349", "dq_rate"] == 0.5
     assert by_sme.loc["77643349", "revenue"] == 50000.0
+    # c1 closed-won with 1 Strategy meeting → First Close
+    assert by_sme.loc["77643349", "first_closes"] == 1
+    assert by_sme.loc["77643349", "fu_closes"] == 0
     assert by_sme.loc["24801837", "appointments"] == 1
     assert by_sme.loc["24801837", "showed"] == 0
+
+
+def test_sales_sme_first_vs_fu_close():
+    """Multiple Strategy meetings before close → FU Close. One → First Close."""
+    contacts = pd.DataFrame([
+        # c1: closes after 1 Strategy → First Close
+        {"hs_id": "c1", "sme": "77643349",
+         "typeform_asset_download": "Top 10 typeform"},
+        # c2: closes after 2 Strategy meetings → FU Close
+        {"hs_id": "c2", "sme": "77643349",
+         "typeform_asset_download": "Top 10 typeform"},
+    ])
+    meetings = pd.DataFrame([
+        # c1: one Strategy held before close
+        {"meeting_id": "m1", "contact_id": "c1",
+         "activity_type": "Strategy Call", "outcome": "COMPLETE",
+         "start_time": "2026-05-10T15:00:00Z"},
+        # c2: two Strategy meetings before close
+        {"meeting_id": "m2", "contact_id": "c2",
+         "activity_type": "Strategy Call", "outcome": "COMPLETE",
+         "start_time": "2026-05-05T15:00:00Z"},
+        {"meeting_id": "m3", "contact_id": "c2",
+         "activity_type": "Strategy Call", "outcome": "COMPLETE",
+         "start_time": "2026-05-12T15:00:00Z"},
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "c1", "deal_id": "d1"},
+        {"contact_id": "c2", "deal_id": "d2"},
+    ])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 50000,
+         "closedate": "2026-05-15T00:00:00Z"},
+        {"deal_id": "d2", "dealstage": "closedwon", "amount": 50000,
+         "closedate": "2026-05-15T00:00:00Z"},
+    ])
+
+    out = sales_sme_rollup(
+        contacts=contacts, meetings=meetings,
+        contact_deals=contact_deals, deals=deals,
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+        stages_strategy_dq=set(),
+    )
+    row = out.iloc[0]
+    assert row["deals_closed"] == 2
+    assert row["first_closes"] == 1
+    assert row["fu_closes"] == 1
+    assert row["first_close_rate"] == 0.5  # 1 / 2 showed
+    assert row["fu_close_rate"] == 0.5     # 1 / 2 showed
 
 
 def test_windowed_sales_money_filters_by_closedate():
@@ -212,7 +301,10 @@ def test_windowed_sales_money_filters_by_closedate():
         group_default_amount={"Chiro": 47928.0},
         stages_closed_won={"closedwon", "1163151789"},
         stages_closed_won_no_closedate={"1163151789"},
+        group_cash_per_deal={"Chiro": 47928.0, "PT Recovery": 23928.0},
     )
     # d1 (50000) + d3 (47928 default for Chiro via tier suffix)
     assert result["window_closed_count"] == 2
     assert result["window_revenue"] == 50000.0 + 47928.0
+    # Cash Collection always uses the per-group cash default — 2 Chiro deals.
+    assert result["window_cash_collection"] == 47928.0 * 2

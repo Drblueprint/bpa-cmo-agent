@@ -168,8 +168,9 @@ def render_sales(start: date, end: date) -> None:
         stages_closed_won_no_closedate=cfg.STAGES_CLOSED_WON_NO_CLOSEDATE,
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        group_cash_per_deal=cfg.GROUP_CASH_COLLECTED_PER_DEAL,
     )
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric(
         "Total Sales (window)",
         _fmt_int(money["window_closed_count"]),
@@ -182,11 +183,18 @@ def render_sales(start: date, end: date) -> None:
              "(HubSpot amount with group-default fallback).",
     )
     m3.metric(
+        "Cash Collection",
+        _fmt_money(money["window_cash_collection"]),
+        help="Sum of per-deal cash collected (Chiro $47,928 / PT $23,928 per "
+             "closed deal). Diverges from Revenue once payment-plan tracking "
+             "is wired.",
+    )
+    m4.metric(
         "Avg Deal Size",
         _fmt_money(money["window_avg_deal_size"]),
         help="Total Revenue / Total Sales for the date range.",
     )
-    m4.metric(
+    m5.metric(
         "Avg Time-to-Close (days)",
         _fmt_minutes(money["window_cycle_median_days"]),
         help="Median days from typeform opt-in (createdate fallback) to "
@@ -225,12 +233,13 @@ def render_sales(start: date, end: date) -> None:
 
     st.divider()
 
-    # ----- Section: SDR Performance (Wave 1) -----
+    # ----- Section: SDR Performance (Wave 1 + Wave 2) -----
     st.subheader("SDR Performance")
     st.caption(
-        "Dials + pick-ups + talk time from AirCall, paired with HubSpot 15-min "
-        "meeting bookings attributed to each SDR. **Booking Rate** = "
-        "Appointments Booked / Pick Ups."
+        "Dials + pick-ups + real conversations + appointments from AirCall + "
+        "HubSpot. **Pick Up** = call answered. **Contact Made** = answered + "
+        f"≥{cfg.AIRCALL_CONNECT_DURATION_SEC}s (real conversation, filters "
+        "voicemail). **Booking %** = Appts Booked / Contacts Made."
     )
     sdr = sales_sdr_rollup(
         contacts=marketing,
@@ -252,13 +261,14 @@ def render_sales(start: date, end: date) -> None:
             lambda x: f"{x:.1f} min" if x is not None and not pd.isna(x) else "—"
         )
         display = display[[
-            "user_name", "dials", "pick_ups", "talk_time_min",
+            "user_name", "dials", "pick_ups", "contacts_made", "talk_time_min",
             "appointments_booked", "booking_rate",
             "median_speed_to_lead_min",
         ]].rename(columns={
             "user_name": "SDR",
             "dials": "Dials",
             "pick_ups": "Pick Ups",
+            "contacts_made": "Contacts Made",
             "talk_time_min": "Talk Time (min)",
             "appointments_booked": "Appts Booked",
             "booking_rate": "Booking %",
@@ -304,13 +314,12 @@ def render_sales(start: date, end: date) -> None:
 
     st.divider()
 
-    # ----- Section: SME Performance (Wave 1) -----
+    # ----- Section: SME Performance (Wave 1 + Wave 2) -----
     st.subheader("SME Performance")
     st.caption(
-        "SME holds the Strategy call and closes. **Show %** = Showed / "
-        "Appointments · **Close %** = Deals Closed / Showed · **DQ %** = "
-        "Disqualified / Showed. (First-close vs. follow-up-close split "
-        "coming in Wave 2.)"
+        "SME holds the Strategy and closes. **First Close** = closed on the "
+        "first Strategy call · **FU Close** = closed after a follow-up call. "
+        "**Close %** = total closed / showed. **DQ %** = disqualified / showed."
     )
     sme = sales_sme_rollup(
         contacts=marketing,
@@ -329,20 +338,97 @@ def render_sales(start: date, end: date) -> None:
         display["sme_id"] = display["sme_id"].map(cfg.resolve_owner)
         display["show_rate"] = display["show_rate"].map(_fmt_pct)
         display["close_rate"] = display["close_rate"].map(_fmt_pct)
+        display["first_close_rate"] = display["first_close_rate"].map(_fmt_pct)
+        display["fu_close_rate"] = display["fu_close_rate"].map(_fmt_pct)
         display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
         display["revenue"] = display["revenue"].map(_fmt_money)
-        display = display.rename(columns={
+        display = display[[
+            "sme_id", "appointments", "showed", "deals_closed",
+            "first_closes", "fu_closes", "disqualified",
+            "show_rate", "close_rate", "first_close_rate", "fu_close_rate",
+            "dq_rate", "revenue",
+        ]].rename(columns={
             "sme_id": "SME",
             "appointments": "Appointments",
             "showed": "Showed",
-            "deals_closed": "Deals Closed",
-            "disqualified": "Disqualified",
+            "deals_closed": "Closed",
+            "first_closes": "First Close",
+            "fu_closes": "FU Close",
+            "disqualified": "DQ",
             "show_rate": "Show %",
             "close_rate": "Close %",
+            "first_close_rate": "First %",
+            "fu_close_rate": "FU %",
             "dq_rate": "DQ %",
             "revenue": "Revenue",
         })
         st.dataframe(display, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ----- Section: Bottleneck — Where Leads Drop Off (Wave 2) -----
+    st.subheader("Bottleneck — Where Leads Drop Off")
+    st.caption(
+        "Conversion rate at each stage transition. The lowest-converting stage "
+        "(your bottleneck) is highlighted in red."
+    )
+    # Build stage counts: Marketing Leads → 15-min Booked → Held → Strategy Booked → Held → Closed-Won.
+    # Uses the marketing-only funnel for consistency with the rest of this tab.
+    lead_count = int(len(marketing)) if not marketing.empty else 0
+    stage_counts = [
+        ("Marketing Leads", lead_count),
+        ("15-min Booked", int(_v(fn_mkt, "15-min Booked"))),
+        ("15-min Held", int(_v(fn_mkt, "15-min Held"))),
+        ("Strategy Booked", int(_v(fn_mkt, "Strategy Booked"))),
+        ("Strategy Held", int(_v(fn_mkt, "Strategy Held"))),
+        ("Closed-Won", int(_v(fn_mkt, "Closed-Won"))),
+    ]
+    transitions = []
+    for i in range(len(stage_counts) - 1):
+        from_s, from_c = stage_counts[i]
+        to_s, to_c = stage_counts[i + 1]
+        rate = (to_c / from_c) if from_c else None
+        transitions.append({
+            "label": f"{from_s} → {to_s}",
+            "rate": rate,
+            "from_count": from_c,
+            "to_count": to_c,
+        })
+    trans_df = pd.DataFrame(transitions)
+    non_null = trans_df["rate"].dropna()
+    min_rate = float(non_null.min()) if not non_null.empty else None
+    trans_df["color"] = trans_df["rate"].apply(
+        lambda r: "#d62728" if (r is not None and not pd.isna(r) and min_rate is not None and r == min_rate)
+        else "#1f77b4"
+    )
+    trans_df["label_text"] = trans_df.apply(
+        lambda r: (f"{r['rate']*100:.0f}%  ({r['to_count']}/{r['from_count']})"
+                   if r["rate"] is not None and not pd.isna(r["rate"]) else "—"),
+        axis=1,
+    )
+    bottleneck_fig = go.Figure(go.Bar(
+        x=[(r * 100 if r is not None and not pd.isna(r) else 0) for r in trans_df["rate"]],
+        y=trans_df["label"],
+        orientation="h",
+        marker_color=trans_df["color"].tolist(),
+        text=trans_df["label_text"],
+        textposition="outside",
+    ))
+    bottleneck_fig.update_layout(
+        xaxis=dict(title="Conversion rate (%)", range=[0, 110]),
+        yaxis=dict(autorange="reversed"),
+        height=320,
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False,
+    )
+    st.plotly_chart(bottleneck_fig, use_container_width=True)
+    if min_rate is not None:
+        worst_row = trans_df.loc[trans_df["rate"] == min_rate].iloc[0]
+        st.caption(
+            f"**Biggest leak:** {worst_row['label']} at "
+            f"{min_rate*100:.0f}% ({worst_row['to_count']} of "
+            f"{worst_row['from_count']})."
+        )
 
     st.divider()
 

@@ -958,18 +958,24 @@ def sales_sdr_rollup(
 
     Combines AirCall dial activity with HubSpot meeting booking attribution.
 
-    Columns: user_id, user_name, dials, pick_ups, talk_time_min,
-             appointments_booked, booking_rate, median_speed_to_lead_min.
+    Columns: user_id, user_name, dials, pick_ups, contacts_made,
+             talk_time_min, appointments_booked, booking_rate,
+             median_speed_to_lead_min.
 
-    - pick_ups: outbound calls answered with duration >= connect threshold
-      (renamed from 'connects' for sales-team readability).
+    - pick_ups: outbound calls answered (any duration). They picked up the
+      phone.
+    - contacts_made: outbound calls answered AND duration >= connect threshold
+      (filters voicemails and instant hang-ups — a real conversation).
+    - talk_time_min: sum of duration on contacts_made calls only.
     - appointments_booked: count of distinct contacts with a 15-min meeting
       whose contact.sdr_owner = the SDR's HubSpot owner_id
       (mapped via aircall_to_sdr_owner).
-    - booking_rate: appointments_booked / pick_ups.
+    - booking_rate: appointments_booked / contacts_made (real conversations
+      that converted to a booked appointment).
     """
-    cols = ["user_id", "user_name", "dials", "pick_ups", "talk_time_min",
-            "appointments_booked", "booking_rate", "median_speed_to_lead_min"]
+    cols = ["user_id", "user_name", "dials", "pick_ups", "contacts_made",
+            "talk_time_min", "appointments_booked", "booking_rate",
+            "median_speed_to_lead_min"]
 
     activity = sdr_call_activity(
         contacts=contacts, calls=calls, meetings=meetings,
@@ -981,8 +987,19 @@ def sales_sdr_rollup(
     if activity.empty:
         return pd.DataFrame(columns=cols)
 
-    # Per-SDR appointments_booked: count distinct contacts with any 15-min
-    # meeting where contact.sdr_owner maps to this SDR.
+    # pick_ups (answered, any duration) — recompute directly from calls.
+    pick_ups_by_user: dict[str, int] = {}
+    if not calls.empty:
+        outbound = calls[calls["direction"] == "outbound"].copy()
+        if excluded_users:
+            outbound = outbound[~outbound["user_id"].isin(excluded_users)]
+        if not outbound.empty:
+            mask = outbound["answered_at_utc"].notna()
+            for uid, n in outbound.loc[mask].groupby("user_id").size().items():
+                pick_ups_by_user[str(uid)] = int(n)
+
+    # appointments_booked per SDR: distinct contacts with a 15-min meeting
+    # where contact.sdr_owner maps to this SDR.
     sdr_appts: dict[str, int] = {}
     if not meetings.empty and not contacts.empty:
         types = meetings["activity_type"].fillna("").astype(str).str.lower()
@@ -998,12 +1015,15 @@ def sales_sdr_rollup(
                 if owner:
                     sdr_appts[owner] = sdr_appts.get(owner, 0) + 1
 
-    out = activity.rename(columns={"connects": "pick_ups"}).copy()
+    out = activity.rename(columns={"connects": "contacts_made"}).copy()
+    out["pick_ups"] = out["user_id"].apply(
+        lambda uid: pick_ups_by_user.get(str(uid), 0)
+    )
     out["appointments_booked"] = out["user_id"].apply(
         lambda uid: int(sdr_appts.get(aircall_to_sdr_owner.get(str(uid), ""), 0))
     )
     out["booking_rate"] = [
-        _safe_div(r["appointments_booked"], r["pick_ups"])
+        _safe_div(r["appointments_booked"], r["contacts_made"])
         for _, r in out.iterrows()
     ]
     return out[cols].reset_index(drop=True)
@@ -1109,25 +1129,35 @@ def sales_sme_rollup(
     stages_closed_won,
     stages_strategy_dq: set,
 ) -> pd.DataFrame:
-    """Per-SME rollup with appointments + DQ tracking.
+    """Per-SME rollup with appointments + DQ + first/FU close split.
 
     SME owns the Strategy call: they hold it and close.
 
-    Columns: sme_id, appointments, showed, deals_closed, disqualified,
-             show_rate, close_rate, dq_rate, revenue.
+    Columns: sme_id, appointments, showed, deals_closed, first_closes,
+             fu_closes, disqualified, show_rate, close_rate,
+             first_close_rate, fu_close_rate, dq_rate, revenue.
 
     - appointments: contacts in this SME group with a Strategy meeting booked.
     - showed: Strategy meetings with COMPLETE outcome.
     - deals_closed: contacts with a deal in stages_closed_won.
+    - first_closes: closed-won contacts with exactly 1 Strategy meeting at-or-
+      before the deal closedate (closed on the first Strategy call).
+    - fu_closes: closed-won contacts with 2+ Strategy meetings at-or-before
+      the closedate (a closing/follow-up call happened after the first
+      Strategy).
     - disqualified: contacts with a deal in stages_strategy_dq.
     - show_rate: showed / appointments.
     - close_rate: deals_closed / showed.
+    - first_close_rate: first_closes / showed.
+    - fu_close_rate: fu_closes / showed.
     - dq_rate: disqualified / showed.
     - revenue: sum of effective deal amounts (Option C — deal.amount with
       group_default_amount fallback).
     """
-    cols = ["sme_id", "appointments", "showed", "deals_closed", "disqualified",
-            "show_rate", "close_rate", "dq_rate", "revenue"]
+    cols = ["sme_id", "appointments", "showed", "deals_closed",
+            "first_closes", "fu_closes", "disqualified",
+            "show_rate", "close_rate", "first_close_rate", "fu_close_rate",
+            "dq_rate", "revenue"]
     if contacts.empty:
         return pd.DataFrame(columns=cols)
 
@@ -1186,12 +1216,65 @@ def sales_sme_rollup(
         contact_deals, deals, set(stages_strategy_dq),
     )
 
+    # First-Close vs FU-Close detection.
+    # For each closed-won contact, count distinct Strategy meetings whose
+    # start_time is at or before the deal's closedate. If 1 → First Close,
+    # if 2+ → FU Close (a closing call happened after the first Strategy).
+    first_close_contact_ids: set[str] = set()
+    fu_close_contact_ids: set[str] = set()
+    if won_contact_ids and not meetings.empty and not deals.empty \
+            and not contact_deals.empty:
+        # Build contact_id -> earliest won-deal close date.
+        # createdate fallback covers DIY/90-Day stages without a closedate.
+        won_set_local = set(won_set)
+        won_deals_local = deals[deals["dealstage"].isin(won_set_local)].copy()
+        won_deals_local["_close"] = pd.to_datetime(
+            won_deals_local.get("closedate"), utc=True, errors="coerce"
+        )
+        if "createdate" in won_deals_local.columns:
+            won_create = pd.to_datetime(
+                won_deals_local["createdate"], utc=True, errors="coerce"
+            )
+            won_deals_local["_close"] = won_deals_local["_close"].fillna(won_create)
+        won_deal_close = dict(zip(
+            won_deals_local["deal_id"], won_deals_local["_close"]
+        ))
+        contact_close: dict[str, pd.Timestamp] = {}
+        for _, cd_row in contact_deals.iterrows():
+            cid = str(cd_row["contact_id"])
+            did = cd_row["deal_id"]
+            close_dt = won_deal_close.get(did)
+            if close_dt is not None and pd.notna(close_dt):
+                prior = contact_close.get(cid)
+                if prior is None or close_dt < prior:
+                    contact_close[cid] = close_dt
+
+        types_local = meetings["activity_type"].fillna("").astype(str).str.lower()
+        strategy_meets = meetings[types_local.str.contains("strategy", na=False)].copy()
+        if not strategy_meets.empty:
+            strategy_meets["_start"] = pd.to_datetime(
+                strategy_meets["start_time"], utc=True, errors="coerce"
+            )
+            strategy_meets["_cid"] = strategy_meets["contact_id"].astype(str)
+            for cid in won_contact_ids:
+                close_dt = contact_close.get(cid)
+                sub = strategy_meets[strategy_meets["_cid"] == cid]
+                if close_dt is not None and pd.notna(close_dt):
+                    sub = sub[sub["_start"].fillna(close_dt) <= close_dt]
+                n = int(len(sub))
+                if n == 1:
+                    first_close_contact_ids.add(cid)
+                elif n >= 2:
+                    fu_close_contact_ids.add(cid)
+
     rows = []
     for sme_id, grp in contacts.groupby("sme", dropna=False):
         cids = set(grp["hs_id"].astype(str))
         appts = len(cids & booked_strat_ids)
         showed = len(cids & held_strat_ids)
         closed = len(cids & won_contact_ids)
+        first_c = len(cids & first_close_contact_ids)
+        fu_c = len(cids & fu_close_contact_ids)
         dq = len(cids & dq_contact_ids)
         rev = sum(contact_revenue.get(c, 0.0) for c in cids)
         rows.append({
@@ -1199,9 +1282,13 @@ def sales_sme_rollup(
             "appointments": appts,
             "showed": showed,
             "deals_closed": closed,
+            "first_closes": first_c,
+            "fu_closes": fu_c,
             "disqualified": dq,
             "show_rate": _safe_div(showed, appts),
             "close_rate": _safe_div(closed, showed),
+            "first_close_rate": _safe_div(first_c, showed),
+            "fu_close_rate": _safe_div(fu_c, showed),
             "dq_rate": _safe_div(dq, showed),
             "revenue": rev,
         })
@@ -1223,14 +1310,21 @@ def windowed_sales_money(
     stages_closed_won_no_closedate,
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
+    group_cash_per_deal: dict | None = None,
 ) -> dict:
-    """Window-bounded money + time-to-close.
+    """Window-bounded money + cash + time-to-close.
 
     Filters YTD-loaded closed deals to those CLOSED within [start, end].
     Stages without closedate (DIY, 90-Day) fall back to createdate.
 
     Returns dict with: window_closed_count, window_revenue,
-    window_avg_deal_size, window_cycle_median_days.
+    window_avg_deal_size, window_cycle_median_days, window_cash_collection.
+
+    - window_revenue: sum of effective deal amounts (HubSpot amount with
+      group-default fallback).
+    - window_cash_collection: sum of group_cash_per_deal[group] across closed
+      deals in the window. Differs from revenue when contract values exceed
+      cash-up-front. None when group_cash_per_deal is not provided.
     """
     if deals.empty:
         return {
@@ -1238,6 +1332,7 @@ def windowed_sales_money(
             "window_revenue": 0.0,
             "window_avg_deal_size": None,
             "window_cycle_median_days": None,
+            "window_cash_collection": 0.0 if group_cash_per_deal else None,
         }
 
     no_close_set = set(stages_closed_won_no_closedate)
@@ -1263,11 +1358,20 @@ def windowed_sales_money(
     avg = (revenue / n) if n else None
     cycle_vals = table["sales_cycle_days"].dropna().tolist() if n else []
     cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
+
+    if group_cash_per_deal:
+        cash = float(
+            table["group"].map(lambda g: group_cash_per_deal.get(g, 0.0)).sum()
+        ) if n else 0.0
+    else:
+        cash = None
+
     return {
         "window_closed_count": n,
         "window_revenue": revenue,
         "window_avg_deal_size": avg,
         "window_cycle_median_days": cycle_median,
+        "window_cash_collection": cash,
     }
 
 
