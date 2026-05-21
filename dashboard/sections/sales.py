@@ -19,9 +19,11 @@ from dashboard.data.hubspot_loader import (
 from dashboard.data.reconcile import (
     build_closed_deals_table,
     compute_speed_to_lead,
-    owner_rollup,
     pipeline_funnel,
-    sdr_call_activity,
+    sales_bds_rollup,
+    sales_sdr_rollup,
+    sales_sme_rollup,
+    windowed_sales_money,
 )
 
 
@@ -35,6 +37,18 @@ def _fmt_int(x) -> str:
     if x is None or pd.isna(x):
         return "—"
     return f"{int(x):,}"
+
+
+def _fmt_pct(x) -> str:
+    if x is None or pd.isna(x):
+        return "—"
+    return f"{x * 100:.0f}%"
+
+
+def _fmt_minutes(x) -> str:
+    if x is None or pd.isna(x):
+        return "—"
+    return f"{x:.0f}"
 
 
 def _stage_groups() -> dict[str, set[str]]:
@@ -111,7 +125,7 @@ def render_sales(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Closed-deal attribution lookup failed: {e}")
 
-    # YTD closed deals
+    # YTD closed deals (used by Money cards + Closed Deals YTD section)
     try:
         deals_ytd, contact_deals_ytd, contacts_ytd = load_closed_deals_ytd(
             closed_won_stages=tuple(cfg.STAGES_CLOSED_WON),
@@ -129,7 +143,7 @@ def render_sales(start: date, end: date) -> None:
     fn_all = pipeline_funnel(marketing, contact_deals, deals,
                               stage_groups=stages, marketing_only=False)
 
-    # --- KPIs ---
+    # ----- Row 1: Pipeline KPIs (existing) -----
     def _v(df, stage, col="count"):
         s = df.loc[df["stage"] == stage, col]
         return s.iloc[0] if not s.empty else 0
@@ -144,7 +158,42 @@ def render_sales(start: date, end: date) -> None:
         f"{_fmt_money(_v(fn_mkt, 'Closed-Won', 'revenue'))}",
     )
 
-    # === NEW: Speed to Lead KPI row ===
+    # ----- Row 2: Money + Time-to-Close (window-bounded, all sources) -----
+    money = windowed_sales_money(
+        deals_ytd, contact_deals_ytd, contacts_ytd,
+        start=start, end=end,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        stages_closed_won=cfg.STAGES_CLOSED_WON,
+        stages_closed_won_no_closedate=cfg.STAGES_CLOSED_WON_NO_CLOSEDATE,
+        source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+        stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+    )
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(
+        "Total Sales (window)",
+        _fmt_int(money["window_closed_count"]),
+        help="Closed-won deals (all sources) within the current date range.",
+    )
+    m2.metric(
+        "Total Revenue (window)",
+        _fmt_money(money["window_revenue"]),
+        help="Sum of effective deal $ for closed deals in the date range "
+             "(HubSpot amount with group-default fallback).",
+    )
+    m3.metric(
+        "Avg Deal Size",
+        _fmt_money(money["window_avg_deal_size"]),
+        help="Total Revenue / Total Sales for the date range.",
+    )
+    m4.metric(
+        "Avg Time-to-Close (days)",
+        _fmt_minutes(money["window_cycle_median_days"]),
+        help="Median days from typeform opt-in (createdate fallback) to "
+             "deal close, across deals closed in this window.",
+    )
+
+    # ----- Row 3: Speed to Lead (existing) -----
     st.divider()
     st.subheader("Speed to Lead")
     speed_df = compute_speed_to_lead(marketing, aircall_calls)
@@ -163,20 +212,141 @@ def render_sales(start: date, end: date) -> None:
     s1.metric(
         "Median Speed to Lead",
         f"{median_speed:.1f} min" if median_speed is not None else "—",
-        help="Median minutes from HubSpot lead created to first outbound AirCall.")
+        help="Median minutes from typeform submission to first outbound AirCall.")
     s2.metric(
         "% Under 5 min",
-        f"{pct_under_5*100:.0f}%" if pct_under_5 is not None else "—",
+        _fmt_pct(pct_under_5),
         help="Share of leads whose first outbound call landed within 5 minutes "
-             "of creation. Hormozi's 80% target.")
+             "of opt-in. Hormozi's 80% target.")
     s3.metric(
         "% Under 60 sec",
-        f"{pct_under_60s*100:.0f}%" if pct_under_60s is not None else "—",
+        _fmt_pct(pct_under_60s),
         help="Share within 60 seconds. Hormozi's stretch goal (50%).")
 
     st.divider()
 
-    # --- Section A: pipeline funnel ---
+    # ----- Section: SDR Performance (Wave 1) -----
+    st.subheader("SDR Performance")
+    st.caption(
+        "Dials + pick-ups + talk time from AirCall, paired with HubSpot 15-min "
+        "meeting bookings attributed to each SDR. **Booking Rate** = "
+        "Appointments Booked / Pick Ups."
+    )
+    sdr = sales_sdr_rollup(
+        contacts=marketing,
+        calls=aircall_calls,
+        meetings=meetings,
+        aircall_user_names=cfg.AIRCALL_USER_NAMES,
+        excluded_users=cfg.AIRCALL_EXCLUDED_USERS,
+        aircall_to_sdr_owner=cfg.AIRCALL_TO_SDR_OWNER,
+        connect_duration_sec=cfg.AIRCALL_CONNECT_DURATION_SEC,
+        conv_window_hours=cfg.AIRCALL_CONV_TO_DISCO_WINDOW_HOURS,
+    )
+    if sdr.empty:
+        st.info("No SDR activity in this window.")
+    else:
+        display = sdr.copy()
+        display["talk_time_min"] = display["talk_time_min"].map(_fmt_minutes)
+        display["booking_rate"] = display["booking_rate"].map(_fmt_pct)
+        display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(
+            lambda x: f"{x:.1f} min" if x is not None and not pd.isna(x) else "—"
+        )
+        display = display[[
+            "user_name", "dials", "pick_ups", "talk_time_min",
+            "appointments_booked", "booking_rate",
+            "median_speed_to_lead_min",
+        ]].rename(columns={
+            "user_name": "SDR",
+            "dials": "Dials",
+            "pick_ups": "Pick Ups",
+            "talk_time_min": "Talk Time (min)",
+            "appointments_booked": "Appts Booked",
+            "booking_rate": "Booking %",
+            "median_speed_to_lead_min": "Median Speed",
+        })
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ----- Section: BDS Performance (Wave 1) -----
+    st.subheader("BDS Performance")
+    st.caption(
+        "BDS holds the 15-min Discovery, qualifies the prospect, and books the "
+        "Strategy when qualified. **Show %** = Shows / Appointments · "
+        "**Booking %** = SME Booked / Shows · **DQ %** = Disqualified / Shows."
+    )
+    bds = sales_bds_rollup(
+        contacts=marketing,
+        meetings=meetings,
+        contact_deals=contact_deals,
+        deals=deals,
+        stages_15min_dq=cfg.STAGES_15MIN_DQ,
+    )
+    if bds.empty:
+        st.info("No BDS activity in this window.")
+    else:
+        display = bds.copy()
+        display["bds_id"] = display["bds_id"].map(cfg.resolve_owner)
+        display["show_rate"] = display["show_rate"].map(_fmt_pct)
+        display["booking_rate"] = display["booking_rate"].map(_fmt_pct)
+        display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
+        display = display.rename(columns={
+            "bds_id": "BDS",
+            "appointments": "Appointments",
+            "shows": "Shows",
+            "sme_booked": "SME Booked",
+            "disqualified": "Disqualified",
+            "show_rate": "Show %",
+            "booking_rate": "Booking %",
+            "dq_rate": "DQ %",
+        })
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ----- Section: SME Performance (Wave 1) -----
+    st.subheader("SME Performance")
+    st.caption(
+        "SME holds the Strategy call and closes. **Show %** = Showed / "
+        "Appointments · **Close %** = Deals Closed / Showed · **DQ %** = "
+        "Disqualified / Showed. (First-close vs. follow-up-close split "
+        "coming in Wave 2.)"
+    )
+    sme = sales_sme_rollup(
+        contacts=marketing,
+        meetings=meetings,
+        contact_deals=contact_deals,
+        deals=deals,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        stages_closed_won=cfg.STAGES_CLOSED_WON,
+        stages_strategy_dq=cfg.STAGES_STRATEGY_DQ,
+    )
+    if sme.empty:
+        st.info("No SME activity in this window.")
+    else:
+        display = sme.copy()
+        display["sme_id"] = display["sme_id"].map(cfg.resolve_owner)
+        display["show_rate"] = display["show_rate"].map(_fmt_pct)
+        display["close_rate"] = display["close_rate"].map(_fmt_pct)
+        display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
+        display["revenue"] = display["revenue"].map(_fmt_money)
+        display = display.rename(columns={
+            "sme_id": "SME",
+            "appointments": "Appointments",
+            "showed": "Showed",
+            "deals_closed": "Deals Closed",
+            "disqualified": "Disqualified",
+            "show_rate": "Show %",
+            "close_rate": "Close %",
+            "dq_rate": "DQ %",
+            "revenue": "Revenue",
+        })
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ----- Section: Pipeline Funnel (existing — moved below) -----
     st.subheader("Pipeline Funnel")
     combined = fn_mkt.rename(columns={"count": "Marketing", "revenue": "mkt_rev"}).merge(
         fn_all.rename(columns={"count": "All Sources", "revenue": "all_rev"}),
@@ -194,79 +364,7 @@ def render_sales(start: date, end: date) -> None:
 
     st.divider()
 
-    # --- Section B: owner breakdowns ---
-    col_sdr, col_bds = st.columns(2)
-
-    only_mkt = st.checkbox("Marketing-attributed only", value=True,
-                            key="owners_marketing_only")
-    # v1 only loads marketing-attributed contacts; the "All" branch is a placeholder
-    # for a future enhancement that loads all contacts.
-    contacts_view = marketing
-
-    with col_sdr:
-        st.subheader("By SDR Owner")
-        sdr = owner_rollup(contacts_view, contact_deals, deals,
-                           owner_field="sdr_owner", stage_groups=stages)
-        sdr["owner"] = sdr["owner"].map(cfg.resolve_owner)
-        st.dataframe(sdr, use_container_width=True, hide_index=True)
-
-    with col_bds:
-        st.subheader("By BDS")
-        bds = owner_rollup(contacts_view, contact_deals, deals,
-                           owner_field="bds", stage_groups=stages)
-        bds["owner"] = bds["owner"].map(cfg.resolve_owner)
-        st.dataframe(bds, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # === NEW: SDR Call Activity table ===
-    st.subheader("SDR Call Activity (AirCall)")
-    st.caption("Outbound dial volume + connect rate + speed metrics per SDR. "
-               "A 'connect' is an outbound call where the prospect answered "
-               f"and the call lasted at least {cfg.AIRCALL_CONNECT_DURATION_SEC} seconds.")
-    activity = sdr_call_activity(
-        contacts=marketing,
-        calls=aircall_calls,
-        meetings=meetings,
-        aircall_user_names=cfg.AIRCALL_USER_NAMES,
-        excluded_users=cfg.AIRCALL_EXCLUDED_USERS,
-        connect_duration_sec=cfg.AIRCALL_CONNECT_DURATION_SEC,
-        conv_window_hours=cfg.AIRCALL_CONV_TO_DISCO_WINDOW_HOURS,
-    )
-
-    if activity.empty:
-        st.info("No AirCall data in this window.")
-    else:
-        display = activity.copy()
-        display["connect_rate"] = display["connect_rate"].map(
-            lambda x: f"{x*100:.0f}%" if pd.notna(x) and x is not None else "—"
-        )
-        display["conv_to_discovery_rate"] = display["conv_to_discovery_rate"].map(
-            lambda x: f"{x*100:.0f}%" if pd.notna(x) and x is not None else "—"
-        )
-        display["talk_time_min"] = display["talk_time_min"].map(
-            lambda x: f"{x:.0f}" if pd.notna(x) else "—"
-        )
-        display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(
-            lambda x: f"{x:.1f} min" if pd.notna(x) and x is not None else "—"
-        )
-        display = display[[
-            "user_name", "dials", "connects", "connect_rate",
-            "talk_time_min", "conv_to_discovery_rate", "median_speed_to_lead_min",
-        ]].rename(columns={
-            "user_name": "SDR",
-            "dials": "Dials",
-            "connects": "Connects",
-            "connect_rate": "Connect %",
-            "talk_time_min": "Talk Time (min)",
-            "conv_to_discovery_rate": "Conv → Discovery %",
-            "median_speed_to_lead_min": "Median Speed to Lead",
-        })
-        st.dataframe(display, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # --- Section C: drill-down ---
+    # ----- Section: Marketing Lead Detail (existing) -----
     st.subheader("Marketing Lead Detail")
     if marketing.empty:
         st.info("No marketing leads in this window.")
@@ -289,7 +387,6 @@ def render_sales(start: date, end: date) -> None:
         on="hs_id", how="left",
     )
 
-    # Default sort: newest typeform submission first
     detail["_sort_ts"] = pd.to_datetime(
         detail["typeform_submission_date"], utc=True, errors="coerce"
     )
@@ -328,7 +425,7 @@ def render_sales(start: date, end: date) -> None:
         },
     )
 
-    # === CLOSED DEALS (YTD) -- full detail ===
+    # ----- Section: Closed Deals YTD (existing) -----
     st.divider()
     st.subheader("Closed Deals — Year to Date")
     st.caption("Every closed-won deal since Jan 1, with original asset attribution + sales cycle days.")
@@ -342,7 +439,6 @@ def render_sales(start: date, end: date) -> None:
     if deals_table.empty:
         st.info("No closed-won deals YTD.")
     else:
-        # Filter toggle
         show_marketing_only = st.checkbox(
             "Show marketing-attributed deals only",
             value=False,
@@ -356,7 +452,6 @@ def render_sales(start: date, end: date) -> None:
         display_ytd["sdr_owner"] = display_ytd["sdr_owner"].map(cfg.resolve_owner)
         display_ytd["bds"] = display_ytd["bds"].map(cfg.resolve_owner)
         display_ytd["sme"] = display_ytd["sme"].map(cfg.resolve_owner)
-        # Format close date to CT
         close_dt = pd.to_datetime(display_ytd["closedate"], utc=True, errors="coerce")
         close_ct = close_dt.dt.tz_convert("America/Chicago")
         display_ytd["closedate"] = close_ct.apply(
@@ -385,7 +480,6 @@ def render_sales(start: date, end: date) -> None:
             "sme": "SME",
         })
         total_in_view = int(len(display_ytd))
-        # Compute the marketing subset count for context
         marketing_count = int(deals_table["is_marketing"].sum()) if "is_marketing" in deals_table.columns else None
         if show_marketing_only:
             st.caption(f"Showing {total_in_view} marketing-attributed deal(s).")

@@ -940,6 +940,338 @@ def sdr_call_activity(
 
 
 # ---------------------------------------------------------------------------
+# SALES tab Wave 1 rollups — SDR / BDS / SME with appt-booked + DQ
+# ---------------------------------------------------------------------------
+
+def sales_sdr_rollup(
+    contacts: pd.DataFrame,
+    calls: pd.DataFrame,
+    meetings: pd.DataFrame,
+    *,
+    aircall_user_names: dict,
+    excluded_users: set,
+    aircall_to_sdr_owner: dict,
+    connect_duration_sec: int,
+    conv_window_hours: int,
+) -> pd.DataFrame:
+    """Per-SDR activity for the SALES tab.
+
+    Combines AirCall dial activity with HubSpot meeting booking attribution.
+
+    Columns: user_id, user_name, dials, pick_ups, talk_time_min,
+             appointments_booked, booking_rate, median_speed_to_lead_min.
+
+    - pick_ups: outbound calls answered with duration >= connect threshold
+      (renamed from 'connects' for sales-team readability).
+    - appointments_booked: count of distinct contacts with a 15-min meeting
+      whose contact.sdr_owner = the SDR's HubSpot owner_id
+      (mapped via aircall_to_sdr_owner).
+    - booking_rate: appointments_booked / pick_ups.
+    """
+    cols = ["user_id", "user_name", "dials", "pick_ups", "talk_time_min",
+            "appointments_booked", "booking_rate", "median_speed_to_lead_min"]
+
+    activity = sdr_call_activity(
+        contacts=contacts, calls=calls, meetings=meetings,
+        aircall_user_names=aircall_user_names,
+        excluded_users=excluded_users,
+        connect_duration_sec=connect_duration_sec,
+        conv_window_hours=conv_window_hours,
+    )
+    if activity.empty:
+        return pd.DataFrame(columns=cols)
+
+    # Per-SDR appointments_booked: count distinct contacts with any 15-min
+    # meeting where contact.sdr_owner maps to this SDR.
+    sdr_appts: dict[str, int] = {}
+    if not meetings.empty and not contacts.empty:
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        fifteen = meetings[types.str.contains("15 min", na=False)]
+        if not fifteen.empty and "sdr_owner" in contacts.columns:
+            owner_map = dict(zip(
+                contacts["hs_id"].astype(str),
+                contacts["sdr_owner"].fillna("").astype(str),
+            ))
+            booked_contact_ids = set(fifteen["contact_id"].astype(str))
+            for cid in booked_contact_ids:
+                owner = owner_map.get(cid, "")
+                if owner:
+                    sdr_appts[owner] = sdr_appts.get(owner, 0) + 1
+
+    out = activity.rename(columns={"connects": "pick_ups"}).copy()
+    out["appointments_booked"] = out["user_id"].apply(
+        lambda uid: int(sdr_appts.get(aircall_to_sdr_owner.get(str(uid), ""), 0))
+    )
+    out["booking_rate"] = [
+        _safe_div(r["appointments_booked"], r["pick_ups"])
+        for _, r in out.iterrows()
+    ]
+    return out[cols].reset_index(drop=True)
+
+
+def _contacts_with_deal_in_stages(
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    stages: set,
+) -> set:
+    """Return the set of contact_ids with any deal in the given stages."""
+    if deals.empty or contact_deals.empty or not stages:
+        return set()
+    deal_ids = set(deals.loc[deals["dealstage"].isin(stages), "deal_id"])
+    return set(
+        contact_deals.loc[contact_deals["deal_id"].isin(deal_ids), "contact_id"].astype(str)
+    )
+
+
+def sales_bds_rollup(
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    *,
+    stages_15min_dq: set,
+) -> pd.DataFrame:
+    """Per-BDS rollup with DQ tracking.
+
+    BDS owns the 15-min Discovery: they hold it, qualify or disqualify the
+    prospect, and book the Strategy when qualified.
+
+    Columns: bds_id, appointments, shows, sme_booked, disqualified,
+             show_rate, booking_rate, dq_rate.
+
+    - appointments: contacts in this BDS group with a 15-min meeting (any outcome).
+    - shows: 15-min meetings with COMPLETE outcome.
+    - sme_booked: contacts with a Strategy meeting booked.
+    - disqualified: contacts with a deal in STAGES_15MIN_DQ.
+    - show_rate: shows / appointments.
+    - booking_rate: sme_booked / shows.
+    - dq_rate: disqualified / shows.
+    """
+    cols = ["bds_id", "appointments", "shows", "sme_booked", "disqualified",
+            "show_rate", "booking_rate", "dq_rate"]
+    if contacts.empty:
+        return pd.DataFrame(columns=cols)
+
+    if not meetings.empty:
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        fifteen = meetings[types.str.contains("15 min", na=False)]
+        strategy = meetings[types.str.contains("strategy", na=False)]
+
+        booked_15_ids = set(fifteen["contact_id"].astype(str)) \
+            if not fifteen.empty else set()
+        held_15_ids: set = set()
+        if not fifteen.empty:
+            out = fifteen["outcome"].fillna("").astype(str).str.upper()
+            held_15_ids = set(
+                fifteen.loc[out.str.startswith("COMPLETE"), "contact_id"].astype(str)
+            )
+        booked_strat_ids = set(strategy["contact_id"].astype(str)) \
+            if not strategy.empty else set()
+    else:
+        booked_15_ids = set()
+        held_15_ids = set()
+        booked_strat_ids = set()
+
+    dq_contact_ids = _contacts_with_deal_in_stages(
+        contact_deals, deals, set(stages_15min_dq),
+    )
+
+    rows = []
+    for bds_id, grp in contacts.groupby("bds", dropna=False):
+        ids = set(grp["hs_id"].astype(str))
+        appts = len(ids & booked_15_ids)
+        shows = len(ids & held_15_ids)
+        sme_booked = len(ids & booked_strat_ids)
+        dq = len(ids & dq_contact_ids)
+        rows.append({
+            "bds_id": str(bds_id) if pd.notna(bds_id) else "",
+            "appointments": appts,
+            "shows": shows,
+            "sme_booked": sme_booked,
+            "disqualified": dq,
+            "show_rate": _safe_div(shows, appts),
+            "booking_rate": _safe_div(sme_booked, shows),
+            "dq_rate": _safe_div(dq, shows),
+        })
+    return pd.DataFrame(rows, columns=cols).sort_values(
+        "appointments", ascending=False
+    ).reset_index(drop=True)
+
+
+def sales_sme_rollup(
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    *,
+    asset_to_group: dict,
+    group_default_amount: dict,
+    stages_closed_won,
+    stages_strategy_dq: set,
+) -> pd.DataFrame:
+    """Per-SME rollup with appointments + DQ tracking.
+
+    SME owns the Strategy call: they hold it and close.
+
+    Columns: sme_id, appointments, showed, deals_closed, disqualified,
+             show_rate, close_rate, dq_rate, revenue.
+
+    - appointments: contacts in this SME group with a Strategy meeting booked.
+    - showed: Strategy meetings with COMPLETE outcome.
+    - deals_closed: contacts with a deal in stages_closed_won.
+    - disqualified: contacts with a deal in stages_strategy_dq.
+    - show_rate: showed / appointments.
+    - close_rate: deals_closed / showed.
+    - dq_rate: disqualified / showed.
+    - revenue: sum of effective deal amounts (Option C — deal.amount with
+      group_default_amount fallback).
+    """
+    cols = ["sme_id", "appointments", "showed", "deals_closed", "disqualified",
+            "show_rate", "close_rate", "dq_rate", "revenue"]
+    if contacts.empty:
+        return pd.DataFrame(columns=cols)
+
+    contacts = contacts.copy()
+    contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
+
+    if not meetings.empty:
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        strategy = meetings[types.str.contains("strategy", na=False)]
+        booked_strat_ids = set(strategy["contact_id"].astype(str)) \
+            if not strategy.empty else set()
+        held_strat_ids: set = set()
+        if not strategy.empty:
+            out = strategy["outcome"].fillna("").astype(str).str.upper()
+            held_strat_ids = set(
+                strategy.loc[out.str.startswith("COMPLETE"), "contact_id"].astype(str)
+            )
+    else:
+        booked_strat_ids = set()
+        held_strat_ids = set()
+
+    # Closed-won + revenue (Option C)
+    won_set = set(stages_closed_won)
+    won_contact_ids = _contacts_with_deal_in_stages(contact_deals, deals, won_set)
+    contact_revenue: dict[str, float] = {}
+    if not deals.empty and not contact_deals.empty and won_set:
+        contact_to_group = dict(zip(
+            contacts["hs_id"].astype(str), contacts["group"]
+        ))
+
+        def _deal_revenue(row) -> float:
+            amt = float(row.get("amount") or 0)
+            if amt > 0:
+                return amt
+            cids = contact_deals[
+                contact_deals["deal_id"] == row["deal_id"]
+            ]["contact_id"].astype(str)
+            for cid in cids:
+                g = contact_to_group.get(cid)
+                if g and g in group_default_amount:
+                    return float(group_default_amount[g])
+            return 0.0
+
+        won_deals = deals[deals["dealstage"].isin(won_set)].copy()
+        won_deals["effective_amount"] = won_deals.apply(_deal_revenue, axis=1)
+        deal_revenue_map = dict(zip(
+            won_deals["deal_id"], won_deals["effective_amount"]
+        ))
+        for _, row in contact_deals.iterrows():
+            cid = str(row["contact_id"])
+            did = row["deal_id"]
+            if did in deal_revenue_map:
+                contact_revenue[cid] = contact_revenue.get(cid, 0.0) + deal_revenue_map[did]
+
+    dq_contact_ids = _contacts_with_deal_in_stages(
+        contact_deals, deals, set(stages_strategy_dq),
+    )
+
+    rows = []
+    for sme_id, grp in contacts.groupby("sme", dropna=False):
+        cids = set(grp["hs_id"].astype(str))
+        appts = len(cids & booked_strat_ids)
+        showed = len(cids & held_strat_ids)
+        closed = len(cids & won_contact_ids)
+        dq = len(cids & dq_contact_ids)
+        rev = sum(contact_revenue.get(c, 0.0) for c in cids)
+        rows.append({
+            "sme_id": str(sme_id) if pd.notna(sme_id) else "",
+            "appointments": appts,
+            "showed": showed,
+            "deals_closed": closed,
+            "disqualified": dq,
+            "show_rate": _safe_div(showed, appts),
+            "close_rate": _safe_div(closed, showed),
+            "dq_rate": _safe_div(dq, showed),
+            "revenue": rev,
+        })
+    return pd.DataFrame(rows, columns=cols).sort_values(
+        "revenue", ascending=False
+    ).reset_index(drop=True)
+
+
+def windowed_sales_money(
+    deals: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    contacts: pd.DataFrame,
+    *,
+    start: 'date',
+    end: 'date',
+    asset_to_group: dict,
+    group_default_amount: dict,
+    stages_closed_won,
+    stages_closed_won_no_closedate,
+    source_overrides: dict | None = None,
+    stage_source_fallback: dict | None = None,
+) -> dict:
+    """Window-bounded money + time-to-close.
+
+    Filters YTD-loaded closed deals to those CLOSED within [start, end].
+    Stages without closedate (DIY, 90-Day) fall back to createdate.
+
+    Returns dict with: window_closed_count, window_revenue,
+    window_avg_deal_size, window_cycle_median_days.
+    """
+    if deals.empty:
+        return {
+            "window_closed_count": 0,
+            "window_revenue": 0.0,
+            "window_avg_deal_size": None,
+            "window_cycle_median_days": None,
+        }
+
+    no_close_set = set(stages_closed_won_no_closedate)
+    close_dt = pd.to_datetime(deals.get("closedate"), utc=True, errors="coerce").dt.date
+    create_dt = pd.to_datetime(deals.get("createdate"), utc=True, errors="coerce").dt.date
+    mask_close = close_dt.between(start, end)
+    mask_create = (
+        deals["dealstage"].isin(no_close_set)
+        & close_dt.isna()
+        & create_dt.between(start, end)
+    )
+    window_deals = deals[mask_close | mask_create].copy()
+
+    table = build_closed_deals_table(
+        window_deals, contact_deals, contacts,
+        asset_to_group=asset_to_group,
+        group_default_amount=group_default_amount,
+        source_overrides=source_overrides,
+        stage_source_fallback=stage_source_fallback,
+    )
+    n = int(len(table))
+    revenue = float(table["deal_amount"].sum()) if n else 0.0
+    avg = (revenue / n) if n else None
+    cycle_vals = table["sales_cycle_days"].dropna().tolist() if n else []
+    cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
+    return {
+        "window_closed_count": n,
+        "window_revenue": revenue,
+        "window_avg_deal_size": avg,
+        "window_cycle_median_days": cycle_median,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Weekly Metrics aggregator
 # ---------------------------------------------------------------------------
 from datetime import date, datetime, timedelta, timezone  # noqa: E402

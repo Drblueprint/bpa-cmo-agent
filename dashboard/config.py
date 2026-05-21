@@ -63,6 +63,17 @@ STAGES_STRATEGY_HELD: set[str] = {
     "1057070392", # PT Marketing Pipeline: Strategy Call Complete-BAMFAM
 }
 
+# Disqualified outcome stages — subset of HELD stages, broken out for DQ counts.
+STAGES_15MIN_DQ: set[str] = {
+    "33595199",   # SDR Pipeline: 15 min Call Completed - Disqualified
+    "1031449111", # PT Marketing Pipeline: 15-min Call Completed-Disqualified
+}
+
+STAGES_STRATEGY_DQ: set[str] = {
+    "1205515693", # SDR Pipeline: Strategy Call Complete - Disqualified
+    "1031449110", # PT Marketing Pipeline: Strategy Call Complete-Disqualified
+}
+
 # --- HubSpot closed-won stage IDs ---
 STAGES_CLOSED_WON: set[str] = {
     "closedwon",  # Sales Pipeline (id=default): Closed Won
