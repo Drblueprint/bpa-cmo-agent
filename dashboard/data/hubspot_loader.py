@@ -677,3 +677,95 @@ def load_list_memberships(list_id: str) -> pd.DataFrame:
 def load_list_membership_contact_ids(list_id: str) -> list[str]:
     df = load_list_memberships(list_id)
     return df["contact_id"].tolist() if not df.empty else []
+
+
+@st.cache_data(ttl=900, show_spinner="Pulling closed deals in window...")
+def load_closed_deals_in_window(
+    start: date,
+    end: date,
+    closed_won_stages: tuple[str, ...],
+    no_closedate_stages: tuple[str, ...] = (),
+) -> pd.DataFrame:
+    """Pull deals closed-won where:
+      - dealstage in closed_won_stages AND closedate BETWEEN start..end, OR
+      - dealstage in no_closedate_stages AND createdate BETWEEN start..end
+
+    Used by the METRICS tab to count closed deals per week accurately --
+    bypasses the hs_lastmodifieddate filter that misses deals closed
+    earlier but not touched since.
+    """
+    from datetime import date as _date, datetime as _datetime
+    from datetime import timezone as _timezone
+
+    deal_cols = ["deal_id", "dealname", "amount", "dealstage", "pipeline",
+                 "createdate", "closedate"]
+    start_ms = int(_datetime.combine(start, _datetime.min.time(),
+                                       tzinfo=_timezone.utc).timestamp() * 1000)
+    end_ms = int(_datetime.combine(end, _datetime.max.time(),
+                                     tzinfo=_timezone.utc).timestamp() * 1000)
+
+    token = st.secrets["HUBSPOT_TOKEN"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    closed_set = list(closed_won_stages)
+    no_close_list = [s for s in no_closedate_stages if s in set(closed_set)]
+    closedate_only = [s for s in closed_set if s not in set(no_close_list)]
+
+    filter_groups = []
+    if closedate_only:
+        filter_groups.append({
+            "filters": [
+                {"propertyName": "dealstage", "operator": "IN",
+                 "values": closedate_only},
+                {"propertyName": "closedate", "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        })
+    if no_close_list:
+        filter_groups.append({
+            "filters": [
+                {"propertyName": "dealstage", "operator": "IN",
+                 "values": no_close_list},
+                {"propertyName": "createdate", "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        })
+
+    if not filter_groups:
+        return pd.DataFrame(columns=deal_cols)
+
+    body = {
+        "filterGroups": filter_groups,
+        "properties": ["dealname", "amount", "dealstage", "pipeline",
+                       "createdate", "closedate"],
+        "limit": 100,
+    }
+    deal_rows = []
+    after = None
+    while True:
+        b = dict(body)
+        if after:
+            b["after"] = after
+        r = requests.post(
+            f"{HS_API}/crm/v3/objects/deals/search",
+            headers=headers, json=b, timeout=60,
+        )
+        r.raise_for_status()
+        data = r.json()
+        for d in data.get("results", []):
+            p = d.get("properties") or {}
+            did = d.get("id")
+            deal_rows.append({
+                "deal_id": str(did) if did is not None else None,
+                "dealname": p.get("dealname"),
+                "amount": float(p.get("amount") or 0),
+                "dealstage": p.get("dealstage"),
+                "pipeline": p.get("pipeline"),
+                "createdate": p.get("createdate"),
+                "closedate": p.get("closedate"),
+            })
+        after = (data.get("paging") or {}).get("next", {}).get("after")
+        if not after or len(deal_rows) >= 10000:
+            break
+
+    return pd.DataFrame(deal_rows, columns=deal_cols)

@@ -1137,7 +1137,21 @@ def weekly_metrics(
         if deals.empty:
             return 0
         use_stages = stages_override if stages_override is not None else stages_closed_won
+        # Closedate-based deals (standard closed-won)
         mask = deals["dealstage"].isin(use_stages) & d_close.between(start, end)
+        # No-closedate deals (DIY, 90-Day) -- count by createdate
+        if "createdate" in deals.columns:
+            try:
+                d_create = pd.to_datetime(deals["createdate"], utc=True,
+                                          errors="coerce").dt.date
+                mask_create = (
+                    deals["dealstage"].isin(use_stages)
+                    & d_create.between(start, end)
+                    & d_close.isna()
+                )
+                mask = mask | mask_create
+            except Exception:
+                pass
         return int(mask.sum())
 
     def _bofu_in_week(start: date, end: date) -> int:
