@@ -220,12 +220,23 @@ def pipeline_funnel(
     """Return funnel counts and revenue per stage.
 
     Columns: stage, count, revenue.
-    - marketing_only=True restricts to deals whose contacts have a typeform asset.
+    - marketing_only=True restricts to deals whose contacts have a typeform
+      asset populated. Callers may pass an expanded contacts DataFrame (all
+      contacts associated with deals in the window, including non-marketing
+      ones); this function does the typeform filter itself so callers can
+      pass the same contacts to fn_mkt and fn_all.
     - stage_groups maps logical stage keys (e.g. "15min_booked") to sets of
       HubSpot dealstage internal IDs that count for that stage.
     """
     if marketing_only and not contacts.empty:
-        marketing_ids = set(contacts["hs_id"])
+        if "typeform_asset_download" in contacts.columns:
+            mkt = contacts[
+                contacts["typeform_asset_download"].notna()
+                & (contacts["typeform_asset_download"].astype(str).str.strip() != "")
+            ]
+        else:
+            mkt = contacts
+        marketing_ids = set(mkt["hs_id"])
         marketing_deals = set(
             contact_deals.loc[contact_deals["contact_id"].isin(marketing_ids), "deal_id"]
         )

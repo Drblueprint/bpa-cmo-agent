@@ -88,6 +88,45 @@ def test_pipeline_funnel_marketing_vs_all():
     assert fn_all["revenue"].loc[fn_all["stage"] == "Closed-Won"].iloc[0] == 6000.0
 
 
+def test_pipeline_funnel_filters_by_typeform_when_marketing_only():
+    """When the caller passes an expanded contacts DataFrame (mix of typeform
+    and non-typeform), marketing_only=True must filter to only the
+    typeform-attributed rows."""
+    # Both contacts are passed in (caller expanded the list), but only c1
+    # has a typeform asset — c2 is a cold-outreach lead.
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "c2", "typeform_asset_download": None},
+        {"hs_id": "c3", "typeform_asset_download": ""},  # blank counts as non-marketing
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "c1", "deal_id": "d1"},
+        {"contact_id": "c2", "deal_id": "d2"},
+        {"contact_id": "c3", "deal_id": "d3"},
+    ])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 5000},
+        {"deal_id": "d2", "dealstage": "closedwon", "amount": 3000},
+        {"deal_id": "d3", "dealstage": "closedwon", "amount": 1000},
+    ])
+    stages = {
+        "15min_booked": set(), "15min_held": set(),
+        "strategy_booked": set(), "strategy_held": set(),
+        "closedwon": {"closedwon"},
+    }
+
+    fn_mkt = pipeline_funnel(contacts, contact_deals, deals,
+                              stage_groups=stages, marketing_only=True)
+    fn_all = pipeline_funnel(contacts, contact_deals, deals,
+                              stage_groups=stages, marketing_only=False)
+    # Marketing = only c1's deal (typeform populated)
+    assert fn_mkt["count"].loc[fn_mkt["stage"] == "Closed-Won"].iloc[0] == 1
+    assert fn_mkt["revenue"].loc[fn_mkt["stage"] == "Closed-Won"].iloc[0] == 5000.0
+    # All = all 3 deals
+    assert fn_all["count"].loc[fn_all["stage"] == "Closed-Won"].iloc[0] == 3
+    assert fn_all["revenue"].loc[fn_all["stage"] == "Closed-Won"].iloc[0] == 9000.0
+
+
 from dashboard.data.reconcile import owner_rollup
 
 

@@ -189,13 +189,26 @@ def render_sales(start: date, end: date) -> None:
         return s.iloc[0] if not s.empty else 0
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("15-min Calls (Marketing)", _fmt_int(_v(fn_mkt, "15-min Booked")))
-    c2.metric("15-min Calls (All)", _fmt_int(_v(fn_all, "15-min Booked")))
-    c3.metric("Strategy Calls Held (Mkt)", _fmt_int(_v(fn_mkt, "Strategy Held")))
+    c1.metric(
+        "15-min Calls (Marketing)",
+        _fmt_int(_v(fn_mkt, "15-min Booked")),
+        help="Deals at 15-min Booked/Held whose contact has "
+             "typeform_asset_download populated.",
+    )
+    c2.metric(
+        "15-min Calls (All)",
+        _fmt_int(_v(fn_all, "15-min Booked")),
+        help="All deals at 15-min Booked/Held, regardless of source.",
+    )
+    c3.metric(
+        "Strategy Calls Held (Mkt)",
+        _fmt_int(_v(fn_mkt, "Strategy Held")),
+        help="Strategy meetings held for marketing-attributed contacts.",
+    )
     c4.metric(
-        "Closed-Won (Marketing)",
-        f"{_fmt_int(_v(fn_mkt, 'Closed-Won'))} · "
-        f"{_fmt_money(_v(fn_mkt, 'Closed-Won', 'revenue'))}",
+        "Strategy Calls Held (All)",
+        _fmt_int(_v(fn_all, "Strategy Held")),
+        help="All Strategy meetings held in window, regardless of source.",
     )
 
     # ----- Row 2: Money + Time-to-Close (window-bounded, all sources) -----
