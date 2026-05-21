@@ -63,6 +63,29 @@ def _stage_groups() -> dict[str, set[str]]:
 
 def render_sales(start: date, end: date) -> None:
     floor_days = st.session_state.get("data_floor_days_back", 180)
+
+    # ----- View selector: MTD (default) / YTD / Custom (header range) -----
+    today = date.today()
+    view = st.radio(
+        "View",
+        options=["Month to Date", "Year to Date", "Custom Range"],
+        index=0,
+        horizontal=True,
+        key="sales_view_selector",
+        help="MTD = 1st of this month through today. YTD = Jan 1 through "
+             "today. Custom uses the dashboard date picker at the top.",
+    )
+    if view == "Month to Date":
+        start = today.replace(day=1)
+        end = today
+    elif view == "Year to Date":
+        start = today.replace(month=1, day=1)
+        end = today
+    st.caption(
+        f"**Showing:** {view} · {start.strftime('%b %d, %Y')} → "
+        f"{end.strftime('%b %d, %Y')}"
+    )
+
     st.info(
         '**"Marketing-attributed"** below = HubSpot contact has '
         '`typeform_asset_download` populated.',
