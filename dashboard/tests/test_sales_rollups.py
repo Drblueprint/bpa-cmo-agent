@@ -4,11 +4,50 @@ from datetime import date as _d
 import pandas as pd
 
 from dashboard.data.reconcile import (
+    compute_speed_to_lead,
     sales_sdr_rollup,
     sales_bds_rollup,
     sales_sme_rollup,
     windowed_sales_money,
 )
+
+
+def test_speed_to_lead_excludes_stale_leads():
+    """Leads whose typeform_submission_date is before lead_window_start
+    must not appear in the speed-to-lead result. Without this, contacts
+    pulled in via the SALES tab's window-expansion produce nonsense
+    speed values (months between an old opt-in and any call in window).
+    """
+    contacts = pd.DataFrame([
+        # Fresh: typeform on May 19 (in window), first call 30 min later
+        {"hs_id": "fresh", "phone": "555-0101", "mobilephone": None,
+         "typeform_submission_date": "2026-05-19T10:00:00Z"},
+        # Stale: typeform from FEB, first call in window 90+ days later
+        {"hs_id": "stale", "phone": "555-0102", "mobilephone": None,
+         "typeform_submission_date": "2026-02-01T10:00:00Z"},
+    ])
+    # Both contacts get an outbound call on May 19
+    calls = pd.DataFrame([
+        {"call_id": "k1", "started_at_utc": 1747647600,  # 2026-05-19 10:30 UTC
+         "answered_at_utc": 1747647610, "duration": 60, "direction": "outbound",
+         "status": "answered", "user_id": "1551010", "user_name": "Peyton",
+         "raw_digits": "5550101", "phone_normalized": "5550101"},
+        {"call_id": "k2", "started_at_utc": 1747647600,
+         "answered_at_utc": 1747647610, "duration": 60, "direction": "outbound",
+         "status": "answered", "user_id": "1551010", "user_name": "Peyton",
+         "raw_digits": "5550102", "phone_normalized": "5550102"},
+    ])
+
+    # No filter: both contacts appear, stale one has a huge speed value
+    out_no_filter = compute_speed_to_lead(contacts, calls)
+    assert len(out_no_filter) == 2
+
+    # With lead_window_start=May 1: only the fresh lead survives
+    out_filtered = compute_speed_to_lead(
+        contacts, calls, lead_window_start=_d(2026, 5, 1)
+    )
+    assert len(out_filtered) == 1
+    assert out_filtered.iloc[0]["hs_id"] == "fresh"
 
 
 def test_sales_sdr_rollup_basic():

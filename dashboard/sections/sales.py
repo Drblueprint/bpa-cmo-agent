@@ -257,7 +257,14 @@ def render_sales(start: date, end: date) -> None:
     # ----- Row 3: Speed to Lead (existing) -----
     st.divider()
     st.subheader("Speed to Lead")
-    speed_df = compute_speed_to_lead(marketing, aircall_calls)
+    st.caption(
+        "Only counts leads whose typeform submission falls inside the current "
+        "window — measures how fast we contact **fresh** leads, not how long "
+        "ago some old leads first heard from us."
+    )
+    speed_df = compute_speed_to_lead(
+        marketing, aircall_calls, lead_window_start=start
+    )
     speeds = speed_df["speed_to_lead_minutes"].dropna()
 
     if speeds.empty:
@@ -303,6 +310,7 @@ def render_sales(start: date, end: date) -> None:
         aircall_to_sdr_owner=cfg.AIRCALL_TO_SDR_OWNER,
         connect_duration_sec=cfg.AIRCALL_CONNECT_DURATION_SEC,
         conv_window_hours=cfg.AIRCALL_CONV_TO_DISCO_WINDOW_HOURS,
+        lead_window_start=start,
     )
     if sdr.empty:
         st.info("No SDR activity in this window.")

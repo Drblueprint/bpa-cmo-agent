@@ -761,10 +761,19 @@ def normalize_phone(s) -> str:
 def compute_speed_to_lead(
     contacts: pd.DataFrame,
     calls: pd.DataFrame,
+    *,
+    lead_window_start=None,
 ) -> pd.DataFrame:
     """For each contact, find the first OUTBOUND AirCall to their phone AFTER
     their typeform_submission_date. (Falls back to HubSpot createdate if the
     submission timestamp is missing.)
+
+    - lead_window_start: optional date. Contacts whose lead_in_ts is before
+      this cutoff are EXCLUDED from the result. Use when callers pass an
+      expanded contacts list that may include older typeform submissions
+      whose first call in the AirCall window is meaningless (they weren't
+      actually "called fast" — there were months of calls in between that
+      we just don't have loaded).
 
     Returns DataFrame with columns: hs_id, speed_to_lead_minutes (NaN if no match).
     """
@@ -794,6 +803,17 @@ def compute_speed_to_lead(
         return float("nan")
 
     contacts["lead_in_ts"] = contacts.apply(_lead_in_ts, axis=1)
+
+    # Apply lead-window cutoff so stale leads (whose typeform predates the
+    # call window) don't pollute the median.
+    if lead_window_start is not None:
+        cutoff_ts = int(pd.Timestamp(lead_window_start).tz_localize("UTC").timestamp())
+        contacts = contacts[
+            contacts["lead_in_ts"].notna()
+            & (contacts["lead_in_ts"] >= cutoff_ts)
+        ]
+        if contacts.empty:
+            return pd.DataFrame(columns=["hs_id", "speed_to_lead_minutes"])
 
     outbound = calls[calls["direction"] == "outbound"] if not calls.empty else calls
 
@@ -830,6 +850,7 @@ def sdr_call_activity(
     excluded_users: set,
     connect_duration_sec: int,
     conv_window_hours: int,
+    lead_window_start=None,
 ) -> pd.DataFrame:
     """Per-AirCall-user dial activity for the SALES tab SDR Call Activity table.
 
@@ -855,7 +876,9 @@ def sdr_call_activity(
     outbound["is_connect"] = is_connect
 
     # Pre-compute speed to lead per contact for downstream attribution
-    speed_df = compute_speed_to_lead(contacts, calls)
+    speed_df = compute_speed_to_lead(
+        contacts, calls, lead_window_start=lead_window_start
+    )
     speed_map = dict(zip(speed_df["hs_id"].astype(str),
                          speed_df["speed_to_lead_minutes"]))
 
@@ -964,6 +987,7 @@ def sales_sdr_rollup(
     aircall_to_sdr_owner: dict,
     connect_duration_sec: int,
     conv_window_hours: int,
+    lead_window_start=None,
 ) -> pd.DataFrame:
     """Per-SDR activity for the SALES tab.
 
@@ -994,6 +1018,7 @@ def sales_sdr_rollup(
         excluded_users=excluded_users,
         connect_duration_sec=connect_duration_sec,
         conv_window_hours=conv_window_hours,
+        lead_window_start=lead_window_start,
     )
     if activity.empty:
         return pd.DataFrame(columns=cols)
