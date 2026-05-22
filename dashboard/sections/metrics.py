@@ -82,8 +82,12 @@ def _render_daily_summary() -> None:
     )
 
     # --- Data loaders ---
+    # IMPORTANT: load FB with daily granularity (time_increment_days=1) so the
+    # Yesterday column has per-day rows to filter on. Without this, FB returns
+    # one row per campaign for the full month window with date_start=May 1,
+    # and the yesterday filter (start==end==May 21) returns zero rows.
     try:
-        fb_month = load_fb_insights(month_start, today)
+        fb_month = load_fb_insights(month_start, today, time_increment_days=1)
     except Exception as e:
         st.warning(f"FB Ads unavailable: {e}")
         fb_month = pd.DataFrame(columns=["group", "spend", "date_start"])
