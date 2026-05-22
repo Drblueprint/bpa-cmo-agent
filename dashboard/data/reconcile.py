@@ -1499,6 +1499,7 @@ def daily_va_summary(
         "chiro_cpl_new": (chiro_spend / chiro_new_leads) if chiro_new_leads else None,
         "theraray_submissions": theraray_submissions,
         "theraray_ad_spend": theraray_spend,
+        "theraray_cpl": (theraray_spend / theraray_submissions) if theraray_submissions else None,
     }
 
 

@@ -141,6 +141,9 @@ def _render_daily_summary() -> None:
         f, g = st.columns(2)
         f.metric("Submissions", mtd["theraray_submissions"])
         g.metric("Ad Spend", _money(mtd["theraray_ad_spend"]))
+        h, _ = st.columns(2)
+        h.metric("Cost / Submission", _money_or_dash(mtd["theraray_cpl"]),
+                 help="TheraRay Ad Spend / Submissions.")
 
     with col_yday:
         st.markdown(f"**Yesterday · {yesterday.strftime('%b %d, %Y')}**")
@@ -157,6 +160,8 @@ def _render_daily_summary() -> None:
         f, g = st.columns(2)
         f.metric("Submissions", yday["theraray_submissions"])
         g.metric("Ad Spend", _money(yday["theraray_ad_spend"]))
+        h, _ = st.columns(2)
+        h.metric("Cost / Submission", _money_or_dash(yday["theraray_cpl"]))
 
     # --- Copy-pastable text block matching the VA's format ---
     def _fmt_cpl(x) -> str:
@@ -191,7 +196,13 @@ def _render_daily_summary() -> None:
         f"{today.strftime('%b %d')}    - "
         f"${mtd['theraray_ad_spend']:,.2f}\n"
         f"{yesterday.strftime('%b %d')}                 - "
-        f"${yday['theraray_ad_spend']:,.2f}\n"
+        f"${yday['theraray_ad_spend']:,.2f}\n\n"
+        f"Cost per Submission\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}    - "
+        f"{_fmt_cpl(mtd['theraray_cpl'])}\n"
+        f"{yesterday.strftime('%b %d')}                 - "
+        f"{_fmt_cpl(yday['theraray_cpl'])}\n"
     )
     st.markdown("**Copy-pastable summary**")
     st.caption("Click the copy icon in the top-right of the block.")

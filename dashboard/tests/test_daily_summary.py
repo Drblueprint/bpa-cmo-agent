@@ -71,9 +71,10 @@ def test_daily_va_summary_basic_chiro_split():
     assert out["chiro_new_leads"] == 2
     assert out["chiro_cpl_all"] == 500.0 / 3
     assert out["chiro_cpl_new"] == 500.0 / 2
-    # TheraRay: 2 submissions in window, $50 spend
+    # TheraRay: 2 submissions in window, $50 spend, CPL = $25
     assert out["theraray_submissions"] == 2
     assert out["theraray_ad_spend"] == 50.0
+    assert out["theraray_cpl"] == 25.0
 
 
 def test_daily_va_summary_handles_empty_inputs():
@@ -92,6 +93,7 @@ def test_daily_va_summary_handles_empty_inputs():
     assert out["chiro_cpl_new"] is None
     assert out["theraray_submissions"] == 0
     assert out["theraray_ad_spend"] == 0.0
+    assert out["theraray_cpl"] is None
 
 
 def test_daily_va_summary_single_day_window():
