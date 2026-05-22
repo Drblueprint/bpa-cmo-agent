@@ -1412,6 +1412,97 @@ def windowed_sales_money(
 
 
 # ---------------------------------------------------------------------------
+# Daily VA Summary (Chiro + TheraRay snapshot for morning chat post)
+# ---------------------------------------------------------------------------
+
+def daily_va_summary(
+    *,
+    fb: pd.DataFrame,
+    contacts: pd.DataFrame,
+    theraray_memberships: pd.DataFrame,
+    start: 'date',
+    end: 'date',
+    asset_to_group: dict,
+) -> dict:
+    """Numbers for the morning summary the VA posts in chat.
+
+    Mirrors the format:
+        Chiro
+        Spend, All Leads, Cost / All Leads, New Leads, Cost / New Lead
+
+        TheraRay
+        Submissions, Ad Spend
+
+    All Leads  = contacts with typeform_submission_date in [start, end]
+                 (regardless of when the contact was created).
+    New Leads  = subset whose contact createdate is also in [start, end] —
+                 i.e., they didn't exist in HubSpot before this window.
+                 Returning leads (createdate before window) are All Leads
+                 but NOT New Leads.
+
+    Chiro rolls up Chiro + EMX groups to match METRICS-tab convention.
+
+    Returns a dict with all values; caller formats for display.
+    """
+    # --- Chiro: tag contacts with group and apply window filters ---
+    cx = contacts.copy()
+    if not cx.empty:
+        cx["group"] = cx["typeform_asset_download"].map(asset_to_group)
+        submit_dt = pd.to_datetime(
+            cx.get("typeform_submission_date"), utc=True, errors="coerce"
+        ).dt.date
+        create_dt = pd.to_datetime(
+            cx.get("created"), utc=True, errors="coerce"
+        ).dt.date
+        in_submit_window = submit_dt.between(start, end)
+        in_create_window = create_dt.between(start, end)
+        chiro_mask = cx["group"].isin(["Chiro", "EMX"])
+        chiro_all_leads = int((chiro_mask & in_submit_window).sum())
+        chiro_new_leads = int(
+            (chiro_mask & in_submit_window & in_create_window).sum()
+        )
+    else:
+        chiro_all_leads = 0
+        chiro_new_leads = 0
+
+    # --- FB spend by group within window ---
+    if not fb.empty and "date_start" in fb.columns:
+        fb_start = pd.to_datetime(
+            fb["date_start"], utc=True, errors="coerce"
+        ).dt.date
+        in_window = fb_start.between(start, end)
+        chiro_spend = float(
+            fb.loc[in_window & fb["group"].isin(["Chiro", "EMX"]), "spend"].sum()
+        )
+        theraray_spend = float(
+            fb.loc[in_window & (fb["group"] == "TheraRay"), "spend"].sum()
+        )
+    else:
+        chiro_spend = 0.0
+        theraray_spend = 0.0
+
+    # --- TheraRay submissions: list memberships in window ---
+    if not theraray_memberships.empty \
+            and "membership_timestamp" in theraray_memberships.columns:
+        ts_dt = pd.to_datetime(
+            theraray_memberships["membership_timestamp"], utc=True, errors="coerce"
+        ).dt.date
+        theraray_submissions = int(ts_dt.between(start, end).sum())
+    else:
+        theraray_submissions = 0
+
+    return {
+        "chiro_spend": chiro_spend,
+        "chiro_all_leads": chiro_all_leads,
+        "chiro_cpl_all": (chiro_spend / chiro_all_leads) if chiro_all_leads else None,
+        "chiro_new_leads": chiro_new_leads,
+        "chiro_cpl_new": (chiro_spend / chiro_new_leads) if chiro_new_leads else None,
+        "theraray_submissions": theraray_submissions,
+        "theraray_ad_spend": theraray_spend,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Weekly Metrics aggregator
 # ---------------------------------------------------------------------------
 from datetime import date, datetime, timedelta, timezone  # noqa: E402

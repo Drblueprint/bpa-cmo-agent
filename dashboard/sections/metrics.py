@@ -16,7 +16,7 @@ from dashboard.data.hubspot_loader import (
     load_contacts_by_ids,
 )
 from dashboard.data.hubspot_forms_loader import load_form_submissions
-from dashboard.data.reconcile import weekly_metrics
+from dashboard.data.reconcile import daily_va_summary, weekly_metrics
 
 
 def _week_ranges(weeks_back: int) -> list[tuple[date, date]]:
@@ -61,7 +61,143 @@ def _cents_money_metric_ids() -> set[str]:
     return {"chiro_cpc", "pt_cpc"}
 
 
+def _render_daily_summary() -> None:
+    """Top-of-tab section: MTD + Yesterday snapshot for the morning VA post.
+
+    Self-contained — loads its own data so it survives even if the weekly-
+    metrics block below fails. Hardcoded to month-to-date + yesterday since
+    that's the cadence the VA posts.
+    """
+    from dashboard.data.hubspot_loader import load_list_memberships
+
+    today = date.today()
+    month_start = today.replace(day=1)
+    yesterday = today - timedelta(days=1)
+
+    st.subheader("Daily Summary")
+    st.caption(
+        f"Month to Date ({month_start.strftime('%b %d')} – "
+        f"{today.strftime('%b %d, %Y')}) and yesterday "
+        f"({yesterday.strftime('%b %d, %Y')}). Built for the morning chat post."
+    )
+
+    # --- Data loaders ---
+    try:
+        fb_month = load_fb_insights(month_start, today)
+    except Exception as e:
+        st.warning(f"FB Ads unavailable: {e}")
+        fb_month = pd.DataFrame(columns=["group", "spend", "date_start"])
+    try:
+        contacts_month = load_marketing_contacts(month_start, today)
+    except Exception as e:
+        st.warning(f"HubSpot contacts unavailable: {e}")
+        contacts_month = pd.DataFrame()
+    try:
+        theraray = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
+    except Exception as e:
+        st.warning(f"TheraRay list memberships unavailable: {e}")
+        theraray = pd.DataFrame(columns=["contact_id", "membership_timestamp"])
+
+    mtd = daily_va_summary(
+        fb=fb_month, contacts=contacts_month, theraray_memberships=theraray,
+        start=month_start, end=today,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+    )
+    yday = daily_va_summary(
+        fb=fb_month, contacts=contacts_month, theraray_memberships=theraray,
+        start=yesterday, end=yesterday,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+    )
+
+    def _money(x) -> str:
+        return f"${x:,.2f}" if x else "$0.00"
+
+    def _money_or_dash(x) -> str:
+        return f"${x:,.2f}" if x else "—"
+
+    # --- Visual metric cards: side-by-side MTD vs Yesterday ---
+    col_mtd, col_yday = st.columns(2)
+    with col_mtd:
+        st.markdown(
+            f"**MTD · {month_start.strftime('%b %d')} – "
+            f"{today.strftime('%b %d')}**"
+        )
+        st.markdown("**Chiro**")
+        a, b = st.columns(2)
+        a.metric("Spend", _money(mtd["chiro_spend"]))
+        b.metric("All Leads", mtd["chiro_all_leads"])
+        c, d = st.columns(2)
+        c.metric("Cost / All Lead", _money_or_dash(mtd["chiro_cpl_all"]))
+        d.metric("New Leads", mtd["chiro_new_leads"],
+                 help="Subset of All Leads whose HubSpot contact was created "
+                      "during this window (we didn't have them before).")
+        e, _ = st.columns(2)
+        e.metric("Cost / New Lead", _money_or_dash(mtd["chiro_cpl_new"]))
+        st.markdown("**TheraRay**")
+        f, g = st.columns(2)
+        f.metric("Submissions", mtd["theraray_submissions"])
+        g.metric("Ad Spend", _money(mtd["theraray_ad_spend"]))
+
+    with col_yday:
+        st.markdown(f"**Yesterday · {yesterday.strftime('%b %d, %Y')}**")
+        st.markdown("**Chiro**")
+        a, b = st.columns(2)
+        a.metric("Spend", _money(yday["chiro_spend"]))
+        b.metric("All Leads", yday["chiro_all_leads"])
+        c, d = st.columns(2)
+        c.metric("Cost / All Lead", _money_or_dash(yday["chiro_cpl_all"]))
+        d.metric("New Leads", yday["chiro_new_leads"])
+        e, _ = st.columns(2)
+        e.metric("Cost / New Lead", _money_or_dash(yday["chiro_cpl_new"]))
+        st.markdown("**TheraRay**")
+        f, g = st.columns(2)
+        f.metric("Submissions", yday["theraray_submissions"])
+        g.metric("Ad Spend", _money(yday["theraray_ad_spend"]))
+
+    # --- Copy-pastable text block matching the VA's format ---
+    def _fmt_cpl(x) -> str:
+        return f"${x:,.2f}" if x else "N/A"
+
+    text = (
+        f"MTD Summary {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}\n\n"
+        f"Chiro\n"
+        f"Spend:  ${mtd['chiro_spend']:,.2f}\n"
+        f"All Leads:  {mtd['chiro_all_leads']}\n"
+        f"Cost / All Leads: {_fmt_cpl(mtd['chiro_cpl_all'])}\n"
+        f"New Leads: {mtd['chiro_new_leads']}\n"
+        f"Cost / New Lead: {_fmt_cpl(mtd['chiro_cpl_new'])}\n"
+        f"--------------------------------------------\n"
+        f"{yesterday.strftime('%b %d')}\n\n"
+        f"Chiro\n"
+        f"Spend:  ${yday['chiro_spend']:,.2f}\n"
+        f"All Leads: {yday['chiro_all_leads']}\n"
+        f"Cost / All Leads: {_fmt_cpl(yday['chiro_cpl_all'])}\n"
+        f"New Leads: {yday['chiro_new_leads']}\n"
+        f"Cost / New Lead: {_fmt_cpl(yday['chiro_cpl_new'])}\n"
+        f"--------------------------------------------\n\n"
+        f"TheraRay Submissions\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}      - "
+        f"{mtd['theraray_submissions']} submissions\n"
+        f"{yesterday.strftime('%b %d')}                    - "
+        f"{yday['theraray_submissions']} submission\n\n"
+        f"AD Spent\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}    - "
+        f"${mtd['theraray_ad_spend']:,.2f}\n"
+        f"{yesterday.strftime('%b %d')}                 - "
+        f"${yday['theraray_ad_spend']:,.2f}\n"
+    )
+    st.markdown("**Copy-pastable summary**")
+    st.caption("Click the copy icon in the top-right of the block.")
+    st.code(text, language="text")
+
+
 def render_metrics() -> None:
+    _render_daily_summary()
+    st.divider()
+
     floor_days = st.session_state.get("data_floor_days_back", 180)
     ranges = _week_ranges(cfg.METRICS_WEEKS_BACK)
     # ranges[0] = newest week, ranges[-1] = oldest week
