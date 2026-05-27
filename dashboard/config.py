@@ -187,6 +187,34 @@ GROUP_CASH_COLLECTED_PER_DEAL: dict[str, float] = {
 SDR_PAYROLL_MONTHLY: float | None = None
 SME_PAYROLL_MONTHLY: float | None = None
 
+# --- Sales team commissions per CLOSED deal (Dr. Gumm, 2026-05-22) ---
+# Only per-close commissions count toward CAC (activity payouts for showed-DC /
+# showed-strategy are intentionally excluded). See
+# docs/superpowers/specs/2026-05-22-cac-commission-model.md.
+
+# SDR close commission by lead temperature.
+# Warm = contact has typeform_asset_download populated (marketing opt-in).
+# Cold = no typeform (sales outreach / referral).
+SDR_CLOSE_COMMISSION: dict[str, float] = {"warm": 200.0, "cold": 400.0}
+
+# BDS commission — flat, every closed deal.
+BDS_CLOSE_COMMISSION: float = 300.0
+
+# SME commission per closed deal, by deal group.
+# Standard Chiro = $2000. PT / EMX (Event-Chiro) / MUDA (multi-location) = $1000.
+# MUDA has no detection signal yet (see spec) — multi-location Chiro deals will
+# currently bill at the Chiro $2000 rate until a flag is wired.
+SME_CLOSE_COMMISSION: dict[str, float] = {
+    "Chiro":       2000.0,
+    "PT Recovery": 1000.0,
+    "EMX":         1000.0,   # Event Chiro
+    "MUDA":        1000.0,   # multi-location (no auto-detect yet)
+    "_default":    1000.0,
+}
+
+# Flat per-close commission (Gerri).
+FLAT_CLOSE_COMMISSION: float = 25.0
+
 # --- Stale-data floor (configurable per session) ---
 # Default = 90 days. UI selector allows 120 and 180 for longer-cycle reviews.
 from datetime import date as _date, timedelta as _timedelta

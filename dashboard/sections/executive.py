@@ -22,6 +22,7 @@ from dashboard.data.reconcile import (
     executive_sme_rollup,
     build_closed_deals_table,
     compute_ytd_money,
+    compute_close_commissions,
 )
 
 
@@ -143,6 +144,32 @@ def render_executive(start: date, end: date) -> None:
     mkt_customers = ytd_money["mkt_new_customers"]
     marketing_cac = (ytd_total_ad_spend / mkt_customers) if mkt_customers else None
 
+    # YTD sales commissions (closed-deal only) for Blended CAC.
+    try:
+        ytd_deals_table = build_closed_deals_table(
+            deals_ytd, contact_deals_ytd, contacts_ytd,
+            asset_to_group=cfg.ASSET_TO_GROUP,
+            group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+            source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+            stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        )
+        commissions = compute_close_commissions(
+            ytd_deals_table,
+            sdr_close=cfg.SDR_CLOSE_COMMISSION,
+            bds_close=cfg.BDS_CLOSE_COMMISSION,
+            sme_close=cfg.SME_CLOSE_COMMISSION,
+            flat_close=cfg.FLAT_CLOSE_COMMISSION,
+        )
+    except Exception as e:
+        st.warning(f"Commission calc failed: {e}")
+        commissions = {"total": 0.0, "sdr_total": 0.0, "bds_total": 0.0,
+                       "sme_total": 0.0, "flat_total": 0.0, "n_deals": 0}
+
+    total_customers = ytd_money["total_new_customers"]
+    avg_commission = (commissions["total"] / total_customers) if total_customers else None
+    blended_cac = ((ytd_total_ad_spend + commissions["total"]) / total_customers) \
+        if total_customers else None
+
     kpis = executive_kpis(
         fb=fb, contacts=contacts, meetings=meetings,
         contact_deals=contact_deals, deals=deals,
@@ -218,7 +245,30 @@ def render_executive(start: date, end: date) -> None:
               _fmt_money(marketing_cac),
               help=f"YTD ad spend ({_fmt_money(ytd_total_ad_spend)}) ÷ "
                    f"marketing customers ({_fmt_int(mkt_customers)}). "
-                   f"Ad-only — sales team commissions/payouts not yet included.")
+                   f"Ad-only — sales team commissions/payouts not included here.")
+
+    # === CUSTOMER ACQUISITION COST ===
+    st.subheader("Customer Acquisition Cost — Year to Date")
+    st.caption(
+        "Blended CAC layers sales-team close commissions on top of ad spend. "
+        "Commissions are closed-deal only (SDR warm $200 / cold $400, BDS $300, "
+        "SME Chiro $2,000 · PT/EMX/MUDA $1,000, Gerri $25)."
+    )
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Marketing CAC (ad-only)", _fmt_money(marketing_cac),
+              help=f"YTD ad spend ÷ marketing customers ({_fmt_int(mkt_customers)}).")
+    k2.metric("Sales Commissions (YTD)", _fmt_money(commissions["total"]),
+              help=f"Total close commissions on {_fmt_int(commissions['n_deals'])} "
+                   f"closed deals. SDR {_fmt_money(commissions['sdr_total'])} · "
+                   f"BDS {_fmt_money(commissions['bds_total'])} · "
+                   f"SME {_fmt_money(commissions['sme_total'])} · "
+                   f"Gerri {_fmt_money(commissions['flat_total'])}.")
+    k3.metric("Avg Commission / Close", _fmt_money(avg_commission),
+              help=f"Commissions ÷ all closed customers ({_fmt_int(total_customers)}).")
+    k4.metric("Blended CAC", _fmt_money(blended_cac),
+              help=f"(YTD ad spend {_fmt_money(ytd_total_ad_spend)} + commissions "
+                   f"{_fmt_money(commissions['total'])}) ÷ all customers "
+                   f"({_fmt_int(total_customers)}). Excludes fixed payroll.")
 
     st.divider()
 

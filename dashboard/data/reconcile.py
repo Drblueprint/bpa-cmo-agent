@@ -2009,3 +2009,60 @@ def compute_ytd_money(
         "mkt_new_customers": marketing["new_customers"],
         "mkt_sales_cycle_median": marketing["sales_cycle_median"],
     }
+
+
+def compute_close_commissions(
+    deals_table: pd.DataFrame,
+    *,
+    sdr_close: dict,
+    bds_close: float,
+    sme_close: dict,
+    flat_close: float,
+) -> dict:
+    """Sum per-closed-deal sales commissions across a closed-deals table.
+
+    Expects the output of build_closed_deals_table (columns: typeform, group,
+    sdr_owner, ...). Per-close commission rules (Dr. Gumm, 2026-05-22):
+
+    - SDR: warm $200 / cold $400. Warm = 'typeform' column non-empty (contact
+      had a marketing opt-in). Only billed when an SDR is assigned.
+    - BDS: flat bds_close on every closed deal.
+    - SME: sme_close[group], default sme_close['_default']. Chiro=$2000;
+      PT/EMX/MUDA=$1000.
+    - Flat (Gerri): flat_close on every closed deal.
+
+    Returns dict: total, sdr_total, bds_total, sme_total, flat_total, n_deals.
+    """
+    keys = ["total", "sdr_total", "bds_total", "sme_total", "flat_total", "n_deals"]
+    if deals_table is None or deals_table.empty:
+        return {k: 0.0 for k in keys[:-1]} | {"n_deals": 0}
+
+    df = deals_table
+    n = int(len(df))
+
+    typeform_col = df["typeform"] if "typeform" in df.columns else pd.Series([""] * n, index=df.index)
+    warm = typeform_col.fillna("").astype(str).str.strip() != ""
+    sdr_col = df["sdr_owner"] if "sdr_owner" in df.columns else pd.Series([""] * n, index=df.index)
+    has_sdr = sdr_col.fillna("").astype(str).str.strip() != ""
+
+    sdr_amt = warm.map(lambda w: sdr_close["warm"] if w else sdr_close["cold"])
+    sdr_amt = sdr_amt.where(has_sdr, 0.0)
+
+    bds_total = float(bds_close) * n
+
+    group_col = df["group"] if "group" in df.columns else pd.Series([None] * n, index=df.index)
+    default_sme = float(sme_close.get("_default", 0.0))
+    sme_amt = group_col.map(lambda g: float(sme_close.get(g, default_sme)))
+
+    flat_total = float(flat_close) * n
+
+    sdr_total = float(sdr_amt.sum())
+    sme_total = float(sme_amt.sum())
+    return {
+        "sdr_total": sdr_total,
+        "bds_total": bds_total,
+        "sme_total": sme_total,
+        "flat_total": flat_total,
+        "total": sdr_total + bds_total + sme_total + flat_total,
+        "n_deals": n,
+    }
