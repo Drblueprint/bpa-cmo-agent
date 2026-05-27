@@ -68,6 +68,27 @@ def test_unknown_group_uses_default():
     assert out["sme_total"] == 1000.0  # _default
 
 
+def test_muda_overrides_chiro_rate():
+    # MUDA send_contract bills SME at $1000 even though group is Chiro ($2000).
+    table = pd.DataFrame([
+        {"typeform": "x", "group": "Chiro", "sdr_owner": "1",
+         "send_contract": "MUDA - CHIRO (Multi Unit Discount Agreement)"},
+    ])
+    out = _calc(table)
+    assert out["sme_total"] == 1000.0  # MUDA, not Chiro $2000
+    # warm 200 + bds 300 + sme 1000 + gerri 25
+    assert out["total"] == 1525.0
+
+
+def test_non_muda_chiro_keeps_2000():
+    table = pd.DataFrame([
+        {"typeform": "x", "group": "Chiro", "sdr_owner": "1",
+         "send_contract": "24 Month CHIRO - Solo"},
+    ])
+    out = _calc(table)
+    assert out["sme_total"] == 2000.0
+
+
 def test_multi_deal_totals():
     table = pd.DataFrame([
         {"typeform": "Top 10 typeform", "group": "Chiro", "sdr_owner": "1"},  # 2525

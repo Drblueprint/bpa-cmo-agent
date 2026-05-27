@@ -26,10 +26,10 @@ are NOT counted toward CAC. Only per-close commissions.
   first, then asset map). Chiro=$2000; PT Recovery / EMX / MUDA = $1000;
   unknown group defaults to $1000.
 - **Event Chiro** = EMX group (already mapped). → $1,000.
-- **MUDA** = multi-location deal. **GAP:** no HubSpot signal identified yet.
-  MUDA deals currently fall into their group (likely Chiro → $2000) and would
-  over-count by $1000. TODO: add a `contract_tier` token or HubSpot field to
-  flag multi-location, then route to $1000.
+- **MUDA** = multi-location deal. Detected via the `send_contract_options`
+  HubSpot contact property = `MUDA - CHIRO (Multi Unit Discount Agreement)`
+  (matched on the "MUDA" substring, case-insensitive). MUDA closes bill SME at
+  $1,000 regardless of group. RESOLVED 2026-05-22.
 
 ## CAC outputs (Executive, YTD)
 1. **Marketing CAC (ad-only)** = YTD ad spend ÷ marketing customers. (existing)

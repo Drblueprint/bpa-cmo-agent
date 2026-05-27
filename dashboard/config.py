@@ -17,6 +17,10 @@ HS_PROP_UTM_SOURCE = "utm_source"
 HS_PROP_15MIN_CALL_DATE = "n15_min_call_date"  # confirmed via probe on 2026-05-15; label: "15 Min Call Date", type=date
 HS_PROP_LIFECYCLE_STAGE = "lifecyclestage"  # HubSpot standard property
 HS_PROP_CONTRACT_TIER = "contract_tier"  # BPA plan/tier (PRIMARY, FULL, 90-DAY, DIY, etc.)
+HS_PROP_SEND_CONTRACT_OPTIONS = "send_contract_options"  # enum; MUDA detection lives here
+# Substring that identifies a MUDA (Multi Unit Discount Agreement) deal in the
+# send_contract_options value 'MUDA - CHIRO (Multi Unit Discount Agreement)'.
+SEND_CONTRACT_MUDA_TOKEN = "MUDA"
 HS_PROP_TYPEFORM_SUBMISSION_DATE = "typeform_submission_date"  # datetime; HubSpot confirms via probe
 HS_LIFECYCLE_MQL_VALUE = "marketingqualifiedlead"  # confirmed via probe on 2026-05-15
 

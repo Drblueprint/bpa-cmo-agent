@@ -69,7 +69,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "phone", "mobilephone",
             cfg.HS_PROP_WEBINAR_REG_DATE, cfg.HS_PROP_WEBINAR_COMPLETED_DATE,
             cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
-            cfg.HS_PROP_CONTRACT_TIER,
+            cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
         ],
         "limit": 100,
     }
@@ -107,6 +107,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
             "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
             "contract_tier": p.get(cfg.HS_PROP_CONTRACT_TIER),
+            "send_contract_options": p.get(cfg.HS_PROP_SEND_CONTRACT_OPTIONS),
         })
     return pd.DataFrame(rows, columns=[
         "hs_id", "name", "email", "created",
@@ -116,7 +117,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
         "phone", "mobilephone",
         "webinar_registration_date", "webinar_completed_date",
         "pt_webinar_registration_date", "pt_webinar_completed_date",
-        "contract_tier",
+        "contract_tier", "send_contract_options",
     ])
 
 
@@ -364,7 +365,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
         "phone", "mobilephone",
         "webinar_registration_date", "webinar_completed_date",
         "pt_webinar_registration_date", "pt_webinar_completed_date",
-        "contract_tier",
+        "contract_tier", "send_contract_options",
     ]
     if not contact_ids:
         return pd.DataFrame(columns=cols)
@@ -426,6 +427,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
                 "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
                 "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
                 "contract_tier": p.get(cfg.HS_PROP_CONTRACT_TIER),
+            "send_contract_options": p.get(cfg.HS_PROP_SEND_CONTRACT_OPTIONS),
             })
 
     return pd.DataFrame(rows, columns=cols)
@@ -598,7 +600,7 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
         "phone", "mobilephone",
         "webinar_registration_date", "webinar_completed_date",
         "pt_webinar_registration_date", "pt_webinar_completed_date",
-        "contract_tier",
+        "contract_tier", "send_contract_options",
     ]
     if not campaign_ids:
         return pd.DataFrame(columns=cols)
@@ -628,7 +630,7 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
             "phone", "mobilephone",
             cfg.HS_PROP_WEBINAR_REG_DATE, cfg.HS_PROP_WEBINAR_COMPLETED_DATE,
             cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
-            cfg.HS_PROP_CONTRACT_TIER,
+            cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
         ],
         "limit": 100,
     }
@@ -664,6 +666,7 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
             "pt_webinar_registration_date": p.get(cfg.HS_PROP_PT_WEBINAR_REG_DATE),
             "pt_webinar_completed_date": p.get(cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE),
             "contract_tier": p.get(cfg.HS_PROP_CONTRACT_TIER),
+            "send_contract_options": p.get(cfg.HS_PROP_SEND_CONTRACT_OPTIONS),
         })
     return pd.DataFrame(rows, columns=cols)
 

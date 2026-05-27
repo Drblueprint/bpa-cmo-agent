@@ -1842,7 +1842,7 @@ def build_closed_deals_table(
     sales_cycle_days (typeform_submission to closedate), sdr_owner, bds, sme.
     """
     cols = ["hs_id", "contact_name", "email", "typeform", "group", "asset", "source",
-            "tier", "is_marketing", "closedate", "deal_amount",
+            "tier", "send_contract", "is_marketing", "closedate", "deal_amount",
             "sales_cycle_days", "sdr_owner", "bds", "sme"]
     if deals.empty or contact_deals.empty or contacts.empty:
         return pd.DataFrame(columns=cols)
@@ -1944,6 +1944,7 @@ def build_closed_deals_table(
             "asset": asset or source,  # show source label when no typeform
             "source": source,
             "tier": tier_val,
+            "send_contract": primary_contact.get("send_contract_options") or "",
             "is_marketing": bool(is_marketing),
             "closedate": (deal.get("closedate") or deal.get("createdate")),
             "deal_amount": effective_amt,
@@ -2053,6 +2054,13 @@ def compute_close_commissions(
     group_col = df["group"] if "group" in df.columns else pd.Series([None] * n, index=df.index)
     default_sme = float(sme_close.get("_default", 0.0))
     sme_amt = group_col.map(lambda g: float(sme_close.get(g, default_sme)))
+    # MUDA override: 'send_contract' containing "MUDA" (multi-unit discount
+    # agreement) bills at the MUDA SME rate regardless of group (group is
+    # usually Chiro for these). See send_contract_options HubSpot property.
+    if "send_contract" in df.columns:
+        muda_rate = float(sme_close.get("MUDA", default_sme))
+        is_muda = df["send_contract"].fillna("").astype(str).str.contains("MUDA", case=False)
+        sme_amt = sme_amt.where(~is_muda, muda_rate)
 
     flat_total = float(flat_close) * n
 
