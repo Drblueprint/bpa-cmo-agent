@@ -51,14 +51,8 @@ def _fmt_days(x) -> str:
 
 def render_executive(start: date, end: date) -> None:
     floor_days = st.session_state.get("data_floor_days_back", 180)
-    # --- Group filter (inside the tab, not global) ---
-    group_filter = st.radio(
-        "Group",
-        ["All", "Chiro", "PT Recovery", "TheraRay", "EMX"],
-        horizontal=True,
-        key="executive_group_filter",
-    )
-    st.divider()
+    # Group filter removed per Dr. Gumm — Executive is always "All sources".
+    group_filter = "All"
 
     # --- Load data (try/except per source) ---
     try:
@@ -160,20 +154,16 @@ def render_executive(start: date, end: date) -> None:
         sme_payroll_monthly=cfg.SME_PAYROLL_MONTHLY,
     )
 
-    # === ROW 1 — INPUTS ===
-    st.subheader("Inputs")
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # === ROW 1 — top KPIs (mirrors MARKETING tab) ===
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Ad Spend", _fmt_money(kpis["total_ad_spend"]))
-    c2.metric("New Leads", _fmt_int(kpis["new_leads"]),
-              help="Marketing-attributed contacts with typeform submitted in window. "
-                   "FB lead count is used as a fallback for groups that don't use a typeform.")
-    c3.metric("Engaged Leads (MQL+)", _fmt_int(kpis["engaged_leads"]),
-              help="Leads whose HubSpot lifecycle stage has reached "
-                   "Marketing Qualified Lead or beyond.")
-    c4.metric("CPL", _fmt_money(kpis["cpl"]), help="Spend / New Leads")
-    c5.metric("Cost / Engaged Lead", _fmt_money(kpis["cost_per_engaged_lead"]),
-              help="Spend / Engaged Leads. Hormozi prefers this over raw CPL "
-                   "because it weights for quality.")
+    c2.metric("Marketing Leads", _fmt_int(kpis["new_leads"]),
+              help="HubSpot contacts whose typeform was submitted in the window. "
+                   "Falls back to FB lead count for groups that don't use a "
+                   "typeform (e.g., TheraRay).")
+    c3.metric("CPL", _fmt_money(kpis["cpl"]), help="Spend / Marketing Leads")
+    c4.metric("15-min Calls Booked", _fmt_int(kpis["discovery_booked"]),
+              help="15-min discovery meetings booked in the window.")
 
     st.divider()
 

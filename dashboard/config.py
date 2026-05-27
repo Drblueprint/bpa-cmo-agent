@@ -145,6 +145,7 @@ HS_OWNER_NAMES: dict[str, str] = {
     "1266266951": "Self Booking",   # Kurt Kleinpeter — leads who self-booked
     "337212494": "Dylan Dault (former BDS)",
     "78947719": "Gage Humbarger (former SDR)",
+    "56929167": "Dr. Michael McCracken (former)",
 }
 
 
