@@ -253,7 +253,10 @@ def render_sales(start: date, end: date) -> None:
                 expanded=False,
             ):
                 st.dataframe(
-                    cfg.style_unassigned(out, columns=["SDR", "BDS", "Asset", "Group"]),
+                    cfg.style_unassigned(
+                        out, columns=["SDR", "BDS", "Asset", "Group"],
+                        green_when=lambda r: bool(r.get("Closed-Won")),
+                    ),
                     use_container_width=True, hide_index=True,
                     column_config={
                         "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
@@ -610,7 +613,13 @@ def render_sales(start: date, end: date) -> None:
         ).reset_index(drop=True)
         with st.expander(f"SDR Lead Detail — {len(_sdr_det)} leads with activity", expanded=False):
             st.dataframe(
-                cfg.style_unassigned(_sdr_det, columns=["SDR", "Asset", "15-min Status"]),
+                cfg.style_unassigned(
+                    _sdr_det,
+                    columns=["SDR", "Asset", "15-min Status"],
+                    # Green = has a 15-min appointment on record (not just "Not Booked")
+                    green_when=lambda r: str(r.get("15-min Status", "")).strip()
+                                          not in ("", "Not Booked"),
+                ),
                 use_container_width=True, hide_index=True,
                 column_config={
                     "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
@@ -684,7 +693,11 @@ def render_sales(start: date, end: date) -> None:
         _bds_det = _bds_det.sort_values("15-min When (CT)", ascending=False).reset_index(drop=True)
         with st.expander(f"BDS Meeting Detail — {len(_bds_det)} 15-min meetings", expanded=False):
             st.dataframe(
-                cfg.style_unassigned(_bds_det, columns=["BDS", "Asset"]),
+                cfg.style_unassigned(
+                    _bds_det, columns=["BDS", "Asset"],
+                    # Green = held the 15-min (outcome starts with COMPLETE)
+                    green_when=lambda r: str(r.get("15-min Outcome", "")).upper().startswith("COMPLETE"),
+                ),
                 use_container_width=True, hide_index=True,
                 column_config={
                     "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
@@ -788,7 +801,11 @@ def render_sales(start: date, end: date) -> None:
         _sme_det = _sme_det.sort_values("Strategy When (CT)", ascending=False).reset_index(drop=True)
         with st.expander(f"SME Meeting Detail — {len(_sme_det)} Strategy meetings", expanded=False):
             st.dataframe(
-                cfg.style_unassigned(_sme_det, columns=["SME", "Asset"]),
+                cfg.style_unassigned(
+                    _sme_det, columns=["SME", "Asset"],
+                    # Green = closed-won (the goal)
+                    green_when=lambda r: str(r.get("Deal Status", "")) == "Closed-Won",
+                ),
                 use_container_width=True, hide_index=True,
                 column_config={
                     "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),

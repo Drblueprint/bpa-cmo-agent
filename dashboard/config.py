@@ -281,23 +281,32 @@ def is_unassigned_value(v) -> bool:
     return False
 
 
-def style_unassigned(df, columns: list | None = None):
-    """Return a pandas Styler that paints unassigned/unknown cells red.
+def style_unassigned(df, columns: list | None = None,
+                     green_when=None):
+    """Return a pandas Styler that paints attribution problems.
 
-    Pass columns=[...] to restrict the check to specific columns (usually
-    owner / source / asset columns). When omitted, every cell is checked.
-    Safe to pass to st.dataframe() alongside column_config — Streamlit
-    preserves LinkColumn / CheckboxColumn rendering on top of Styler CSS.
+    - columns: list of column names to check for unassigned/unknown values
+      (rendered red + bold). When omitted, every column is checked.
+    - green_when: optional callable(row) -> bool. Rows where it returns True
+      get a light-green background (#d1fae5) — used to highlight rows with
+      a booked appointment, an active deal, etc.
+
+    Uses Styler.apply(axis=1) for broad pandas compatibility (Styler.map was
+    added in pandas 2.1, so older Streamlit Cloud installs miss it).
     """
-    def _color(v):
-        return "color: #d62728; font-weight: 600" if is_unassigned_value(v) else ""
-    styler = df.style
-    if columns:
-        existing = [c for c in columns if c in df.columns]
-        if not existing:
-            return styler
-        return styler.map(_color, subset=existing)
-    return styler.map(_color)
+    red_cols = set(columns) if columns else set(df.columns)
+
+    def _row_styles(row):
+        green = bool(green_when and green_when(row))
+        cells = []
+        for col in row.index:
+            css = "background-color: #d1fae5; " if green else ""
+            if col in red_cols and is_unassigned_value(row[col]):
+                css += "color: #d62728; font-weight: 600"
+            cells.append(css)
+        return cells
+
+    return df.style.apply(_row_styles, axis=1)
 
 
 def format_ct_series(series, fmt: str = DEFAULT_DATETIME_FORMAT):

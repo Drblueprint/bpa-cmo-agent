@@ -471,9 +471,12 @@ def render_executive(start: date, end: date) -> None:
             f"{self_booked_n} self-booked"
         )
         st.dataframe(
-            cfg.style_unassigned(detail,
-                                  columns=["SDR", "BDS", "Asset", "Group",
-                                           "15-min Status"]),
+            cfg.style_unassigned(
+                detail,
+                columns=["SDR", "BDS", "Asset", "Group", "15-min Status"],
+                green_when=lambda r: str(r.get("15-min Status", "")).strip()
+                                      not in ("", "Not Booked"),
+            ),
             use_container_width=True, hide_index=True,
             column_config={
                 "Open": st.column_config.LinkColumn(
