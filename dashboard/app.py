@@ -13,7 +13,6 @@ import streamlit as st
 
 from dashboard.auth import require_password
 from dashboard.sections.executive import render_executive
-from dashboard.sections.marketing import render_marketing
 from dashboard.sections.metrics import render_metrics
 from dashboard.sections.sales import render_sales
 
@@ -88,14 +87,11 @@ else:
 st.caption(f"Window: {start_date} → {end_date}")
 
 # --- Tabs ---
-tab_executive, tab_marketing, tab_sales, tab_metrics = st.tabs(
-    ["EXECUTIVE", "MARKETING", "SALES", "METRICS"])
+tab_executive, tab_sales, tab_metrics = st.tabs(
+    ["EXECUTIVE", "SALES", "METRICS"])
 
 with tab_executive:
     render_executive(start_date, end_date)
-
-with tab_marketing:
-    render_marketing(start_date, end_date)
 
 with tab_sales:
     render_sales(start_date, end_date)
