@@ -281,6 +281,46 @@ def render_executive(start: date, end: date) -> None:
               delta_color="off",
               help="Closed-won deals ÷ Strategy meetings completed.")
 
+    # Per-group breakdown of the 5 conversion rates (cells show rate · numerator/denominator)
+    try:
+        groups_seen = list(group_metrics["group"]) if 'group_metrics' in locals() and not group_metrics.empty else []
+        # Stable order, drop empty/None
+        preferred = ["Chiro", "EMX", "PT Recovery", "TheraRay"]
+        groups_to_show = [g for g in preferred if g in groups_seen] + \
+                          [g for g in groups_seen if g not in preferred and g]
+
+        def _cell(rate, num, den):
+            if rate is None or den in (0, None):
+                return f"— ({num}/{den or 0})"
+            return f"{rate*100:.0f}% ({num}/{den})"
+
+        conv_rows = []
+        for g in groups_to_show:
+            kg = executive_kpis(
+                fb=fb, contacts=contacts, meetings=meetings,
+                contact_deals=contact_deals, deals=deals,
+                group_filter=g,
+                asset_to_group=cfg.ASSET_TO_GROUP,
+                group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+                stages_closed_won=cfg.STAGES_CLOSED_WON,
+                sdr_payroll_monthly=cfg.SDR_PAYROLL_MONTHLY,
+                sme_payroll_monthly=cfg.SME_PAYROLL_MONTHLY,
+            )
+            conv_rows.append({
+                "Group": g,
+                "Leads": kg["new_leads"],
+                "Schedule %": _cell(kg["schedule_rate"], kg["discovery_booked"], kg["new_leads"]),
+                "Discovery Show %": _cell(kg["discovery_show_rate"], kg["discovery_held"], kg["discovery_booked"]),
+                "Disco → SME Set %": _cell(kg["sme_set_rate"], kg["sme_booked"], kg["discovery_held"]),
+                "SME Show %": _cell(kg["sme_show_rate"], kg["sme_held"], kg["sme_booked"]),
+                "Close %": _cell(kg["close_rate"], kg["closed_won"], kg["sme_held"]),
+            })
+        if conv_rows:
+            with st.expander("Conversions by group", expanded=True):
+                st.dataframe(pd.DataFrame(conv_rows), use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"Conversion breakdown unavailable: {e}")
+
     st.divider()
 
     # === MONEY — YEAR TO DATE ===
