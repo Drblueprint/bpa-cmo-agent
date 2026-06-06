@@ -543,13 +543,18 @@ def render_sales(start: date, end: date) -> None:
             _strw_outcome = dict(zip(_smw["contact_id"], _smw["outcome"].fillna("").str.upper()))
             _strw_when = dict(zip(_smw["contact_id"], _smw["start_time"]))
 
-    # Team-and-customer exclusion set for all detail tables
+    # Team-and-customer exclusion set for all detail tables.
+    # Customer signal: lifecycle_stage == "customer" OR contract_tier set
+    # (backup signal — catches customers whose lifecycle wasn't promoted).
     _excl_cids: set = set()
     if not marketing.empty:
         for _, _c in marketing.iterrows():
             _email = (_c.get("email") or "").lower()
-            _lc = (_c.get("lifecycle_stage") or "").lower()
-            if cfg.is_internal_team_contact(_email) or _lc == "customer":
+            if cfg.is_internal_team_contact(_email):
+                _excl_cids.add(str(_c.get("hs_id")))
+                continue
+            if cfg.is_existing_customer(_c.get("lifecycle_stage"),
+                                         _c.get("contract_tier")):
                 _excl_cids.add(str(_c.get("hs_id")))
 
     # Deal stage flags per contact

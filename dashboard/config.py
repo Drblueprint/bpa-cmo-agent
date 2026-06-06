@@ -465,6 +465,22 @@ def is_internal_team_contact(email: str | None) -> bool:
     e = str(email).strip().lower()
     return any(e.endswith(d) for d in INTERNAL_TEAM_EMAIL_DOMAINS)
 
+
+def is_existing_customer(lifecycle_stage: str | None,
+                          contract_tier: str | None) -> bool:
+    """True when a contact is already a BPA customer.
+
+    Primary signal: HubSpot lifecycle_stage == "customer".
+    Backup signal: contract_tier is populated (any value) — catches
+    customers whose lifecycle wasn't promoted to "customer" but who have
+    a contract recorded against them.
+    """
+    if lifecycle_stage and str(lifecycle_stage).strip().lower() == "customer":
+        return True
+    if contract_tier and str(contract_tier).strip():
+        return True
+    return False
+
 CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
     # Sales outreach (not marketing)
     "drjoehuffman@gmail.com":          ("VEMX Cold Outreach", "Chiro", False),
