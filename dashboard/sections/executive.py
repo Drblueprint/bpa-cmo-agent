@@ -471,7 +471,10 @@ def render_executive(start: date, end: date) -> None:
             f"{self_booked_n} self-booked"
         )
         st.dataframe(
-            detail, use_container_width=True, hide_index=True,
+            cfg.style_unassigned(detail,
+                                  columns=["SDR", "BDS", "Asset", "Group",
+                                           "15-min Status"]),
+            use_container_width=True, hide_index=True,
             column_config={
                 "Open": st.column_config.LinkColumn(
                     "Open", help="Open contact in HubSpot",
@@ -507,7 +510,10 @@ def render_executive(start: date, end: date) -> None:
                 "strategy_held": "Strategy Held",
                 "show_rate": "Show %",
             })
-            st.dataframe(bds_display, use_container_width=True, hide_index=True)
+            st.dataframe(
+                cfg.style_unassigned(bds_display, columns=["BDS"]),
+                use_container_width=True, hide_index=True,
+            )
 
     with col_sme:
         st.subheader("SME Performance")
@@ -535,7 +541,10 @@ def render_executive(start: date, end: date) -> None:
                 "revenue": "Revenue",
                 "revenue_per_call": "Revenue / Call",
             })
-            st.dataframe(sme_display, use_container_width=True, hide_index=True)
+            st.dataframe(
+                cfg.style_unassigned(sme_display, columns=["SME"]),
+                use_container_width=True, hide_index=True,
+            )
 
     # =============================================================
     # Per-call detail tables — every 15-min and Strategy call with
@@ -596,7 +605,7 @@ def render_executive(start: date, end: date) -> None:
                 "scheduled_ct": "Scheduled (CT)",
             }).sort_values(["BDS", "Scheduled (CT)"], ascending=[True, False])
             st.dataframe(
-                fifteen_view,
+                cfg.style_unassigned(fifteen_view, columns=["BDS", "Asset", "Outcome"]),
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -630,7 +639,7 @@ def render_executive(start: date, end: date) -> None:
                 "scheduled_ct": "Scheduled (CT)",
             }).sort_values(["SME", "Scheduled (CT)"], ascending=[True, False])
             st.dataframe(
-                strategy_view,
+                cfg.style_unassigned(strategy_view, columns=["SME", "Asset", "Outcome"]),
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -713,7 +722,10 @@ def render_executive(start: date, end: date) -> None:
             else:
                 st.caption(f"Showing {total_in_view} closed deal(s) total.")
         st.dataframe(
-            display, use_container_width=True, hide_index=True,
+            cfg.style_unassigned(display,
+                                  columns=["SDR", "BDS", "SME", "Group",
+                                           "Plan", "Source", "Typeform"]),
+            use_container_width=True, hide_index=True,
             column_config={
                 "Open": st.column_config.LinkColumn(
                     "Open", help="Open contact in HubSpot",

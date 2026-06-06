@@ -259,6 +259,47 @@ DEFAULT_DATETIME_FORMAT = "%m/%d/%Y %I:%M %p"
 DEFAULT_DATE_FORMAT = "%m/%d/%Y"
 
 
+def is_unassigned_value(v) -> bool:
+    """Return True for cells that represent missing/unknown attribution:
+    None / NaN / empty / "(unassigned)" / anything ending in "(unknown)" /
+    "(unattributed)". Used by style_unassigned() to flag rows in red."""
+    if v is None:
+        return True
+    import pandas as _pd
+    try:
+        if _pd.isna(v):
+            return True
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    if not s:
+        return True
+    if s == "(unassigned)" or s == "(unattributed)":
+        return True
+    if s.endswith("(unknown)"):
+        return True
+    return False
+
+
+def style_unassigned(df, columns: list | None = None):
+    """Return a pandas Styler that paints unassigned/unknown cells red.
+
+    Pass columns=[...] to restrict the check to specific columns (usually
+    owner / source / asset columns). When omitted, every cell is checked.
+    Safe to pass to st.dataframe() alongside column_config — Streamlit
+    preserves LinkColumn / CheckboxColumn rendering on top of Styler CSS.
+    """
+    def _color(v):
+        return "color: #d62728; font-weight: 600" if is_unassigned_value(v) else ""
+    styler = df.style
+    if columns:
+        existing = [c for c in columns if c in df.columns]
+        if not existing:
+            return styler
+        return styler.map(_color, subset=existing)
+    return styler.map(_color)
+
+
 def format_ct_series(series, fmt: str = DEFAULT_DATETIME_FORMAT):
     """Convert a UTC timestamp series to America/Chicago and format.
 

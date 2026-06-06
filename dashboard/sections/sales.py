@@ -480,7 +480,8 @@ def render_sales(start: date, end: date) -> None:
         ).reset_index(drop=True)
         with st.expander(f"SDR Lead Detail — {len(_sdr_det)} leads with activity", expanded=False):
             st.dataframe(
-                _sdr_det, use_container_width=True, hide_index=True,
+                cfg.style_unassigned(_sdr_det, columns=["SDR", "Asset", "15-min Status"]),
+                use_container_width=True, hide_index=True,
                 column_config={
                     "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
                     "Self Booked": st.column_config.CheckboxColumn("Self Booked"),
@@ -521,7 +522,10 @@ def render_sales(start: date, end: date) -> None:
             "booking_rate": "Booking %",
             "dq_rate": "DQ %",
         })
-        st.dataframe(display, use_container_width=True, hide_index=True)
+        st.dataframe(
+            cfg.style_unassigned(display, columns=["BDS"]),
+            use_container_width=True, hide_index=True,
+        )
 
     # BDS Meeting Detail — every contact with a 15-min meeting in window
     bds_rows = []
@@ -550,7 +554,8 @@ def render_sales(start: date, end: date) -> None:
         _bds_det = _bds_det.sort_values("15-min When (CT)", ascending=False).reset_index(drop=True)
         with st.expander(f"BDS Meeting Detail — {len(_bds_det)} 15-min meetings", expanded=False):
             st.dataframe(
-                _bds_det, use_container_width=True, hide_index=True,
+                cfg.style_unassigned(_bds_det, columns=["BDS", "Asset"]),
+                use_container_width=True, hide_index=True,
                 column_config={
                     "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
                     "SME Booked After?": st.column_config.CheckboxColumn("SME Booked After?"),
@@ -608,7 +613,10 @@ def render_sales(start: date, end: date) -> None:
             "dq_rate": "DQ %",
             "revenue": "Revenue",
         })
-        st.dataframe(display, use_container_width=True, hide_index=True)
+        st.dataframe(
+            cfg.style_unassigned(display, columns=["SME"]),
+            use_container_width=True, hide_index=True,
+        )
 
     # SME Meeting Detail — every contact with a Strategy meeting in window
     sme_rows = []
@@ -650,7 +658,8 @@ def render_sales(start: date, end: date) -> None:
         _sme_det = _sme_det.sort_values("Strategy When (CT)", ascending=False).reset_index(drop=True)
         with st.expander(f"SME Meeting Detail — {len(_sme_det)} Strategy meetings", expanded=False):
             st.dataframe(
-                _sme_det, use_container_width=True, hide_index=True,
+                cfg.style_unassigned(_sme_det, columns=["SME", "Asset"]),
+                use_container_width=True, hide_index=True,
                 column_config={
                     "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
                 },
@@ -797,7 +806,8 @@ def render_sales(start: date, end: date) -> None:
         "amount": "Deal $",
     })
     st.dataframe(
-        detail,
+        cfg.style_unassigned(detail,
+                              columns=["SDR Owner", "BDS", "Asset", "Current Stage"]),
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -876,7 +886,10 @@ def render_sales(start: date, end: date) -> None:
             else:
                 st.caption(f"Showing {total_in_view} closed deal(s) total.")
         st.dataframe(
-            display_ytd, use_container_width=True, hide_index=True,
+            cfg.style_unassigned(display_ytd,
+                                  columns=["SDR", "BDS", "SME", "Group",
+                                           "Plan", "Source", "Typeform"]),
+            use_container_width=True, hide_index=True,
             column_config={
                 "Open": st.column_config.LinkColumn(
                     "Open", help="Open contact in HubSpot",
