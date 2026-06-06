@@ -211,6 +211,63 @@ def render_sales(start: date, end: date) -> None:
         help="All Strategy meetings held in window, regardless of source.",
     )
 
+    # Pipeline KPI verification — every deal in window with stage flags
+    if not deals.empty and not contact_deals.empty:
+        try:
+            cd_join = contact_deals.merge(
+                deals[["deal_id", "dealstage", "amount", "createdate", "closedate"]],
+                on="deal_id", how="left",
+            )
+            cd_join["contact_id"] = cd_join["contact_id"].astype(str)
+            c_lite_cols = ["hs_id", "name", "email", "typeform_asset_download", "sdr_owner", "bds"]
+            existing_cols = [c for c in c_lite_cols if c in marketing.columns]
+            c_lite = marketing[existing_cols].copy()
+            c_lite["hs_id"] = c_lite["hs_id"].astype(str)
+            pdf = cd_join.merge(c_lite, left_on="contact_id", right_on="hs_id", how="left")
+            pdf["15-min Booked"] = pdf["dealstage"].isin(stages["15min_booked"])
+            pdf["15-min Held"]   = pdf["dealstage"].isin(stages["15min_held"])
+            pdf["Strategy Booked"] = pdf["dealstage"].isin(stages["strategy_booked"])
+            pdf["Strategy Held"]   = pdf["dealstage"].isin(stages["strategy_held"])
+            pdf["Closed-Won"]      = pdf["dealstage"].isin(stages["closedwon"])
+            pdf["Marketing?"]      = pdf["typeform_asset_download"].fillna("") \
+                                        .astype(str).str.strip() != ""
+            pdf["Open"]            = pdf["contact_id"].apply(cfg.hubspot_contact_url)
+            pdf["Asset"]           = pdf["typeform_asset_download"].fillna("")
+            pdf["Group"]           = pdf["Asset"].map(cfg.ASSET_TO_GROUP).fillna("")
+            pdf["SDR"]             = pdf["sdr_owner"].map(cfg.resolve_owner) if "sdr_owner" in pdf.columns else "(unassigned)"
+            pdf["BDS"]             = pdf["bds"].map(cfg.resolve_owner) if "bds" in pdf.columns else "(unassigned)"
+            out = pdf[["Open", "name", "email", "SDR", "BDS",
+                       "Asset", "Group", "Marketing?", "dealstage",
+                       "15-min Booked", "15-min Held",
+                       "Strategy Booked", "Strategy Held", "Closed-Won"]] \
+                 .rename(columns={"name": "Contact", "email": "Email",
+                                  "dealstage": "Stage ID"})
+            # Sort: most-advanced stage first, then marketing flag
+            out = out.sort_values(
+                ["Closed-Won", "Strategy Held", "Strategy Booked",
+                 "15-min Held", "15-min Booked", "Marketing?"],
+                ascending=False,
+            ).reset_index(drop=True)
+            with st.expander(
+                f"Pipeline detail — {len(out)} deal/contact rows in window",
+                expanded=False,
+            ):
+                st.dataframe(
+                    cfg.style_unassigned(out, columns=["SDR", "BDS", "Asset", "Group"]),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
+                        "Marketing?": st.column_config.CheckboxColumn("Mkt?"),
+                        "15-min Booked": st.column_config.CheckboxColumn("15B"),
+                        "15-min Held": st.column_config.CheckboxColumn("15H"),
+                        "Strategy Booked": st.column_config.CheckboxColumn("SB"),
+                        "Strategy Held": st.column_config.CheckboxColumn("SH"),
+                        "Closed-Won": st.column_config.CheckboxColumn("Won"),
+                    },
+                )
+        except Exception as e:
+            st.warning(f"Pipeline detail unavailable: {e}")
+
     # ----- Row 2: Money + Time-to-Close (window-bounded, all sources) -----
     money = windowed_sales_money(
         deals_ytd, contact_deals_ytd, contacts_ytd,
@@ -253,6 +310,79 @@ def render_sales(start: date, end: date) -> None:
         help="Median days from typeform opt-in (createdate fallback) to "
              "deal close, across deals closed in this window.",
     )
+
+    # Money KPI verification — windowed closed deals (filter ytd by closedate)
+    if not deals_ytd.empty:
+        try:
+            no_close_set = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
+            close_dt = pd.to_datetime(deals_ytd.get("closedate"), utc=True, errors="coerce").dt.date
+            create_dt = pd.to_datetime(deals_ytd.get("createdate"), utc=True, errors="coerce").dt.date
+            mask_close = close_dt.between(start, end)
+            mask_create = (
+                deals_ytd["dealstage"].isin(no_close_set)
+                & close_dt.isna()
+                & create_dt.between(start, end)
+            )
+            window_deals_only = deals_ytd[mask_close | mask_create].copy()
+            window_table = build_closed_deals_table(
+                window_deals_only, contact_deals_ytd, contacts_ytd,
+                asset_to_group=cfg.ASSET_TO_GROUP,
+                group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+                source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+                stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+            )
+            if not window_table.empty:
+                wt = window_table.copy()
+                wt["hubspot_link"] = wt["hs_id"].apply(cfg.hubspot_contact_url)
+                wt["sdr_owner"] = wt["sdr_owner"].map(cfg.resolve_owner)
+                wt["bds"] = wt["bds"].map(cfg.resolve_owner)
+                wt["sme"] = wt["sme"].map(cfg.resolve_owner)
+                wt["closedate"] = cfg.format_ct_series(
+                    wt["closedate"], fmt=cfg.DEFAULT_DATE_FORMAT
+                )
+                wt["deal_amount"] = wt["deal_amount"].map(
+                    lambda x: f"${x:,.0f}" if pd.notna(x) and x > 0 else "—"
+                )
+                wt["sales_cycle_days"] = wt["sales_cycle_days"].map(
+                    lambda x: f"{int(x)}" if pd.notna(x) else "—"
+                )
+                wt = wt[[
+                    "hubspot_link", "closedate", "contact_name", "email", "typeform",
+                    "group", "tier", "source", "deal_amount", "sales_cycle_days",
+                    "sdr_owner", "bds", "sme",
+                ]].rename(columns={
+                    "hubspot_link": "Open",
+                    "closedate": "Closed",
+                    "contact_name": "Contact",
+                    "email": "Email",
+                    "typeform": "Typeform",
+                    "group": "Group",
+                    "tier": "Plan",
+                    "source": "Source",
+                    "deal_amount": "Deal $",
+                    "sales_cycle_days": "Cycle (days)",
+                    "sdr_owner": "SDR",
+                    "bds": "BDS",
+                    "sme": "SME",
+                })
+                mkt_n = int(window_table["is_marketing"].sum())
+                with st.expander(
+                    f"Money detail — {len(wt)} closes in window "
+                    f"({mkt_n} marketing · {len(wt) - mkt_n} non-marketing)",
+                    expanded=False,
+                ):
+                    st.dataframe(
+                        cfg.style_unassigned(wt,
+                                              columns=["SDR", "BDS", "SME", "Group",
+                                                       "Plan", "Source", "Typeform"]),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "Open": st.column_config.LinkColumn(
+                                "Open", display_text="HubSpot ↗"),
+                        },
+                    )
+        except Exception as e:
+            st.warning(f"Money detail unavailable: {e}")
 
     # ----- Row 3: Speed to Lead (existing) -----
     st.divider()
