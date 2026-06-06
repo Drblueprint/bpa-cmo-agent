@@ -2053,6 +2053,7 @@ def group_funnel_costs(
     contact_deals_ytd: pd.DataFrame,
     asset_to_group: dict,
     stages_closed_won,
+    closed_deals_table: pd.DataFrame | None = None,
     groups: tuple[str, ...] = ("Chiro", "EMX", "PT Recovery", "TheraRay"),
 ) -> pd.DataFrame:
     """Per-source YTD funnel + cost-per-stage breakdown.
@@ -2095,7 +2096,10 @@ def group_funnel_costs(
     else:
         spend_by_group = {}
 
-    # 2) Tag contacts with group
+    # 2) Tag contacts with group. Typeform → ASSET_TO_GROUP wins; closed-deals
+    # table is the secondary signal (covers long-cycle closes whose typeform
+    # submission predates the window + CONTACT_SOURCE_OVERRIDES marketing
+    # attributions that don't appear in contacts_ytd).
     contacts_ytd = contacts_ytd.copy()
     if not contacts_ytd.empty:
         contacts_ytd["group"] = contacts_ytd["typeform_asset_download"].map(asset_to_group)
@@ -2103,6 +2107,14 @@ def group_funnel_costs(
     if not contacts_ytd.empty:
         for _, c in contacts_ytd.iterrows():
             cid_to_group[str(c["hs_id"])] = c.get("group")
+    if closed_deals_table is not None and not closed_deals_table.empty:
+        for _, r in closed_deals_table.iterrows():
+            if not r.get("is_marketing"):
+                continue
+            cid = str(r.get("hs_id"))
+            grp = r.get("group")
+            if cid_to_group.get(cid) in (None, "") and grp:
+                cid_to_group[cid] = grp
 
     # 3) Lead counts per group
     leads_by_group: dict[str, int] = {}
@@ -2124,15 +2136,30 @@ def group_funnel_costs(
                               "contact_id"].astype(str).unique()
         )
 
-    # 5) Closed-won contact IDs
-    won_cids: set = set()
-    if not deals_ytd.empty and not contact_deals_ytd.empty:
-        won_set = set(stages_closed_won)
-        won_deal_ids = set(deals_ytd.loc[deals_ytd["dealstage"].isin(won_set), "deal_id"])
-        won_cids = set(
-            contact_deals_ytd.loc[contact_deals_ytd["deal_id"].isin(won_deal_ids),
-                                   "contact_id"].astype(str)
-        )
+    # 5) Closed-won per group. Prefer closed_deals_table when supplied —
+    # its is_marketing + group columns are the same signals that drive the
+    # Marketing Customers KPI, so totals line up exactly. Fall back to the
+    # legacy deal-stage intersection only when no closed_deals_table provided.
+    won_by_group: dict[str, int] = {}
+    won_total = 0
+    if closed_deals_table is not None and not closed_deals_table.empty:
+        mkt = closed_deals_table[closed_deals_table["is_marketing"] == True]
+        won_total = int(len(mkt))
+        for g, n in mkt.groupby("group", dropna=False).size().items():
+            won_by_group[g if g else "(unmapped)"] = int(n)
+    else:
+        if not deals_ytd.empty and not contact_deals_ytd.empty:
+            won_set = set(stages_closed_won)
+            won_deal_ids = set(deals_ytd.loc[deals_ytd["dealstage"].isin(won_set), "deal_id"])
+            won_cids = set(
+                contact_deals_ytd.loc[contact_deals_ytd["deal_id"].isin(won_deal_ids),
+                                       "contact_id"].astype(str)
+            )
+            for cid in won_cids:
+                g = cid_to_group.get(cid)
+                if g:
+                    won_by_group[g] = won_by_group.get(g, 0) + 1
+            won_total = sum(won_by_group.values())
 
     def _per_g(s: set, g: str) -> int:
         return sum(1 for cid in s if cid_to_group.get(cid) == g)
@@ -2141,12 +2168,13 @@ def group_funnel_costs(
         return (num / den) if den else None
 
     rows = []
+    listed = set(groups)
     for g in groups:
         spend = float(spend_by_group.get(g, 0.0))
         leads = int(leads_by_group.get(g, 0))
         f15b = _per_g(f15_booked_cids, g)
         sb = _per_g(strat_booked_cids, g)
-        cw = _per_g(won_cids, g)
+        cw = int(won_by_group.get(g, 0))
         rows.append({
             "group": g,
             "ad_spend": spend,
@@ -2160,12 +2188,33 @@ def group_funnel_costs(
             "cost_per_close": _div(spend, cw),
         })
 
-    # Totals row across the listed groups
-    total_spend = sum(r["ad_spend"] for r in rows)
-    total_leads = sum(r["leads"] for r in rows)
-    total_f15 = sum(r["fifteen_booked"] for r in rows)
-    total_sb = sum(r["strategy_booked"] for r in rows)
-    total_cw = sum(r["closed_won"] for r in rows)
+    # "Other" bucket: any closed-marketing deal whose group is outside the
+    # listed groups (e.g., "(unmapped)" tier, niche category). Surfaces the
+    # gap so totals reconcile to Marketing Customers.
+    other_cw = sum(n for g, n in won_by_group.items() if g not in listed)
+    if other_cw > 0:
+        rows.append({
+            "group": "Other",
+            "ad_spend": 0.0,           # no FB spend tag for these groups
+            "leads": 0,
+            "cpl": None,
+            "fifteen_booked": 0,
+            "cost_per_fifteen_booked": None,
+            "strategy_booked": 0,
+            "cost_per_strategy_booked": None,
+            "closed_won": int(other_cw),
+            "cost_per_close": None,
+        })
+
+    # Totals row — closed-won uses the marketing-customer total so it
+    # reconciles to the Marketing Customers KPI above.
+    total_spend = sum(r["ad_spend"] for r in rows if r["group"] != "Other")
+    total_leads = sum(r["leads"] for r in rows if r["group"] != "Other")
+    total_f15 = sum(r["fifteen_booked"] for r in rows if r["group"] != "Other")
+    total_sb = sum(r["strategy_booked"] for r in rows if r["group"] != "Other")
+    total_cw = won_total if closed_deals_table is not None else sum(
+        r["closed_won"] for r in rows if r["group"] != "Other"
+    )
     rows.append({
         "group": "Total",
         "ad_spend": total_spend,

@@ -441,6 +441,15 @@ def render_executive(start: date, end: date) -> None:
             else:
                 deals_win = deals_ytd
 
+            # Build the marketing-attributed closed-deals table for this window
+            # so closed_won counts match the Marketing Customers KPI.
+            cdt = build_closed_deals_table(
+                deals_win, contact_deals_ytd, contacts_ytd,
+                asset_to_group=cfg.ASSET_TO_GROUP,
+                group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+                source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+                stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+            )
             funnel = group_funnel_costs(
                 fb_ytd=fb_win,
                 contacts_ytd=all_contacts,
@@ -449,6 +458,7 @@ def render_executive(start: date, end: date) -> None:
                 contact_deals_ytd=contact_deals_ytd,
                 asset_to_group=cfg.ASSET_TO_GROUP,
                 stages_closed_won=cfg.STAGES_CLOSED_WON,
+                closed_deals_table=cdt,
             )
             if funnel.empty:
                 return
