@@ -13,6 +13,7 @@ from dashboard.data.hubspot_loader import (
     load_deals_in_window,
     load_marketing_contacts,
     load_meetings_for_contacts,
+    load_meetings_in_window,
     load_contacts_by_ids,
     load_closed_deals_ytd,
     load_list_memberships,
@@ -25,6 +26,7 @@ from dashboard.data.reconcile import (
     compute_ytd_money,
     compute_close_commissions,
     group_marketing_metrics,
+    group_funnel_costs,
 )
 
 
@@ -371,6 +373,95 @@ def render_executive(start: date, end: date) -> None:
               help=f"(YTD ad spend {_fmt_money(ytd_total_ad_spend)} + commissions "
                    f"{_fmt_money(commissions['total'])}) ÷ all customers "
                    f"({_fmt_int(total_customers)}). Excludes fixed payroll.")
+
+    # --- Cost per Stage by Source (YTD) ---
+    st.markdown("**Cost per Stage by Source — Year to Date**")
+    st.caption(
+        "What FB ad spend is buying us at each funnel stage, by source. "
+        "Counts are unique contacts that reached each stage YTD; "
+        "Cost / X = YTD Ad Spend ÷ X."
+    )
+    try:
+        year_start = _date(_date.today().year, 1, 1)
+        today_d = _date.today()
+        # YTD typeform contacts (load_marketing_contacts already filters on
+        # typeform_submission_date BETWEEN start/end)
+        ytd_typeform_contacts = load_marketing_contacts(year_start, today_d)
+        # TheraRay list members in YTD (mirrors marketing pipeline)
+        ytd_theraray = pd.DataFrame()
+        try:
+            tr_memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
+            if not tr_memberships.empty:
+                _mt = pd.to_datetime(tr_memberships["membership_timestamp"],
+                                      utc=True, errors="coerce")
+                _ys = pd.Timestamp(year=year_start.year, month=1, day=1, tz="UTC")
+                _te = pd.Timestamp(year=today_d.year, month=today_d.month,
+                                    day=today_d.day, tz="UTC") + pd.Timedelta(days=1)
+                _in = tr_memberships[(_mt >= _ys) & (_mt < _te)]
+                _ids = _in["contact_id"].tolist()
+                if _ids:
+                    ytd_theraray = load_contacts_by_ids(_ids)
+                    if not ytd_theraray.empty:
+                        ytd_theraray = ytd_theraray[
+                            ~ytd_theraray["email"].fillna("").str.lower()
+                            .isin(cfg.MARKETING_EXCLUDED_EMAILS)
+                        ].copy()
+                    if not ytd_theraray.empty:
+                        ytd_theraray["typeform_asset_download"] = "TheraRay FB Lead"
+                        cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
+        except Exception:
+            pass
+        # Merge typeform + TheraRay
+        if not ytd_theraray.empty:
+            if ytd_typeform_contacts.empty:
+                ytd_all_contacts = ytd_theraray
+            else:
+                ytd_all_contacts = pd.concat(
+                    [ytd_typeform_contacts, ytd_theraray], ignore_index=True
+                ).drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
+        else:
+            ytd_all_contacts = ytd_typeform_contacts
+
+        # YTD FB insights (already loaded but without group; reload with group)
+        ytd_fb = load_fb_insights(year_start, today_d, time_increment_days=None)
+        # YTD meetings (any contact)
+        ytd_meetings = load_meetings_in_window(year_start, today_d)
+
+        funnel = group_funnel_costs(
+            fb_ytd=ytd_fb,
+            contacts_ytd=ytd_all_contacts,
+            meetings_ytd=ytd_meetings,
+            deals_ytd=deals_ytd,
+            contact_deals_ytd=contact_deals_ytd,
+            asset_to_group=cfg.ASSET_TO_GROUP,
+            stages_closed_won=cfg.STAGES_CLOSED_WON,
+        )
+        if not funnel.empty:
+            disp = funnel.copy()
+            disp["ad_spend"] = disp["ad_spend"].map(_fmt_money)
+            disp["leads"] = disp["leads"].map(_fmt_int)
+            disp["cpl"] = disp["cpl"].map(_fmt_money)
+            disp["fifteen_booked"] = disp["fifteen_booked"].map(_fmt_int)
+            disp["cost_per_fifteen_booked"] = disp["cost_per_fifteen_booked"].map(_fmt_money)
+            disp["strategy_booked"] = disp["strategy_booked"].map(_fmt_int)
+            disp["cost_per_strategy_booked"] = disp["cost_per_strategy_booked"].map(_fmt_money)
+            disp["closed_won"] = disp["closed_won"].map(_fmt_int)
+            disp["cost_per_close"] = disp["cost_per_close"].map(_fmt_money)
+            disp = disp.rename(columns={
+                "group": "Source",
+                "ad_spend": "Ad Spend",
+                "leads": "Leads",
+                "cpl": "CPL",
+                "fifteen_booked": "15-min Booked",
+                "cost_per_fifteen_booked": "Cost / 15-min",
+                "strategy_booked": "Strategy Booked",
+                "cost_per_strategy_booked": "Cost / Strategy",
+                "closed_won": "Closed-Won",
+                "cost_per_close": "Cost / Close",
+            })
+            st.dataframe(disp, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"Cost-per-stage breakdown unavailable: {e}")
 
     st.divider()
 

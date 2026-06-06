@@ -2044,6 +2044,143 @@ def compute_ytd_money(
     }
 
 
+def group_funnel_costs(
+    *,
+    fb_ytd: pd.DataFrame,
+    contacts_ytd: pd.DataFrame,
+    meetings_ytd: pd.DataFrame,
+    deals_ytd: pd.DataFrame,
+    contact_deals_ytd: pd.DataFrame,
+    asset_to_group: dict,
+    stages_closed_won,
+    groups: tuple[str, ...] = ("Chiro", "EMX", "PT Recovery", "TheraRay"),
+) -> pd.DataFrame:
+    """Per-source YTD funnel + cost-per-stage breakdown.
+
+    Returns a DataFrame with one row per group plus a 'Total' row:
+      group, ad_spend, leads, cpl,
+      fifteen_booked, cost_per_fifteen_booked,
+      strategy_booked, cost_per_strategy_booked,
+      closed_won, cost_per_close.
+
+    Inputs:
+      fb_ytd            FB insights frame for Jan 1 -> today (group, spend, ...)
+      contacts_ytd      contacts whose typeform_submission_date falls in YTD
+                        (plus TheraRay list members for that group).
+      meetings_ytd      meetings whose hs_meeting_start_time falls in YTD
+                        (cols: meeting_id, contact_id, activity_type, outcome,
+                         start_time).
+      deals_ytd         closed-won deals YTD.
+      contact_deals_ytd associations for those deals.
+
+    Funnel counts are unique-contact counts per group (a contact with 2
+    Strategy meetings counts once for Strategy Booked).
+    """
+    cols = ["group", "ad_spend", "leads", "cpl",
+            "fifteen_booked", "cost_per_fifteen_booked",
+            "strategy_booked", "cost_per_strategy_booked",
+            "closed_won", "cost_per_close"]
+    if contacts_ytd is None:
+        contacts_ytd = pd.DataFrame()
+    if meetings_ytd is None:
+        meetings_ytd = pd.DataFrame()
+    if deals_ytd is None:
+        deals_ytd = pd.DataFrame()
+    if contact_deals_ytd is None:
+        contact_deals_ytd = pd.DataFrame(columns=["contact_id", "deal_id"])
+
+    # 1) Spend per group
+    if not fb_ytd.empty and "group" in fb_ytd.columns:
+        spend_by_group = fb_ytd.groupby("group", dropna=True)["spend"].sum().to_dict()
+    else:
+        spend_by_group = {}
+
+    # 2) Tag contacts with group
+    contacts_ytd = contacts_ytd.copy()
+    if not contacts_ytd.empty:
+        contacts_ytd["group"] = contacts_ytd["typeform_asset_download"].map(asset_to_group)
+    cid_to_group: dict[str, str | None] = {}
+    if not contacts_ytd.empty:
+        for _, c in contacts_ytd.iterrows():
+            cid_to_group[str(c["hs_id"])] = c.get("group")
+
+    # 3) Lead counts per group
+    leads_by_group: dict[str, int] = {}
+    if not contacts_ytd.empty:
+        for g, n in contacts_ytd.groupby("group", dropna=True).size().items():
+            leads_by_group[g] = int(n)
+
+    # 4) Meeting funnel — unique contacts per stage
+    f15_booked_cids: set = set()
+    strat_booked_cids: set = set()
+    if not meetings_ytd.empty:
+        types = meetings_ytd["activity_type"].fillna("").astype(str).str.lower()
+        f15_booked_cids = set(
+            meetings_ytd.loc[types.str.contains("15 min", na=False),
+                              "contact_id"].astype(str).unique()
+        )
+        strat_booked_cids = set(
+            meetings_ytd.loc[types.str.contains("strategy", na=False),
+                              "contact_id"].astype(str).unique()
+        )
+
+    # 5) Closed-won contact IDs
+    won_cids: set = set()
+    if not deals_ytd.empty and not contact_deals_ytd.empty:
+        won_set = set(stages_closed_won)
+        won_deal_ids = set(deals_ytd.loc[deals_ytd["dealstage"].isin(won_set), "deal_id"])
+        won_cids = set(
+            contact_deals_ytd.loc[contact_deals_ytd["deal_id"].isin(won_deal_ids),
+                                   "contact_id"].astype(str)
+        )
+
+    def _per_g(s: set, g: str) -> int:
+        return sum(1 for cid in s if cid_to_group.get(cid) == g)
+
+    def _div(num, den):
+        return (num / den) if den else None
+
+    rows = []
+    for g in groups:
+        spend = float(spend_by_group.get(g, 0.0))
+        leads = int(leads_by_group.get(g, 0))
+        f15b = _per_g(f15_booked_cids, g)
+        sb = _per_g(strat_booked_cids, g)
+        cw = _per_g(won_cids, g)
+        rows.append({
+            "group": g,
+            "ad_spend": spend,
+            "leads": leads,
+            "cpl": _div(spend, leads),
+            "fifteen_booked": f15b,
+            "cost_per_fifteen_booked": _div(spend, f15b),
+            "strategy_booked": sb,
+            "cost_per_strategy_booked": _div(spend, sb),
+            "closed_won": cw,
+            "cost_per_close": _div(spend, cw),
+        })
+
+    # Totals row across the listed groups
+    total_spend = sum(r["ad_spend"] for r in rows)
+    total_leads = sum(r["leads"] for r in rows)
+    total_f15 = sum(r["fifteen_booked"] for r in rows)
+    total_sb = sum(r["strategy_booked"] for r in rows)
+    total_cw = sum(r["closed_won"] for r in rows)
+    rows.append({
+        "group": "Total",
+        "ad_spend": total_spend,
+        "leads": total_leads,
+        "cpl": _div(total_spend, total_leads),
+        "fifteen_booked": total_f15,
+        "cost_per_fifteen_booked": _div(total_spend, total_f15),
+        "strategy_booked": total_sb,
+        "cost_per_strategy_booked": _div(total_spend, total_sb),
+        "closed_won": total_cw,
+        "cost_per_close": _div(total_spend, total_cw),
+    })
+    return pd.DataFrame(rows, columns=cols)
+
+
 def compute_close_commissions(
     deals_table: pd.DataFrame,
     *,

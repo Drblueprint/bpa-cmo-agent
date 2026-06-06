@@ -355,6 +355,106 @@ def load_meetings_for_contacts(
     return pd.DataFrame(rows, columns=cols)
 
 
+@st.cache_data(ttl=900, show_spinner="Pulling meetings in window...")
+def load_meetings_in_window(start: date, end: date) -> pd.DataFrame:
+    """Return every meeting whose hs_meeting_start_time falls in [start, end].
+
+    Uses meetings/search directly (no per-contact filter) so we can pull a
+    full window's worth of meetings without first enumerating contacts.
+    Then fetches the associated contact_id for each meeting in batch.
+
+    Columns: meeting_id, contact_id, activity_type, outcome, start_time.
+    Multiple contacts on one meeting → multiple rows (first contact wins
+    when None — defensive only).
+    """
+    cols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time"]
+    token = st.secrets["HUBSPOT_TOKEN"]
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    start_ms = int(datetime.combine(start, datetime.min.time(),
+                                      tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime.combine(end, datetime.max.time(),
+                                    tzinfo=timezone.utc).timestamp() * 1000)
+    body = {
+        "filterGroups": [{
+            "filters": [
+                {"propertyName": "hs_meeting_start_time", "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        }],
+        "properties": ["hs_activity_type", "hs_meeting_outcome",
+                       "hs_meeting_start_time", "hs_meeting_title"],
+        "limit": 100,
+    }
+    meetings = []
+    after = None
+    while True:
+        b = dict(body)
+        if after:
+            b["after"] = after
+        r = requests.post(f"{HS_API}/crm/v3/objects/meetings/search",
+                          headers=headers, json=b, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        for o in data.get("results", []):
+            p = o.get("properties") or {}
+            meetings.append({
+                "meeting_id": o["id"],
+                "activity_type": p.get("hs_activity_type") or "",
+                "outcome": p.get("hs_meeting_outcome") or "",
+                "start_time": p.get("hs_meeting_start_time"),
+                "title": p.get("hs_meeting_title") or "",
+            })
+        after = (data.get("paging") or {}).get("next", {}).get("after")
+        if not after or len(meetings) >= 20000:
+            break
+
+    if not meetings:
+        return pd.DataFrame(columns=cols)
+
+    # Associations: meeting -> contact
+    mid_to_cid: dict[str, str] = {}
+    mids = [m["meeting_id"] for m in meetings]
+    for i in range(0, len(mids), 100):
+        batch = mids[i:i + 100]
+        r = requests.post(
+            f"{HS_API}/crm/v4/associations/meetings/contacts/batch/read",
+            headers=headers,
+            json={"inputs": [{"id": mid} for mid in batch]},
+            timeout=60,
+        )
+        if r.status_code >= 400:
+            continue
+        for item in r.json().get("results", []):
+            mid = str(item.get("from", {}).get("id"))
+            cids = [t.get("toObjectId") for t in item.get("to", [])]
+            if cids:
+                mid_to_cid[mid] = str(cids[0])
+
+    # Final rows — title falls back to activity_type matching when needed
+    rows = []
+    for m in meetings:
+        cid = mid_to_cid.get(m["meeting_id"])
+        if not cid:
+            continue  # drop meetings without a contact association
+        t = (m["activity_type"] or "").lower()
+        title = (m["title"] or "").lower()
+        # Promote title-only matches into activity_type so downstream "15 min"
+        # / "strategy" substring checks work.
+        if "15 min" not in t and ("15 min" in title or "15-min" in title):
+            m["activity_type"] = "15 min call"
+        elif "strategy" not in t and "strategy" in title:
+            m["activity_type"] = "Strategy Call"
+        rows.append({
+            "meeting_id": m["meeting_id"],
+            "contact_id": cid,
+            "activity_type": m["activity_type"],
+            "outcome": m["outcome"],
+            "start_time": m["start_time"],
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
 @st.cache_data(ttl=900, show_spinner="Pulling contact asset details...")
 def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
     """Batch-fetch contact properties by HubSpot contact ID.
