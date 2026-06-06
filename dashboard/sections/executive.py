@@ -496,9 +496,7 @@ def render_executive(start: date, end: date) -> None:
 
     _today = _date.today()
     _year_start = _date(_today.year, 1, 1)
-    _rolling_30_start = _today - timedelta(days=30)
     _render_funnel_costs(_year_start, _today, "Year to Date")
-    _render_funnel_costs(_rolling_30_start, _today, "Last 30 Days")
 
     st.divider()
 
