@@ -151,6 +151,7 @@ HS_OWNER_NAMES: dict[str, str] = {
     "78947719": "Gage Humbarger (former SDR)",
     "56929167": "Dr. Michael McCracken (former)",
     "204897352": "Dr. Blaine Kingsbury",
+    "377861017": "Dr. Samantha Luther (former)",
 }
 
 

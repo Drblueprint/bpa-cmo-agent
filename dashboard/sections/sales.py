@@ -293,6 +293,99 @@ def render_sales(start: date, end: date) -> None:
 
     st.divider()
 
+    # ----- Precompute per-contact maps shared by SDR/BDS/SME detail tables -----
+    from collections import defaultdict as _dd
+    from dashboard.data.reconcile import normalize_phone as _norm
+
+    # Phone -> [contact_ids]
+    _phone_to_contacts: dict = {}
+    for _, _c in marketing.iterrows():
+        _pn = _norm(_c.get("phone")) or _norm(_c.get("mobilephone"))
+        if _pn:
+            _phone_to_contacts.setdefault(_pn, []).append(str(_c["hs_id"]))
+
+    # Per-contact AirCall stats (outbound only)
+    _per_contact_calls: dict = _dd(lambda: {"dials": 0, "pick_ups": 0,
+                                              "contacts_made": 0, "talk_sec": 0})
+    if not aircall_calls.empty:
+        _ob = aircall_calls[aircall_calls["direction"] == "outbound"]
+        if cfg.AIRCALL_EXCLUDED_USERS:
+            _ob = _ob[~_ob["user_id"].astype(str).isin(cfg.AIRCALL_EXCLUDED_USERS)]
+        for _, _call in _ob.iterrows():
+            _pn = _call.get("phone_normalized") or ""
+            for _cid in _phone_to_contacts.get(_pn, []):
+                _s = _per_contact_calls[_cid]
+                _s["dials"] += 1
+                if pd.notna(_call.get("answered_at_utc")):
+                    _s["pick_ups"] += 1
+                    _dur = _call.get("duration") or 0
+                    if _dur >= cfg.AIRCALL_CONNECT_DURATION_SEC:
+                        _s["contacts_made"] += 1
+                        _s["talk_sec"] += _dur
+
+    # Speed-to-lead per contact (in minutes); reused from earlier compute_speed_to_lead
+    _speed_map = dict(zip(
+        speed_df["hs_id"].astype(str), speed_df["speed_to_lead_minutes"]
+    )) if not speed_df.empty else {}
+
+    # 15-min meeting most-recent per contact
+    _f15_outcome: dict = {}
+    _f15_when: dict = {}
+    if not meetings.empty:
+        _types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        _fm = meetings[_types.str.contains("15 min", na=False)].copy()
+        if not _fm.empty:
+            _fm = _fm.sort_values("start_time", ascending=False, na_position="last") \
+                .drop_duplicates(subset="contact_id", keep="first")
+            _fm["contact_id"] = _fm["contact_id"].astype(str)
+            _f15_outcome = dict(zip(_fm["contact_id"], _fm["outcome"].fillna("")))
+            _f15_when = dict(zip(_fm["contact_id"], _fm["start_time"]))
+
+    # Strategy meetings — most-recent per contact + total count per contact
+    _str_outcome: dict = {}
+    _str_when: dict = {}
+    _str_count: dict = _dd(int)
+    if not meetings.empty:
+        _types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        _sm = meetings[_types.str.contains("strategy", na=False)].copy()
+        if not _sm.empty:
+            _sm = _sm.sort_values("start_time", ascending=False, na_position="last")
+            _sm["contact_id"] = _sm["contact_id"].astype(str)
+            for _cid, _grp in _sm.groupby("contact_id"):
+                _str_count[_cid] = int(len(_grp))
+                _row = _grp.iloc[0]
+                _str_outcome[_cid] = (_row.get("outcome") or "").upper()
+                _str_when[_cid] = _row.get("start_time")
+
+    # Deal stage flags per contact
+    _won_cids: set = set()
+    _won_revenue: dict = {}
+    _dq15_cids: set = set()
+    _dqstr_cids: set = set()
+    if not deals.empty and not contact_deals.empty:
+        _won_deal_ids = set(deals.loc[deals["dealstage"].isin(cfg.STAGES_CLOSED_WON), "deal_id"])
+        _won_cids = set(
+            contact_deals.loc[contact_deals["deal_id"].isin(_won_deal_ids),
+                              "contact_id"].astype(str)
+        )
+        _won_deals_df = deals[deals["dealstage"].isin(cfg.STAGES_CLOSED_WON)]
+        _deal_amt = dict(zip(_won_deals_df["deal_id"],
+                             _won_deals_df["amount"].fillna(0)))
+        for _, _cd in contact_deals.iterrows():
+            if _cd["deal_id"] in _deal_amt:
+                _cid = str(_cd["contact_id"])
+                _won_revenue[_cid] = _won_revenue.get(_cid, 0.0) + float(_deal_amt[_cd["deal_id"]] or 0)
+        _dq15_deal_ids = set(deals.loc[deals["dealstage"].isin(cfg.STAGES_15MIN_DQ), "deal_id"])
+        _dq15_cids = set(
+            contact_deals.loc[contact_deals["deal_id"].isin(_dq15_deal_ids),
+                              "contact_id"].astype(str)
+        )
+        _dqstr_deal_ids = set(deals.loc[deals["dealstage"].isin(cfg.STAGES_STRATEGY_DQ), "deal_id"])
+        _dqstr_cids = set(
+            contact_deals.loc[contact_deals["deal_id"].isin(_dqstr_deal_ids),
+                              "contact_id"].astype(str)
+        )
+
     # ----- Section: SDR Performance (Wave 1 + Wave 2) -----
     st.subheader("SDR Performance")
     st.caption(
@@ -337,6 +430,63 @@ def render_sales(start: date, end: date) -> None:
         })
         st.dataframe(display, use_container_width=True, hide_index=True)
 
+    # SDR Lead Detail — every marketing lead with per-contact dial activity + speed
+    sdr_rows = []
+    for _, _c in marketing.iterrows():
+        _cid = str(_c["hs_id"])
+        _stats = _per_contact_calls.get(_cid, {"dials": 0, "pick_ups": 0,
+                                                "contacts_made": 0, "talk_sec": 0})
+        _spd = _speed_map.get(_cid)
+        _f15o = (_f15_outcome.get(_cid) or "").upper()
+        _appt = _f15o if _f15o else "Not Booked"
+        _self = str(_c.get("sdr_owner") or "") == "1266266951"
+        # Skip leads with NO activity (no dials, no booking, no SDR assigned)
+        if (_stats["dials"] == 0
+            and not _f15o
+            and not (_c.get("sdr_owner") or "")):
+            continue
+        sdr_rows.append({
+            "Open": cfg.hubspot_contact_url(_cid),
+            "Contact": _c.get("name") or "",
+            "SDR": cfg.resolve_owner(_c.get("sdr_owner")),
+            "Self Booked": _self,
+            "Asset": _c.get("typeform_asset_download") or "",
+            "Dials": _stats["dials"],
+            "Pick Ups": _stats["pick_ups"],
+            "Contacts Made": _stats["contacts_made"],
+            "Talk (min)": round(_stats["talk_sec"] / 60.0, 1) if _stats["talk_sec"] else 0,
+            "Speed to Lead (min)": (round(_spd, 1) if _spd is not None and not pd.isna(_spd) else None),
+            "15-min Status": _appt,
+            "15-min When (CT)": "",
+        })
+    if sdr_rows:
+        _sdr_det = pd.DataFrame(sdr_rows)
+        # Format CT timestamps via the contact_id -> when map applied to the rows in order
+        _when_series = [_f15_when.get(str(_c["hs_id"])) for _, _c in marketing.iterrows()
+                        if (str(_c["hs_id"]) in {r.get("Open","").split("/")[-1] for r in sdr_rows})]
+        # Simpler approach: rebuild When directly from rows
+        _whens = []
+        for _, _c in marketing.iterrows():
+            _cid = str(_c["hs_id"])
+            _stats = _per_contact_calls.get(_cid, {"dials": 0})
+            _f15o = _f15_outcome.get(_cid) or ""
+            if _stats["dials"] == 0 and not _f15o and not (_c.get("sdr_owner") or ""):
+                continue
+            _whens.append(_f15_when.get(_cid))
+        _sdr_det["15-min When (CT)"] = cfg.format_ct_series(pd.Series(_whens))
+        # Sort: Dials desc then Speed asc
+        _sdr_det = _sdr_det.sort_values(
+            ["Dials", "Speed to Lead (min)"], ascending=[False, True], na_position="last"
+        ).reset_index(drop=True)
+        with st.expander(f"SDR Lead Detail — {len(_sdr_det)} leads with activity", expanded=False):
+            st.dataframe(
+                _sdr_det, use_container_width=True, hide_index=True,
+                column_config={
+                    "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
+                    "Self Booked": st.column_config.CheckboxColumn("Self Booked"),
+                },
+            )
+
     st.divider()
 
     # ----- Section: BDS Performance (Wave 1) -----
@@ -372,6 +522,41 @@ def render_sales(start: date, end: date) -> None:
             "dq_rate": "DQ %",
         })
         st.dataframe(display, use_container_width=True, hide_index=True)
+
+    # BDS Meeting Detail — every contact with a 15-min meeting in window
+    bds_rows = []
+    bds_whens = []
+    for _, _c in marketing.iterrows():
+        _cid = str(_c["hs_id"])
+        _outcome = _f15_outcome.get(_cid)
+        if not _outcome:
+            continue  # only contacts with a 15-min meeting
+        _has_strat = bool(_str_outcome.get(_cid))
+        _is_dq = _cid in _dq15_cids
+        bds_rows.append({
+            "Open": cfg.hubspot_contact_url(_cid),
+            "Contact": _c.get("name") or "",
+            "BDS": cfg.resolve_owner(_c.get("bds")),
+            "Asset": _c.get("typeform_asset_download") or "",
+            "15-min Outcome": _outcome.upper() if _outcome else "",
+            "15-min When (CT)": "",
+            "SME Booked After?": _has_strat,
+            "DQ'd at 15-min?": _is_dq,
+        })
+        bds_whens.append(_f15_when.get(_cid))
+    if bds_rows:
+        _bds_det = pd.DataFrame(bds_rows)
+        _bds_det["15-min When (CT)"] = cfg.format_ct_series(pd.Series(bds_whens))
+        _bds_det = _bds_det.sort_values("15-min When (CT)", ascending=False).reset_index(drop=True)
+        with st.expander(f"BDS Meeting Detail — {len(_bds_det)} 15-min meetings", expanded=False):
+            st.dataframe(
+                _bds_det, use_container_width=True, hide_index=True,
+                column_config={
+                    "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
+                    "SME Booked After?": st.column_config.CheckboxColumn("SME Booked After?"),
+                    "DQ'd at 15-min?": st.column_config.CheckboxColumn("DQ'd at 15-min?"),
+                },
+            )
 
     st.divider()
 
@@ -424,6 +609,52 @@ def render_sales(start: date, end: date) -> None:
             "revenue": "Revenue",
         })
         st.dataframe(display, use_container_width=True, hide_index=True)
+
+    # SME Meeting Detail — every contact with a Strategy meeting in window
+    sme_rows = []
+    sme_whens = []
+    for _, _c in marketing.iterrows():
+        _cid = str(_c["hs_id"])
+        _outcome = _str_outcome.get(_cid)
+        if not _outcome:
+            continue  # only contacts with a Strategy meeting
+        _won = _cid in _won_cids
+        _dq = _cid in _dqstr_cids
+        _cnt = _str_count.get(_cid, 0)
+        if _won:
+            _deal_status = "Closed-Won"
+            _close_type = "FU Close" if _cnt >= 2 else "First Close"
+        elif _dq:
+            _deal_status = "DQ"
+            _close_type = ""
+        else:
+            _deal_status = "Open / No deal"
+            _close_type = ""
+        _rev = _won_revenue.get(_cid, 0.0)
+        sme_rows.append({
+            "Open": cfg.hubspot_contact_url(_cid),
+            "Contact": _c.get("name") or "",
+            "SME": cfg.resolve_owner(_c.get("sme")),
+            "Asset": _c.get("typeform_asset_download") or "",
+            "Strategy Outcome": _outcome,
+            "Strategy When (CT)": "",
+            "Strategy Mtgs": _cnt,
+            "Deal Status": _deal_status,
+            "Close Type": _close_type,
+            "Revenue": _fmt_money(_rev) if _won and _rev else ("—" if not _won else "$0"),
+        })
+        sme_whens.append(_str_when.get(_cid))
+    if sme_rows:
+        _sme_det = pd.DataFrame(sme_rows)
+        _sme_det["Strategy When (CT)"] = cfg.format_ct_series(pd.Series(sme_whens))
+        _sme_det = _sme_det.sort_values("Strategy When (CT)", ascending=False).reset_index(drop=True)
+        with st.expander(f"SME Meeting Detail — {len(_sme_det)} Strategy meetings", expanded=False):
+            st.dataframe(
+                _sme_det, use_container_width=True, hide_index=True,
+                column_config={
+                    "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
+                },
+            )
 
     st.divider()
 
