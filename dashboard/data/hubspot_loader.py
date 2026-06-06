@@ -145,7 +145,8 @@ def load_deals_in_window(
             ]
         }],
         "properties": ["dealname", "amount", "dealstage", "pipeline",
-                       "createdate", "closedate"],
+                       "createdate", "closedate",
+                       *cfg.STAGE_ENTRY_DATE_PROPERTIES.values()],
         "limit": 100,
     }
     results = _hs_search(token, "deals", body)
@@ -168,18 +169,26 @@ def load_deals_in_window(
                     continue
             except (ValueError, TypeError):
                 pass
+        # Effective close date for STAGES_CLOSED_WON_NO_CLOSEDATE: stage-entry
+        # timestamp. Falls back to createdate when stage-entry is missing.
+        stage_id = p.get("dealstage") or ""
+        stage_entry = None
+        prop = cfg.STAGE_ENTRY_DATE_PROPERTIES.get(stage_id)
+        if prop:
+            stage_entry = p.get(prop)
         rows.append({
             "deal_id": str(deal_id) if deal_id is not None else None,
             "dealname": p.get("dealname"),
             "amount": float(p.get("amount") or 0),
-            "dealstage": p.get("dealstage"),
+            "dealstage": stage_id,
             "pipeline": p.get("pipeline"),
             "createdate": p.get("createdate"),
             "closedate": p.get("closedate"),
+            "stage_entry_date": stage_entry,
         })
     return pd.DataFrame(rows, columns=[
         "deal_id", "dealname", "amount", "dealstage",
-        "pipeline", "createdate", "closedate",
+        "pipeline", "createdate", "closedate", "stage_entry_date",
     ])
 
 
@@ -450,7 +459,7 @@ def load_closed_deals_ytd(
     from datetime import date as _date
 
     deal_cols = ["deal_id", "dealname", "amount", "dealstage",
-                 "pipeline", "createdate", "closedate"]
+                 "pipeline", "createdate", "closedate", "stage_entry_date"]
     assoc_cols = ["contact_id", "deal_id"]
     contact_cols = [
         "hs_id", "name", "email", "created",
@@ -475,12 +484,17 @@ def load_closed_deals_ytd(
     token = st.secrets["HUBSPOT_TOKEN"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Import the stages-without-closedate set (defaults to empty if unset)
+    # Import the stages-without-closedate set + stage-entry props
     try:
-        from dashboard.config import STAGES_CLOSED_WON_NO_CLOSEDATE
+        from dashboard.config import (
+            STAGES_CLOSED_WON_NO_CLOSEDATE,
+            STAGE_ENTRY_DATE_PROPERTIES,
+        )
         no_closedate_stages = list(STAGES_CLOSED_WON_NO_CLOSEDATE)
+        stage_entry_props = dict(STAGE_ENTRY_DATE_PROPERTIES)
     except ImportError:
         no_closedate_stages = []
+        stage_entry_props = {}
 
     # closedate_stages = those WITH a closedate (filter by closedate)
     closedate_stages = [s for s in closed_set if s not in set(no_closedate_stages)]
@@ -495,12 +509,16 @@ def load_closed_deals_ytd(
                  "value": start_ms, "highValue": end_ms},
             ]
         })
-    if no_closedate_stages:
+    # For each no-closedate stage, filter by its stage-entry date — that's
+    # when the deal actually became a customer in that stage.
+    for stage_id in no_closedate_stages:
+        prop = stage_entry_props.get(stage_id)
+        if not prop:
+            continue
         filter_groups.append({
             "filters": [
-                {"propertyName": "dealstage", "operator": "IN",
-                 "values": no_closedate_stages},
-                {"propertyName": "createdate", "operator": "BETWEEN",
+                {"propertyName": "dealstage", "operator": "EQ", "value": stage_id},
+                {"propertyName": prop, "operator": "BETWEEN",
                  "value": start_ms, "highValue": end_ms},
             ]
         })
@@ -508,7 +526,8 @@ def load_closed_deals_ytd(
     body = {
         "filterGroups": filter_groups,
         "properties": ["dealname", "amount", "dealstage", "pipeline",
-                       "createdate", "closedate"],
+                       "createdate", "closedate",
+                       *stage_entry_props.values()],
         "limit": 100,
     }
     deal_rows = []
@@ -526,14 +545,20 @@ def load_closed_deals_ytd(
         for d in data.get("results", []):
             p = d.get("properties") or {}
             did = d.get("id")
+            stage_id = p.get("dealstage") or ""
+            stage_entry = None
+            prop = stage_entry_props.get(stage_id)
+            if prop:
+                stage_entry = p.get(prop)
             deal_rows.append({
                 "deal_id": str(did) if did is not None else None,
                 "dealname": p.get("dealname"),
                 "amount": float(p.get("amount") or 0),
-                "dealstage": p.get("dealstage"),
+                "dealstage": stage_id,
                 "pipeline": p.get("pipeline"),
                 "createdate": p.get("createdate"),
                 "closedate": p.get("closedate"),
+                "stage_entry_date": stage_entry,
             })
         after = (data.get("paging") or {}).get("next", {}).get("after")
         if not after or len(deal_rows) >= 10000:
@@ -735,7 +760,7 @@ def load_closed_deals_in_window(
     from datetime import timezone as _timezone
 
     deal_cols = ["deal_id", "dealname", "amount", "dealstage", "pipeline",
-                 "createdate", "closedate"]
+                 "createdate", "closedate", "stage_entry_date"]
     start_ms = int(_datetime.combine(start, _datetime.min.time(),
                                        tzinfo=_timezone.utc).timestamp() * 1000)
     end_ms = int(_datetime.combine(end, _datetime.max.time(),
@@ -748,6 +773,8 @@ def load_closed_deals_in_window(
     no_close_list = [s for s in no_closedate_stages if s in set(closed_set)]
     closedate_only = [s for s in closed_set if s not in set(no_close_list)]
 
+    stage_entry_props = dict(cfg.STAGE_ENTRY_DATE_PROPERTIES)
+
     filter_groups = []
     if closedate_only:
         filter_groups.append({
@@ -758,12 +785,16 @@ def load_closed_deals_in_window(
                  "value": start_ms, "highValue": end_ms},
             ]
         })
-    if no_close_list:
+    # Per-stage filter using its stage-entry date (when the deal entered the
+    # no-closedate stage = effective close date for DIY/90-Day).
+    for stage_id in no_close_list:
+        prop = stage_entry_props.get(stage_id)
+        if not prop:
+            continue
         filter_groups.append({
             "filters": [
-                {"propertyName": "dealstage", "operator": "IN",
-                 "values": no_close_list},
-                {"propertyName": "createdate", "operator": "BETWEEN",
+                {"propertyName": "dealstage", "operator": "EQ", "value": stage_id},
+                {"propertyName": prop, "operator": "BETWEEN",
                  "value": start_ms, "highValue": end_ms},
             ]
         })
@@ -774,7 +805,8 @@ def load_closed_deals_in_window(
     body = {
         "filterGroups": filter_groups,
         "properties": ["dealname", "amount", "dealstage", "pipeline",
-                       "createdate", "closedate"],
+                       "createdate", "closedate",
+                       *stage_entry_props.values()],
         "limit": 100,
     }
     deal_rows = []
@@ -792,14 +824,20 @@ def load_closed_deals_in_window(
         for d in data.get("results", []):
             p = d.get("properties") or {}
             did = d.get("id")
+            stage_id = p.get("dealstage") or ""
+            stage_entry = None
+            prop = stage_entry_props.get(stage_id)
+            if prop:
+                stage_entry = p.get(prop)
             deal_rows.append({
                 "deal_id": str(did) if did is not None else None,
                 "dealname": p.get("dealname"),
                 "amount": float(p.get("amount") or 0),
-                "dealstage": p.get("dealstage"),
+                "dealstage": stage_id,
                 "pipeline": p.get("pipeline"),
                 "createdate": p.get("createdate"),
                 "closedate": p.get("closedate"),
+                "stage_entry_date": stage_entry,
             })
         after = (data.get("paging") or {}).get("next", {}).get("after")
         if not after or len(deal_rows) >= 10000:

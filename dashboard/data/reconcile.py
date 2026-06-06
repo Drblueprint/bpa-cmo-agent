@@ -1371,16 +1371,24 @@ def windowed_sales_money(
             "window_cash_collection": 0.0 if group_cash_per_deal else None,
         }
 
+    # Effective close date:
+    #   - closedate when present (normal closed-won stages)
+    #   - else stage_entry_date for DIY / 90-Day (when the deal entered the
+    #     no-closedate stage = the day it actually became a customer)
+    #   - else createdate (defensive fallback for legacy rows lacking both)
     no_close_set = set(stages_closed_won_no_closedate)
     close_dt = pd.to_datetime(deals.get("closedate"), utc=True, errors="coerce").dt.date
+    stage_entry_dt = pd.to_datetime(
+        deals.get("stage_entry_date"), utc=True, errors="coerce"
+    ).dt.date if "stage_entry_date" in deals.columns else pd.Series(
+        [None] * len(deals), index=deals.index, dtype=object,
+    )
     create_dt = pd.to_datetime(deals.get("createdate"), utc=True, errors="coerce").dt.date
     mask_close = close_dt.between(start, end)
-    mask_create = (
-        deals["dealstage"].isin(no_close_set)
-        & close_dt.isna()
-        & create_dt.between(start, end)
-    )
-    window_deals = deals[mask_close | mask_create].copy()
+    no_close_mask = deals["dealstage"].isin(no_close_set) & close_dt.isna()
+    mask_stage_entry = no_close_mask & stage_entry_dt.between(start, end)
+    mask_create = no_close_mask & stage_entry_dt.isna() & create_dt.between(start, end)
+    window_deals = deals[mask_close | mask_stage_entry | mask_create].copy()
 
     table = build_closed_deals_table(
         window_deals, contact_deals, contacts,
@@ -1703,15 +1711,34 @@ def weekly_metrics(
         use_stages = stages_override if stages_override is not None else stages_closed_won
         # Closedate-based deals (standard closed-won)
         mask = deals["dealstage"].isin(use_stages) & d_close.between(start, end)
-        # No-closedate deals (DIY, 90-Day) -- count by createdate
+        # No-closedate deals (DIY, 90-Day): prefer stage-entry date (when the
+        # deal entered the stage), fall back to createdate.
+        if "stage_entry_date" in deals.columns:
+            try:
+                d_entry = pd.to_datetime(deals["stage_entry_date"], utc=True,
+                                          errors="coerce").dt.date
+                mask_entry = (
+                    deals["dealstage"].isin(use_stages)
+                    & d_entry.between(start, end)
+                    & d_close.isna()
+                )
+                mask = mask | mask_entry
+            except Exception:
+                pass
         if "createdate" in deals.columns:
             try:
                 d_create = pd.to_datetime(deals["createdate"], utc=True,
                                           errors="coerce").dt.date
+                if "stage_entry_date" in deals.columns:
+                    d_entry_local = pd.to_datetime(deals["stage_entry_date"],
+                                                    utc=True, errors="coerce").dt.date
+                else:
+                    d_entry_local = pd.Series([None] * len(deals), index=deals.index)
                 mask_create = (
                     deals["dealstage"].isin(use_stages)
                     & d_create.between(start, end)
                     & d_close.isna()
+                    & d_entry_local.isna()
                 )
                 mask = mask | mask_create
             except Exception:
@@ -1905,8 +1932,11 @@ def build_closed_deals_table(
                                          utc=True, errors="coerce")
             close_ts = pd.to_datetime(deal.get("closedate"),
                                        utc=True, errors="coerce")
-            # Fallback: use deal createdate when deal has no closedate
-            # (DIY / 90-Day stages)
+            # Fallback: use stage-entry date when deal has no closedate
+            # (DIY / 90-Day stages). Final fallback = createdate.
+            if pd.isna(close_ts):
+                close_ts = pd.to_datetime(deal.get("stage_entry_date"),
+                                           utc=True, errors="coerce")
             if pd.isna(close_ts):
                 close_ts = pd.to_datetime(deal.get("createdate"),
                                            utc=True, errors="coerce")
@@ -1946,7 +1976,9 @@ def build_closed_deals_table(
             "tier": tier_val,
             "send_contract": primary_contact.get("send_contract_options") or "",
             "is_marketing": bool(is_marketing),
-            "closedate": (deal.get("closedate") or deal.get("createdate")),
+            "closedate": (deal.get("closedate")
+                          or deal.get("stage_entry_date")
+                          or deal.get("createdate")),
             "deal_amount": effective_amt,
             "sales_cycle_days": cycle_days,
             "sdr_owner": primary_contact.get("sdr_owner") or "",

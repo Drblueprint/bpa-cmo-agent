@@ -86,12 +86,23 @@ STAGES_CLOSED_WON: set[str] = {
     "1123458844", # SALES - V2: 90-Day (no closedate; uses createdate)
 }
 
-# Stages that don't have a HubSpot closedate set -- use createdate instead for
-# YTD bucketing. Per Dr. Gumm: these deals are signed-and-counted even though
-# HubSpot's `probability` < 1.0 keeps them out of standard "won" queries.
+# Stages that don't have a HubSpot closedate set. We use the stage-entry
+# timestamp (hs_v2_date_entered_<stage_id>) as the effective close date,
+# because the deal may have been *created* well before the doctor was actually
+# promoted into the DIY / 90-Day stage. Per Dr. Gumm: these deals are
+# signed-and-counted even though HubSpot's `probability` < 1.0 keeps them out
+# of standard "won" queries.
 STAGES_CLOSED_WON_NO_CLOSEDATE: set[str] = {
     "1163151789",  # DIY
     "1123458844",  # 90-Day
+}
+
+# Map stage_id -> the HubSpot deal property that holds when the deal entered
+# that stage. Used to compute the effective close date for STAGES_CLOSED_WON_
+# NO_CLOSEDATE stages.
+STAGE_ENTRY_DATE_PROPERTIES: dict[str, str] = {
+    "1163151789": "hs_v2_date_entered_1163151789",  # DIY
+    "1123458844": "hs_v2_date_entered_1123458844",  # 90-Day
 }
 
 # Stages for counting NEW customer wins. Per Dr. Gumm: only SALES-V2's
@@ -439,6 +450,20 @@ MARKETING_EXCLUDED_EMAILS: set[str] = {
     # Per Dr. Gumm, 2026-05-20.
     "drberry2608@gmail.com",
 }
+
+# Internal team email domains — any contact whose email ends in one of these
+# is treated as a test/team row and excluded from sales detail tables.
+INTERNAL_TEAM_EMAIL_DOMAINS: set[str] = {
+    "@yourautomatedpractice.com",
+}
+
+
+def is_internal_team_contact(email: str | None) -> bool:
+    """True if a contact's email matches an internal-team domain."""
+    if not email:
+        return False
+    e = str(email).strip().lower()
+    return any(e.endswith(d) for d in INTERNAL_TEAM_EMAIL_DOMAINS)
 
 CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
     # Sales outreach (not marketing)

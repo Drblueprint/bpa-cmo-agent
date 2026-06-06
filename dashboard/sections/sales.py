@@ -229,6 +229,14 @@ def render_sales(start: date, end: date) -> None:
             pdf["Strategy Booked"] = pdf["dealstage"].isin(stages["strategy_booked"])
             pdf["Strategy Held"]   = pdf["dealstage"].isin(stages["strategy_held"])
             pdf["Closed-Won"]      = pdf["dealstage"].isin(stages["closedwon"])
+            # Restrict to deals whose CURRENT stage is in one of the funnel
+            # buckets shown by the top KPIs. Otherwise old closed-won deals
+            # that got hs_lastmodifieddate touched this month bloat the view.
+            in_funnel = (
+                pdf["15-min Booked"] | pdf["15-min Held"]
+                | pdf["Strategy Booked"] | pdf["Strategy Held"]
+            )
+            pdf = pdf[in_funnel].copy()
             pdf["Marketing?"]      = pdf["typeform_asset_download"].fillna("") \
                                         .astype(str).str.strip() != ""
             pdf["Open"]            = pdf["contact_id"].apply(cfg.hubspot_contact_url)
@@ -239,23 +247,23 @@ def render_sales(start: date, end: date) -> None:
             out = pdf[["Open", "name", "email", "SDR", "BDS",
                        "Asset", "Group", "Marketing?", "dealstage",
                        "15-min Booked", "15-min Held",
-                       "Strategy Booked", "Strategy Held", "Closed-Won"]] \
+                       "Strategy Booked", "Strategy Held"]] \
                  .rename(columns={"name": "Contact", "email": "Email",
                                   "dealstage": "Stage ID"})
             # Sort: most-advanced stage first, then marketing flag
             out = out.sort_values(
-                ["Closed-Won", "Strategy Held", "Strategy Booked",
+                ["Strategy Held", "Strategy Booked",
                  "15-min Held", "15-min Booked", "Marketing?"],
                 ascending=False,
             ).reset_index(drop=True)
             with st.expander(
-                f"Pipeline detail — {len(out)} deal/contact rows in window",
+                f"Pipeline detail — {len(out)} deals currently in the funnel",
                 expanded=False,
             ):
                 st.dataframe(
                     cfg.style_unassigned(
                         out, columns=["SDR", "BDS", "Asset", "Group"],
-                        green_when=lambda r: bool(r.get("Closed-Won")),
+                        green_when=lambda r: bool(r.get("Strategy Held")),
                     ),
                     use_container_width=True, hide_index=True,
                     column_config={
@@ -265,7 +273,6 @@ def render_sales(start: date, end: date) -> None:
                         "15-min Held": st.column_config.CheckboxColumn("15H"),
                         "Strategy Booked": st.column_config.CheckboxColumn("SB"),
                         "Strategy Held": st.column_config.CheckboxColumn("SH"),
-                        "Closed-Won": st.column_config.CheckboxColumn("Won"),
                     },
                 )
         except Exception as e:
@@ -320,13 +327,20 @@ def render_sales(start: date, end: date) -> None:
             no_close_set = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
             close_dt = pd.to_datetime(deals_ytd.get("closedate"), utc=True, errors="coerce").dt.date
             create_dt = pd.to_datetime(deals_ytd.get("createdate"), utc=True, errors="coerce").dt.date
+            if "stage_entry_date" in deals_ytd.columns:
+                stage_entry_dt = pd.to_datetime(
+                    deals_ytd["stage_entry_date"], utc=True, errors="coerce"
+                ).dt.date
+            else:
+                stage_entry_dt = pd.Series(
+                    [None] * len(deals_ytd), index=deals_ytd.index, dtype=object
+                )
             mask_close = close_dt.between(start, end)
-            mask_create = (
-                deals_ytd["dealstage"].isin(no_close_set)
-                & close_dt.isna()
-                & create_dt.between(start, end)
-            )
-            window_deals_only = deals_ytd[mask_close | mask_create].copy()
+            no_close_mask = deals_ytd["dealstage"].isin(no_close_set) & close_dt.isna()
+            mask_stage_entry = no_close_mask & stage_entry_dt.between(start, end)
+            mask_create = (no_close_mask & stage_entry_dt.isna()
+                           & create_dt.between(start, end))
+            window_deals_only = deals_ytd[mask_close | mask_stage_entry | mask_create].copy()
             window_table = build_closed_deals_table(
                 window_deals_only, contact_deals_ytd, contacts_ytd,
                 asset_to_group=cfg.ASSET_TO_GROUP,
@@ -461,7 +475,20 @@ def render_sales(start: date, end: date) -> None:
         speed_df["hs_id"].astype(str), speed_df["speed_to_lead_minutes"]
     )) if not speed_df.empty else {}
 
-    # 15-min meeting most-recent per contact
+    # Build a one-shot in-window meetings frame for BDS / SME Meeting Detail
+    # tables — only meetings whose start_time falls inside [start, end].
+    _start_ts = pd.Timestamp(start)
+    _end_ts = pd.Timestamp(end) + pd.Timedelta(days=1)
+    if not meetings.empty:
+        _mst = pd.to_datetime(meetings["start_time"], utc=True, errors="coerce")
+        _mst_local = _mst.dt.tz_convert(None) if getattr(_mst.dt, "tz", None) is not None else _mst
+        _in_window_mask = (_mst_local >= _start_ts) & (_mst_local < _end_ts)
+        _meetings_in_window = meetings[_in_window_mask].copy()
+    else:
+        _meetings_in_window = meetings
+
+    # 15-min meeting most-recent per contact (all-time within data floor — used
+    # by SDR Lead Detail's "15-min Status" column so older bookings still show)
     _f15_outcome: dict = {}
     _f15_when: dict = {}
     if not meetings.empty:
@@ -473,6 +500,19 @@ def render_sales(start: date, end: date) -> None:
             _fm["contact_id"] = _fm["contact_id"].astype(str)
             _f15_outcome = dict(zip(_fm["contact_id"], _fm["outcome"].fillna("")))
             _f15_when = dict(zip(_fm["contact_id"], _fm["start_time"]))
+
+    # In-window 15-min meetings (used by BDS Meeting Detail)
+    _f15w_outcome: dict = {}
+    _f15w_when: dict = {}
+    if not _meetings_in_window.empty:
+        _typesw = _meetings_in_window["activity_type"].fillna("").astype(str).str.lower()
+        _fmw = _meetings_in_window[_typesw.str.contains("15 min", na=False)].copy()
+        if not _fmw.empty:
+            _fmw = _fmw.sort_values("start_time", ascending=False, na_position="last") \
+                .drop_duplicates(subset="contact_id", keep="first")
+            _fmw["contact_id"] = _fmw["contact_id"].astype(str)
+            _f15w_outcome = dict(zip(_fmw["contact_id"], _fmw["outcome"].fillna("")))
+            _f15w_when = dict(zip(_fmw["contact_id"], _fmw["start_time"]))
 
     # Strategy meetings — most-recent per contact + total count per contact
     _str_outcome: dict = {}
@@ -489,6 +529,28 @@ def render_sales(start: date, end: date) -> None:
                 _row = _grp.iloc[0]
                 _str_outcome[_cid] = (_row.get("outcome") or "").upper()
                 _str_when[_cid] = _row.get("start_time")
+
+    # In-window strategy meetings (used by SME Meeting Detail)
+    _strw_outcome: dict = {}
+    _strw_when: dict = {}
+    if not _meetings_in_window.empty:
+        _typesw2 = _meetings_in_window["activity_type"].fillna("").astype(str).str.lower()
+        _smw = _meetings_in_window[_typesw2.str.contains("strategy", na=False)].copy()
+        if not _smw.empty:
+            _smw = _smw.sort_values("start_time", ascending=False, na_position="last") \
+                .drop_duplicates(subset="contact_id", keep="first")
+            _smw["contact_id"] = _smw["contact_id"].astype(str)
+            _strw_outcome = dict(zip(_smw["contact_id"], _smw["outcome"].fillna("").str.upper()))
+            _strw_when = dict(zip(_smw["contact_id"], _smw["start_time"]))
+
+    # Team-and-customer exclusion set for all detail tables
+    _excl_cids: set = set()
+    if not marketing.empty:
+        for _, _c in marketing.iterrows():
+            _email = (_c.get("email") or "").lower()
+            _lc = (_c.get("lifecycle_stage") or "").lower()
+            if cfg.is_internal_team_contact(_email) or _lc == "customer":
+                _excl_cids.add(str(_c.get("hs_id")))
 
     # Deal stage flags per contact
     _won_cids: set = set()
@@ -567,6 +629,10 @@ def render_sales(start: date, end: date) -> None:
     sdr_rows = []
     for _, _c in marketing.iterrows():
         _cid = str(_c["hs_id"])
+        # Skip internal-team / existing-customer contacts (they are not leads
+        # the sales team is currently working).
+        if _cid in _excl_cids:
+            continue
         _stats = _per_contact_calls.get(_cid, {"dials": 0, "pick_ups": 0,
                                                 "contacts_made": 0, "talk_sec": 0})
         _spd = _speed_map.get(_cid)
@@ -601,6 +667,8 @@ def render_sales(start: date, end: date) -> None:
         _whens = []
         for _, _c in marketing.iterrows():
             _cid = str(_c["hs_id"])
+            if _cid in _excl_cids:
+                continue
             _stats = _per_contact_calls.get(_cid, {"dials": 0})
             _f15o = _f15_outcome.get(_cid) or ""
             if _stats["dials"] == 0 and not _f15o and not (_c.get("sdr_owner") or ""):
@@ -666,15 +734,19 @@ def render_sales(start: date, end: date) -> None:
             use_container_width=True, hide_index=True,
         )
 
-    # BDS Meeting Detail — every contact with a 15-min meeting in window
+    # BDS Meeting Detail — only contacts with an IN-WINDOW 15-min meeting.
+    # Excludes internal-team rows + existing customers (current clients
+    # shouldn't appear in the active sales workload).
     bds_rows = []
     bds_whens = []
     for _, _c in marketing.iterrows():
         _cid = str(_c["hs_id"])
-        _outcome = _f15_outcome.get(_cid)
+        if _cid in _excl_cids:
+            continue
+        _outcome = _f15w_outcome.get(_cid)
         if not _outcome:
-            continue  # only contacts with a 15-min meeting
-        _has_strat = bool(_str_outcome.get(_cid))
+            continue  # only contacts with a 15-min meeting THIS WINDOW
+        _has_strat = bool(_strw_outcome.get(_cid))
         _is_dq = _cid in _dq15_cids
         bds_rows.append({
             "Open": cfg.hubspot_contact_url(_cid),
@@ -686,7 +758,7 @@ def render_sales(start: date, end: date) -> None:
             "SME Booked After?": _has_strat,
             "DQ'd at 15-min?": _is_dq,
         })
-        bds_whens.append(_f15_when.get(_cid))
+        bds_whens.append(_f15w_when.get(_cid))
     if bds_rows:
         _bds_det = pd.DataFrame(bds_rows)
         _bds_det["15-min When (CT)"] = cfg.format_ct_series(pd.Series(bds_whens))
@@ -761,14 +833,17 @@ def render_sales(start: date, end: date) -> None:
             use_container_width=True, hide_index=True,
         )
 
-    # SME Meeting Detail — every contact with a Strategy meeting in window
+    # SME Meeting Detail — only contacts with an IN-WINDOW Strategy meeting.
+    # Same team/customer exclusion as BDS Meeting Detail.
     sme_rows = []
     sme_whens = []
     for _, _c in marketing.iterrows():
         _cid = str(_c["hs_id"])
-        _outcome = _str_outcome.get(_cid)
+        if _cid in _excl_cids:
+            continue
+        _outcome = _strw_outcome.get(_cid)
         if not _outcome:
-            continue  # only contacts with a Strategy meeting
+            continue  # only contacts with a Strategy meeting THIS WINDOW
         _won = _cid in _won_cids
         _dq = _cid in _dqstr_cids
         _cnt = _str_count.get(_cid, 0)
@@ -794,7 +869,7 @@ def render_sales(start: date, end: date) -> None:
             "Close Type": _close_type,
             "Revenue": _fmt_money(_rev) if _won and _rev else ("—" if not _won else "$0"),
         })
-        sme_whens.append(_str_when.get(_cid))
+        sme_whens.append(_strw_when.get(_cid))
     if sme_rows:
         _sme_det = pd.DataFrame(sme_rows)
         _sme_det["Strategy When (CT)"] = cfg.format_ct_series(pd.Series(sme_whens))
