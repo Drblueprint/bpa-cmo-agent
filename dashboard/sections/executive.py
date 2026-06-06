@@ -1,7 +1,7 @@
 """EXECUTIVE tab rendering — 3-row funnel view + per-rep tables."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -374,69 +374,84 @@ def render_executive(start: date, end: date) -> None:
                    f"{_fmt_money(commissions['total'])}) ÷ all customers "
                    f"({_fmt_int(total_customers)}). Excludes fixed payroll.")
 
-    # --- Cost per Stage by Source (YTD) ---
-    st.markdown("**Cost per Stage by Source — Year to Date**")
-    st.caption(
-        "What FB ad spend is buying us at each funnel stage, by source. "
-        "Counts are unique contacts that reached each stage YTD; "
-        "Cost / X = YTD Ad Spend ÷ X."
-    )
-    try:
-        year_start = _date(_date.today().year, 1, 1)
-        today_d = _date.today()
-        # YTD typeform contacts (load_marketing_contacts already filters on
-        # typeform_submission_date BETWEEN start/end)
-        ytd_typeform_contacts = load_marketing_contacts(year_start, today_d)
-        # TheraRay list members in YTD (mirrors marketing pipeline)
-        ytd_theraray = pd.DataFrame()
+    # --- Cost per Stage by Source ---
+    def _render_funnel_costs(window_start, window_end, label: str):
         try:
-            tr_memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
-            if not tr_memberships.empty:
-                _mt = pd.to_datetime(tr_memberships["membership_timestamp"],
-                                      utc=True, errors="coerce")
-                _ys = pd.Timestamp(year=year_start.year, month=1, day=1, tz="UTC")
-                _te = pd.Timestamp(year=today_d.year, month=today_d.month,
-                                    day=today_d.day, tz="UTC") + pd.Timedelta(days=1)
-                _in = tr_memberships[(_mt >= _ys) & (_mt < _te)]
-                _ids = _in["contact_id"].tolist()
-                if _ids:
-                    ytd_theraray = load_contacts_by_ids(_ids)
-                    if not ytd_theraray.empty:
-                        ytd_theraray = ytd_theraray[
-                            ~ytd_theraray["email"].fillna("").str.lower()
-                            .isin(cfg.MARKETING_EXCLUDED_EMAILS)
-                        ].copy()
-                    if not ytd_theraray.empty:
-                        ytd_theraray["typeform_asset_download"] = "TheraRay FB Lead"
-                        cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
-        except Exception:
-            pass
-        # Merge typeform + TheraRay
-        if not ytd_theraray.empty:
-            if ytd_typeform_contacts.empty:
-                ytd_all_contacts = ytd_theraray
+            typeform_contacts = load_marketing_contacts(window_start, window_end)
+            tr_contacts = pd.DataFrame()
+            try:
+                memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
+                if not memberships.empty:
+                    mt = pd.to_datetime(memberships["membership_timestamp"],
+                                          utc=True, errors="coerce")
+                    ws = pd.Timestamp(year=window_start.year,
+                                       month=window_start.month,
+                                       day=window_start.day, tz="UTC")
+                    we = pd.Timestamp(year=window_end.year,
+                                       month=window_end.month,
+                                       day=window_end.day, tz="UTC") + pd.Timedelta(days=1)
+                    in_win = memberships[(mt >= ws) & (mt < we)]
+                    ids_in = in_win["contact_id"].tolist()
+                    if ids_in:
+                        tr_contacts = load_contacts_by_ids(ids_in)
+                        if not tr_contacts.empty:
+                            tr_contacts = tr_contacts[
+                                ~tr_contacts["email"].fillna("").str.lower()
+                                .isin(cfg.MARKETING_EXCLUDED_EMAILS)
+                            ].copy()
+                        if not tr_contacts.empty:
+                            tr_contacts["typeform_asset_download"] = "TheraRay FB Lead"
+                            cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
+            except Exception:
+                pass
+            if not tr_contacts.empty:
+                if typeform_contacts.empty:
+                    all_contacts = tr_contacts
+                else:
+                    all_contacts = pd.concat(
+                        [typeform_contacts, tr_contacts], ignore_index=True
+                    ).drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
             else:
-                ytd_all_contacts = pd.concat(
-                    [ytd_typeform_contacts, ytd_theraray], ignore_index=True
-                ).drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
-        else:
-            ytd_all_contacts = ytd_typeform_contacts
+                all_contacts = typeform_contacts
 
-        # YTD FB insights (already loaded but without group; reload with group)
-        ytd_fb = load_fb_insights(year_start, today_d, time_increment_days=None)
-        # YTD meetings (any contact)
-        ytd_meetings = load_meetings_in_window(year_start, today_d)
+            fb_win = load_fb_insights(window_start, window_end,
+                                       time_increment_days=None)
+            meetings_win = load_meetings_in_window(window_start, window_end)
 
-        funnel = group_funnel_costs(
-            fb_ytd=ytd_fb,
-            contacts_ytd=ytd_all_contacts,
-            meetings_ytd=ytd_meetings,
-            deals_ytd=deals_ytd,
-            contact_deals_ytd=contact_deals_ytd,
-            asset_to_group=cfg.ASSET_TO_GROUP,
-            stages_closed_won=cfg.STAGES_CLOSED_WON,
-        )
-        if not funnel.empty:
+            # Filter YTD-loaded deals to those closed inside this window
+            # (closedate, or stage-entry date for DIY/90-Day).
+            if not deals_ytd.empty:
+                no_close_set = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
+                cdt = pd.to_datetime(deals_ytd.get("closedate"), utc=True,
+                                      errors="coerce").dt.date
+                if "stage_entry_date" in deals_ytd.columns:
+                    sed = pd.to_datetime(deals_ytd["stage_entry_date"],
+                                          utc=True, errors="coerce").dt.date
+                else:
+                    sed = pd.Series([None] * len(deals_ytd),
+                                     index=deals_ytd.index, dtype=object)
+                cre = pd.to_datetime(deals_ytd.get("createdate"), utc=True,
+                                      errors="coerce").dt.date
+                m_close = cdt.between(window_start, window_end)
+                no_close_mask = deals_ytd["dealstage"].isin(no_close_set) & cdt.isna()
+                m_stage = no_close_mask & sed.between(window_start, window_end)
+                m_create = (no_close_mask & sed.isna()
+                            & cre.between(window_start, window_end))
+                deals_win = deals_ytd[m_close | m_stage | m_create]
+            else:
+                deals_win = deals_ytd
+
+            funnel = group_funnel_costs(
+                fb_ytd=fb_win,
+                contacts_ytd=all_contacts,
+                meetings_ytd=meetings_win,
+                deals_ytd=deals_win,
+                contact_deals_ytd=contact_deals_ytd,
+                asset_to_group=cfg.ASSET_TO_GROUP,
+                stages_closed_won=cfg.STAGES_CLOSED_WON,
+            )
+            if funnel.empty:
+                return
             disp = funnel.copy()
             disp["ad_spend"] = disp["ad_spend"].map(_fmt_money)
             disp["leads"] = disp["leads"].map(_fmt_int)
@@ -459,9 +474,21 @@ def render_executive(start: date, end: date) -> None:
                 "closed_won": "Closed-Won",
                 "cost_per_close": "Cost / Close",
             })
+            st.markdown(f"**Cost per Stage by Source — {label}**")
+            st.caption(
+                f"{window_start.strftime('%b %d, %Y')} → "
+                f"{window_end.strftime('%b %d, %Y')}. Counts are unique "
+                "contacts reaching each stage; Cost / X = Ad Spend ÷ X."
+            )
             st.dataframe(disp, use_container_width=True, hide_index=True)
-    except Exception as e:
-        st.warning(f"Cost-per-stage breakdown unavailable: {e}")
+        except Exception as e:
+            st.warning(f"Cost-per-stage ({label}) unavailable: {e}")
+
+    _today = _date.today()
+    _year_start = _date(_today.year, 1, 1)
+    _rolling_30_start = _today - timedelta(days=30)
+    _render_funnel_costs(_year_start, _today, "Year to Date")
+    _render_funnel_costs(_rolling_30_start, _today, "Last 30 Days")
 
     st.divider()
 
