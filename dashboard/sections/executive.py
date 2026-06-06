@@ -15,6 +15,7 @@ from dashboard.data.hubspot_loader import (
     load_meetings_for_contacts,
     load_contacts_by_ids,
     load_closed_deals_ytd,
+    load_list_memberships,
 )
 from dashboard.data.reconcile import (
     executive_kpis,
@@ -23,6 +24,7 @@ from dashboard.data.reconcile import (
     build_closed_deals_table,
     compute_ytd_money,
     compute_close_commissions,
+    group_marketing_metrics,
 )
 
 
@@ -109,6 +111,38 @@ def render_executive(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Closed-deal attribution lookup failed: {e}")
 
+    # Merge TheraRay contacts (HubSpot list 6280 — they don't fill a typeform).
+    # Filtered by membership_timestamp within window (mirrors marketing.py).
+    try:
+        memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
+        if not memberships.empty:
+            mt = pd.to_datetime(memberships["membership_timestamp"], utc=True, errors="coerce")
+            start_ts = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
+            end_ts = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
+            in_window = memberships[(mt >= start_ts) & (mt < end_ts)]
+            window_ids = in_window["contact_id"].tolist()
+            if window_ids:
+                tr_contacts = load_contacts_by_ids(window_ids)
+                if not tr_contacts.empty:
+                    tr_contacts = tr_contacts[
+                        ~tr_contacts["email"].fillna("").str.lower().isin(cfg.MARKETING_EXCLUDED_EMAILS)
+                    ].copy()
+                if not tr_contacts.empty:
+                    ts_map = dict(zip(in_window["contact_id"].astype(str), in_window["membership_timestamp"]))
+                    tr_contacts["typeform_asset_download"] = "TheraRay FB Lead"
+                    tr_contacts["typeform_submission_date"] = tr_contacts["hs_id"].astype(str).map(ts_map)
+                    cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
+                    if contacts.empty:
+                        contacts = tr_contacts
+                    else:
+                        contacts = pd.concat([contacts, tr_contacts], ignore_index=True) \
+                            .drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
+                    # Refresh meetings + contact_deals for the expanded set
+                    contact_deals = load_contact_deals(contacts["hs_id"].tolist())
+                    meetings = load_meetings_for_contacts(contacts["hs_id"].tolist(), data_floor_days_back=floor_days)
+    except Exception as e:
+        st.warning(f"TheraRay merge failed: {e}")
+
     # === YTD closed-deal data (separate pull -- always Jan 1 -> today) ===
     try:
         deals_ytd, contact_deals_ytd, contacts_ytd = load_closed_deals_ytd(
@@ -191,6 +225,34 @@ def render_executive(start: date, end: date) -> None:
     c3.metric("CPL", _fmt_money(kpis["cpl"]), help="Spend / Marketing Leads")
     c4.metric("15-min Calls Booked", _fmt_int(kpis["discovery_booked"]),
               help="15-min discovery meetings booked in the window.")
+
+    # Per-group breakdown of the 4 KPIs above (Chiro, EMX, PT Recovery, TheraRay, ...)
+    try:
+        group_metrics = group_marketing_metrics(
+            fb, contacts, contact_deals, deals,
+            asset_to_group=cfg.ASSET_TO_GROUP,
+            stages_15min_booked=cfg.STAGES_15MIN_BOOKED | cfg.STAGES_15MIN_HELD,
+            hyros=None,
+            stages_strategy=cfg.STAGES_STRATEGY_BOOKED | cfg.STAGES_STRATEGY_HELD,
+            stages_closed_won=cfg.STAGES_CLOSED_WON,
+            meetings=meetings,
+        )
+        if not group_metrics.empty:
+            bd = group_metrics.copy()
+            bd["cpl_calc"] = bd.apply(
+                lambda r: (r["spend"] / r["marketing_leads"])
+                if r["marketing_leads"] else None, axis=1,
+            )
+            bd["Spend"] = bd["spend"].map(_fmt_money)
+            bd["Marketing Leads"] = bd["marketing_leads"].map(_fmt_int)
+            bd["CPL"] = bd["cpl_calc"].map(_fmt_money)
+            bd["15-min Calls"] = bd["calls_booked"].map(_fmt_int)
+            bd = bd[["group", "Spend", "Marketing Leads", "CPL", "15-min Calls"]] \
+                .rename(columns={"group": "Group"})
+            with st.expander("Breakdown by group", expanded=True):
+                st.dataframe(bd, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.warning(f"Group breakdown unavailable: {e}")
 
     st.divider()
 
@@ -300,6 +362,84 @@ def render_executive(start: date, end: date) -> None:
             "show_rate": "Show %",
         })
         st.dataframe(sdr_display, use_container_width=True, hide_index=True)
+
+    # === Lead Detail — every marketing lead in window with status ===
+    if not contacts_for_reps.empty:
+        leads = contacts_for_reps.copy()
+        # Self booking flag — sdr_owner mapped to Self Booking ID
+        leads["self_booking"] = (
+            leads["sdr_owner"].fillna("").astype(str) == "1266266951"
+        )
+        # Most recent 15-min meeting per contact (any outcome)
+        if not meetings.empty:
+            types_m = meetings["activity_type"].fillna("").astype(str).str.lower()
+            fifteen = meetings[types_m.str.contains("15 min", na=False)].copy()
+            if not fifteen.empty:
+                fifteen = fifteen.sort_values(
+                    "start_time", ascending=False, na_position="last"
+                ).drop_duplicates(subset="contact_id", keep="first")
+                fifteen["contact_id"] = fifteen["contact_id"].astype(str)
+                m_outcome = dict(zip(fifteen["contact_id"], fifteen["outcome"].fillna("")))
+                m_when = dict(zip(fifteen["contact_id"], fifteen["start_time"]))
+            else:
+                m_outcome, m_when = {}, {}
+        else:
+            m_outcome, m_when = {}, {}
+
+        def _status(hs_id) -> str:
+            o = (m_outcome.get(str(hs_id)) or "").upper()
+            if not o: return "Not Booked"
+            return o
+
+        leads["meeting_status"] = leads["hs_id"].apply(_status)
+        leads["meeting_when_raw"] = leads["hs_id"].astype(str).map(m_when)
+        leads["meeting_when"] = cfg.format_ct_series(leads["meeting_when_raw"])
+        leads["group"] = leads["typeform_asset_download"].map(cfg.ASSET_TO_GROUP).fillna("")
+        leads["sdr_name"] = leads["sdr_owner"].map(cfg.resolve_owner)
+        leads["bds_name"] = leads["bds"].map(cfg.resolve_owner)
+        leads["hubspot_link"] = leads["hs_id"].apply(cfg.hubspot_contact_url)
+        # Sort: newest typeform submission first
+        leads["_sort"] = pd.to_datetime(
+            leads["typeform_submission_date"], utc=True, errors="coerce",
+        )
+        leads = leads.sort_values("_sort", ascending=False, na_position="last")
+        detail = leads[[
+            "hubspot_link", "name", "email",
+            "typeform_asset_download", "group",
+            "sdr_name", "self_booking", "meeting_status", "meeting_when",
+            "bds_name", "lifecycle_stage",
+        ]].rename(columns={
+            "hubspot_link": "Open",
+            "name": "Contact",
+            "email": "Email",
+            "typeform_asset_download": "Asset",
+            "group": "Group",
+            "sdr_name": "SDR",
+            "self_booking": "Self Booked",
+            "meeting_status": "15-min Status",
+            "meeting_when": "15-min Meeting (CT)",
+            "bds_name": "BDS",
+            "lifecycle_stage": "Lifecycle",
+        })
+        # Caption with quick totals
+        total_leads = int(len(detail))
+        self_booked_n = int(leads["self_booking"].sum())
+        booked_n = int((leads["meeting_status"] != "Not Booked").sum())
+        st.markdown(
+            f"**Lead Detail** — {total_leads} marketing leads · "
+            f"{booked_n} have a 15-min meeting on record · "
+            f"{self_booked_n} self-booked"
+        )
+        st.dataframe(
+            detail, use_container_width=True, hide_index=True,
+            column_config={
+                "Open": st.column_config.LinkColumn(
+                    "Open", help="Open contact in HubSpot",
+                    display_text="HubSpot ↗",
+                ),
+                "Self Booked": st.column_config.CheckboxColumn("Self Booked"),
+            },
+        )
 
     st.divider()
 
