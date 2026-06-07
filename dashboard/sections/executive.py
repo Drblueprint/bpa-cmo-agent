@@ -279,9 +279,12 @@ def render_executive(start: date, end: date) -> None:
               delta_color="off",
               help="Strategy meetings COMPLETED ÷ Strategy meetings booked.")
     c5.metric("Close Rate", _fmt_pct(kpis["close_rate"]),
-              delta=f"{kpis['closed_won']} / {kpis['sme_held']}",
+              delta=f"{kpis['closed_won_from_funnel']} / {kpis['sme_held']}",
               delta_color="off",
-              help="Closed-won deals ÷ Strategy meetings completed.")
+              help="Closed-won contacts who also held a Strategy ÷ Strategy "
+                   "meetings completed. Funnel-intersected so the rate stays "
+                   "≤ 100%. Total YTD closes (incl. ones without a Strategy "
+                   "meeting on record) show in the Money section below.")
 
     # Per-group breakdown of the 5 conversion rates (cells show rate · numerator/denominator)
     try:
@@ -315,7 +318,7 @@ def render_executive(start: date, end: date) -> None:
                 "Discovery Show %": _cell(kg["discovery_show_rate"], kg["discovery_held"], kg["discovery_booked"]),
                 "Disco → SME Set %": _cell(kg["sme_set_rate"], kg["sme_booked"], kg["discovery_held"]),
                 "SME Show %": _cell(kg["sme_show_rate"], kg["sme_held"], kg["sme_booked"]),
-                "Close %": _cell(kg["close_rate"], kg["closed_won"], kg["sme_held"]),
+                "Close %": _cell(kg["close_rate"], kg["closed_won_from_funnel"], kg["sme_held"]),
             })
         if conv_rows:
             with st.expander("Conversions by group", expanded=True):

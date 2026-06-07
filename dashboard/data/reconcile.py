@@ -460,10 +460,21 @@ def executive_kpis(
         mask = group_df["outcome"].fillna("").astype(str).str.upper().str.startswith(prefix)
         return set(group_df.loc[mask, "contact_id"].astype(str))
 
-    discovery_booked = len(set(fifteen["contact_id"].astype(str))) if not fifteen.empty else 0
-    discovery_held = len(_has_outcome_prefix(fifteen, "COMPLETE"))
-    sme_booked = len(set(strategy["contact_id"].astype(str))) if not strategy.empty else 0
-    sme_held = len(_has_outcome_prefix(strategy, "COMPLETE"))
+    # Funnel-stage contact sets — intersection-based so each stage is a strict
+    # subset of the previous. Guarantees the funnel rates can never exceed 100%.
+    discovery_booked_cids = set(fifteen["contact_id"].astype(str)) if not fifteen.empty else set()
+    discovery_held_cids = _has_outcome_prefix(fifteen, "COMPLETE")
+    strategy_booked_cids_raw = set(strategy["contact_id"].astype(str)) if not strategy.empty else set()
+    strategy_held_cids_raw = _has_outcome_prefix(strategy, "COMPLETE")
+    # Intersect strategy_booked with discovery_held so the rate measures
+    # "of disco-holds, how many advanced to a strategy booking".
+    sme_booked_cids = strategy_booked_cids_raw & discovery_held_cids
+    sme_held_cids = strategy_held_cids_raw & sme_booked_cids
+
+    discovery_booked = len(discovery_booked_cids)
+    discovery_held = len(discovery_held_cids)
+    sme_booked = len(sme_booked_cids)
+    sme_held = len(sme_held_cids)
 
     won_set = set(stages_closed_won)
     if not deals_filtered.empty and won_set:
@@ -472,7 +483,18 @@ def executive_kpis(
     else:
         won_deals_df = deals_filtered.iloc[0:0] if not deals_filtered.empty else deals_filtered
 
-    closed_won_count = int(len(won_deals_df))
+    # closed_won_count = unique CONTACTS with a closed-won deal (not raw deal
+    # count) — drives Avg Deal Size + CAC + Money cards.
+    # closed_won_from_funnel = subset that also held a Strategy — drives the
+    # Close Rate funnel card so it stays monotonic ≤ 100%.
+    won_contact_ids: set = set()
+    if not won_deals_df.empty and not contact_deals.empty:
+        won_contact_ids = set(
+            contact_deals[contact_deals["deal_id"].isin(won_deals_df["deal_id"])]
+            ["contact_id"].astype(str)
+        )
+    closed_won_count = len(won_contact_ids)
+    closed_won_from_funnel = len(won_contact_ids & sme_held_cids)
 
     # --- Row 3: Money ---
     # Revenue Option C: deal.amount if > 0, else group default
@@ -525,12 +547,12 @@ def executive_kpis(
     else:
         sales_cycle_days = None
 
-    # --- Conversion rates ---
+    # --- Conversion rates (each stage strictly subset of the prior) ---
     schedule_rate = _safe_div(discovery_booked, new_leads)
     discovery_show_rate = _safe_div(discovery_held, discovery_booked)
     sme_set_rate = _safe_div(sme_booked, discovery_held)
     sme_show_rate = _safe_div(sme_held, sme_booked)
-    close_rate = _safe_div(closed_won_count, sme_held)
+    close_rate = _safe_div(closed_won_from_funnel, sme_held)
 
     return {
         # Row 1
@@ -545,6 +567,7 @@ def executive_kpis(
         "sme_booked": sme_booked,
         "sme_held": sme_held,
         "closed_won": closed_won_count,
+        "closed_won_from_funnel": closed_won_from_funnel,
         # Row 2 rates
         "schedule_rate": schedule_rate,
         "discovery_show_rate": discovery_show_rate,
