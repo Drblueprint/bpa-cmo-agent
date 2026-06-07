@@ -165,6 +165,18 @@ def render_sales(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Window contact attribution lookup failed: {e}")
 
+    # Keep a separate "full" meetings frame (180-day floor) for the SDR Lead
+    # Detail "latest 15-min on record" lookup. ALL ROLLUPS (BDS/SME) use
+    # the windowed meetings below so their counts align with the dashboard
+    # window — Appointments/Shows/Strategy stop counting meetings outside
+    # the active view.
+    meetings_full = meetings.copy()
+    if not meetings.empty:
+        _mstart = pd.to_datetime(meetings["start_time"], utc=True, errors="coerce")
+        _ws = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
+        _we = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
+        meetings = meetings[(_mstart >= _ws) & (_mstart < _we)].reset_index(drop=True)
+
     # YTD closed deals (used by Money cards + Closed Deals YTD section)
     try:
         deals_ytd, contact_deals_ytd, contacts_ytd = load_closed_deals_ytd(
@@ -508,13 +520,14 @@ def render_sales(start: date, end: date) -> None:
     else:
         _meetings_in_window = meetings
 
-    # 15-min meeting most-recent per contact (all-time within data floor — used
-    # by SDR Lead Detail's "15-min Status" column so older bookings still show)
+    # 15-min meeting most-recent per contact ACROSS THE 180-DAY DATA FLOOR
+    # (not the dashboard window) — used by SDR Lead Detail's "15-min Status"
+    # column so historical bookings still surface as context for each lead.
     _f15_outcome: dict = {}
     _f15_when: dict = {}
-    if not meetings.empty:
-        _types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        _fm = meetings[_types.str.contains("15 min", na=False)].copy()
+    if not meetings_full.empty:
+        _types = meetings_full["activity_type"].fillna("").astype(str).str.lower()
+        _fm = meetings_full[_types.str.contains("15 min", na=False)].copy()
         if not _fm.empty:
             _fm = _fm.sort_values("start_time", ascending=False, na_position="last") \
                 .drop_duplicates(subset="contact_id", keep="first")
@@ -535,13 +548,15 @@ def render_sales(start: date, end: date) -> None:
             _f15w_outcome = dict(zip(_fmw["contact_id"], _fmw["outcome"].fillna("")))
             _f15w_when = dict(zip(_fmw["contact_id"], _fmw["start_time"]))
 
-    # Strategy meetings — most-recent per contact + total count per contact
+    # Strategy meetings — most-recent + total count per contact, ACROSS THE
+    # 180-DAY DATA FLOOR (for SDR Lead Detail context). In-window strategy
+    # state lives in _strw_outcome / _strw_when below.
     _str_outcome: dict = {}
     _str_when: dict = {}
     _str_count: dict = _dd(int)
-    if not meetings.empty:
-        _types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        _sm = meetings[_types.str.contains("strategy", na=False)].copy()
+    if not meetings_full.empty:
+        _types = meetings_full["activity_type"].fillna("").astype(str).str.lower()
+        _sm = meetings_full[_types.str.contains("strategy", na=False)].copy()
         if not _sm.empty:
             _sm = _sm.sort_values("start_time", ascending=False, na_position="last")
             _sm["contact_id"] = _sm["contact_id"].astype(str)
@@ -607,11 +622,22 @@ def render_sales(start: date, end: date) -> None:
                               "contact_id"].astype(str)
         )
 
+    # Window-label helper used in section captions
+    _win_label = f"**Window: {start.strftime('%b %-d')} – {end.strftime('%b %-d, %Y')}**" \
+        if hasattr(start, "strftime") else f"**Window: {start} – {end}**"
+    # Defensive fallback for Windows where %-d isn't supported
+    try:
+        _win_label = f"**Window: {start.strftime('%b %d').lstrip('0').replace(' 0', ' ')} – {end.strftime('%b %d, %Y').lstrip('0').replace(' 0', ' ')}**"
+    except Exception:
+        _win_label = f"**Window: {start} – {end}**"
+
     # ----- Section: SDR Performance (Wave 1 + Wave 2) -----
     st.subheader("SDR Performance")
     st.caption(
-        "Dials + pick-ups + real conversations + appointments from AirCall + "
-        "HubSpot. **Pick Up** = call answered. **Contact Made** = answered + "
+        f"{_win_label}. Dials, pick-ups, contacts-made + talk time from "
+        "**AirCall** (calls placed in window). Appts Booked = unique contacts "
+        "in window with a 15-min meeting assigned to this SDR. "
+        f"**Pick Up** = call answered. **Contact Made** = answered + "
         f"≥{cfg.AIRCALL_CONNECT_DURATION_SEC}s (real conversation, filters "
         "voicemail). **Booking %** = Appts Booked / Contacts Made."
     )
@@ -726,9 +752,11 @@ def render_sales(start: date, end: date) -> None:
     # ----- Section: BDS Performance (Wave 1) -----
     st.subheader("BDS Performance")
     st.caption(
-        "BDS holds the 15-min Discovery, qualifies the prospect, and books the "
-        "Strategy when qualified. **Show %** = Shows / Appointments · "
-        "**Booking %** = SME Booked / Shows · **DQ %** = Disqualified / Shows."
+        f"{_win_label}. 15-min Discovery meetings whose **start_time falls in "
+        "this window**, grouped by the BDS assigned. BDS holds the Discovery, "
+        "qualifies the prospect, and books the Strategy when qualified. "
+        "**Show %** = Shows / Appointments · **Booking %** = SME Booked / "
+        "Shows · **DQ %** = Disqualified / Shows."
     )
     bds = sales_bds_rollup(
         contacts=marketing,
@@ -809,9 +837,12 @@ def render_sales(start: date, end: date) -> None:
     # ----- Section: SME Performance (Wave 1 + Wave 2) -----
     st.subheader("SME Performance")
     st.caption(
-        "SME holds the Strategy and closes. **First Close** = closed on the "
-        "first Strategy call · **FU Close** = closed after a follow-up call. "
-        "**Close %** = total closed / showed. **DQ %** = disqualified / showed."
+        f"{_win_label}. Strategy meetings whose **start_time falls in this "
+        "window**, grouped by the SME assigned. Deals closed = won deals "
+        "whose closedate (or stage-entry date for DIY/90-Day) is in window. "
+        "**First Close** = closed on the first Strategy call · **FU Close** "
+        "= closed after a follow-up call. **Close %** = total closed / "
+        "showed · **DQ %** = disqualified / showed."
     )
     sme = sales_sme_rollup(
         contacts=marketing,
