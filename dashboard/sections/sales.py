@@ -249,62 +249,94 @@ def render_sales(start: date, end: date) -> None:
                 )
                 c_lite = c_lite[~_excl].reset_index(drop=True)
             pdf = cd_join.merge(c_lite, left_on="contact_id", right_on="hs_id", how="inner")
-            pdf["15-min Booked"] = pdf["dealstage"].isin(stages["15min_booked"])
-            pdf["15-min Held"]   = pdf["dealstage"].isin(stages["15min_held"])
-            pdf["Strategy Booked"] = pdf["dealstage"].isin(stages["strategy_booked"])
-            pdf["Strategy Held"]   = pdf["dealstage"].isin(stages["strategy_held"])
-            pdf["Closed-Won"]      = pdf["dealstage"].isin(stages["closedwon"])
-            # Restrict to deals whose CURRENT stage is in one of the funnel
-            # buckets shown by the top KPIs. Otherwise old closed-won deals
-            # that got hs_lastmodifieddate touched this month bloat the view.
+            # Keep only deals whose CURRENT stage is an early funnel bucket
+            # (15-min Booked/Held or Strategy Booked/Held). Closed-Won and
+            # other stages are dropped.
             in_funnel = (
-                pdf["15-min Booked"] | pdf["15-min Held"]
-                | pdf["Strategy Booked"] | pdf["Strategy Held"]
+                pdf["dealstage"].isin(stages["15min_booked"])
+                | pdf["dealstage"].isin(stages["strategy_booked"])
             )
             pdf = pdf[in_funnel].copy()
-            pdf["Marketing?"]      = pdf["typeform_asset_download"].fillna("") \
-                                        .astype(str).str.strip() != ""
-            pdf["Open"]            = pdf["contact_id"].apply(cfg.hubspot_contact_url)
-            pdf["Asset"]           = pdf["typeform_asset_download"].fillna("")
-            pdf["Group"]           = pdf["Asset"].map(cfg.ASSET_TO_GROUP).fillna("")
-            pdf["SDR"]             = pdf["sdr_owner"].map(cfg.resolve_owner) if "sdr_owner" in pdf.columns else "(unassigned)"
-            pdf["BDS"]             = pdf["bds"].map(cfg.resolve_owner) if "bds" in pdf.columns else "(unassigned)"
-            out = pdf[["Open", "name", "email", "SDR", "BDS",
-                       "Asset", "Group", "Marketing?", "dealstage",
-                       "15-min Booked", "15-min Held",
-                       "Strategy Booked", "Strategy Held"]] \
-                 .rename(columns={"name": "Contact", "email": "Email",
-                                  "dealstage": "Stage ID"})
-            # Sort: most-advanced stage first, then marketing flag
+
+            # Single readable current-stage label (most-advanced wins) in place
+            # of the raw HubSpot stage ID.
+            def _stage_name(s):
+                if s in cfg.STAGES_STRATEGY_HELD:
+                    return "Strategy Held"
+                if s in cfg.STAGES_STRATEGY_BOOKED:
+                    return "Strategy Booked"
+                if s in cfg.STAGES_15MIN_HELD:
+                    return "15-min Held"
+                if s in cfg.STAGES_15MIN_BOOKED:
+                    return "15-min Booked"
+                return "(open)"
+            _rank = {"Strategy Held": 4, "Strategy Booked": 3,
+                     "15-min Held": 2, "15-min Booked": 1, "(open)": 0}
+            pdf["Stage"] = pdf["dealstage"].map(_stage_name)
+
+            # Deal age from createdate. Every loaded deal was modified inside
+            # the window (that is the loader filter), so "last modified" cannot
+            # flag a zombie. createdate can: a deal parked in an early stage for
+            # months is stalled, not active pipeline.
+            _created = pd.to_datetime(pdf["createdate"], utc=True, errors="coerce")
+            _age = _created.dt.date.map(
+                lambda d: (end - d).days if pd.notna(d) else None
+            )
+            pdf["Age (days)"] = pd.to_numeric(_age, errors="coerce")
+            # Drop only the indisputable zombies (deals parked in an early stage
+            # for over a year). BPA's open early-stage deals already skew old, so
+            # a tighter cutoff would empty the view; the Age column lets the user
+            # judge the merely-stale ones (5-10 months) themselves.
+            STALE_DEAL_DAYS = 365
+            pdf = pdf[pdf["Age (days)"].fillna(0) <= STALE_DEAL_DAYS].copy()
+
+            pdf["Marketing?"] = pdf["typeform_asset_download"].fillna("") \
+                                    .astype(str).str.strip() != ""
+            pdf["Open"]    = pdf["contact_id"].apply(cfg.hubspot_contact_url)
+            pdf["Asset"]   = pdf["typeform_asset_download"].fillna("")
+            pdf["Group"]   = pdf["Asset"].map(cfg.ASSET_TO_GROUP).fillna("")
+            pdf["SDR"]     = pdf["sdr_owner"].map(cfg.resolve_owner) if "sdr_owner" in pdf.columns else "(unassigned)"
+            pdf["BDS"]     = pdf["bds"].map(cfg.resolve_owner) if "bds" in pdf.columns else "(unassigned)"
+            pdf["Created"] = cfg.format_ct_series(
+                pdf["createdate"], fmt=cfg.DEFAULT_DATE_FORMAT
+            )
+            pdf["_rank"]   = pdf["Stage"].map(_rank)
+            out = pdf[["Open", "name", "email", "SDR", "BDS", "Asset", "Group",
+                       "Marketing?", "Stage", "Created", "Age (days)", "_rank"]] \
+                 .rename(columns={"name": "Contact", "email": "Email"})
+            # Most-advanced stage first, then marketing leads, then freshest.
             out = out.sort_values(
-                ["Strategy Held", "Strategy Booked",
-                 "15-min Held", "15-min Booked", "Marketing?"],
-                ascending=False,
+                ["_rank", "Marketing?", "Age (days)"],
+                ascending=[False, False, True],
             ).reset_index(drop=True)
+            out = out.drop(columns=["_rank"])
+            out["Age (days)"] = out["Age (days)"].map(
+                lambda x: f"{int(x)}" if pd.notna(x) else "—"
+            )
+            _win = (f"{start.strftime('%b %d').replace(' 0', ' ')} – "
+                    f"{end.strftime('%b %d, %Y').replace(' 0', ' ')}")
             with st.expander(
                 f"Pipeline detail — {len(out)} active funnel rows",
                 expanded=False,
             ):
                 st.caption(
-                    "One row per (deal × contact) where the deal's CURRENT "
-                    "stage is 15-min Booked / Held or Strategy Booked / Held "
-                    "and the contact is not an internal-team member or "
-                    "existing customer. Closed-Won deals and customer "
-                    "re-engagements are excluded."
+                    f"Window: {_win}. One row per OPEN deal whose current stage "
+                    "is 15-min Booked / Held or Strategy Booked / Held, for a "
+                    "lead in this window. Internal-team members, existing "
+                    "customers, and Closed-Won deals are excluded. Deals parked "
+                    "in an early stage for over a year (dead / zombie deals) are "
+                    "dropped too. Stage = the deal's current HubSpot stage; "
+                    "Age = days since the deal was created."
                 )
                 st.dataframe(
                     cfg.style_unassigned(
                         out, columns=["SDR", "BDS", "Asset", "Group"],
-                        green_when=lambda r: bool(r.get("Strategy Held")),
+                        green_when=lambda r: str(r.get("Stage")) == "Strategy Held",
                     ),
                     use_container_width=True, hide_index=True,
                     column_config={
                         "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
                         "Marketing?": st.column_config.CheckboxColumn("Mkt?"),
-                        "15-min Booked": st.column_config.CheckboxColumn("15B"),
-                        "15-min Held": st.column_config.CheckboxColumn("15H"),
-                        "Strategy Booked": st.column_config.CheckboxColumn("SB"),
-                        "Strategy Held": st.column_config.CheckboxColumn("SH"),
                     },
                 )
         except Exception as e:
