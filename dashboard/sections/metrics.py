@@ -76,9 +76,15 @@ def _render_daily_summary() -> None:
 
     st.subheader("Daily Summary")
     st.caption(
-        f"Month to Date ({month_start.strftime('%b %d')} – "
-        f"{today.strftime('%b %d, %Y')}) and yesterday "
-        f"({yesterday.strftime('%b %d, %Y')}). Built for the morning chat post."
+        f"**Windows:** MTD ({month_start.strftime('%b %d')} – "
+        f"{today.strftime('%b %d, %Y')}) + Yesterday "
+        f"({yesterday.strftime('%b %d, %Y')}). "
+        "**Lead-counting signal:** `typeform_submission_date` (matches the "
+        "VA's morning post format). **All Leads** = anyone with a typeform "
+        "submission in window. **New Leads** = subset whose contact "
+        "`createdate` is also in window (didn't exist in HubSpot before). "
+        "Filters: customer lifecycle + internal team + Kurt's personal "
+        "email excluded — same as Executive + Sales tabs."
     )
 
     # --- Data loaders ---
@@ -221,9 +227,15 @@ def render_metrics() -> None:
 
     st.subheader("BPA Weekly Metrics")
     st.caption(
-        f"{cfg.METRICS_WEEKS_BACK}-week rolling view · Newest week ending "
+        f"**{cfg.METRICS_WEEKS_BACK}-week rolling view** · Newest week ending "
         f"{ranges[0][1].strftime('%b')} {ranges[0][1].day}, {ranges[0][1].year} · "
-        f"oldest week starting {ranges[-1][0].strftime('%b')} {ranges[-1][0].day}"
+        f"oldest week starting {ranges[-1][0].strftime('%b')} {ranges[-1][0].day}. "
+        "Each cell counts events whose date falls in that week: "
+        "**ad spend** = FB `date_start`, **leads** = `typeform_submission_date`, "
+        "**15-min / Strategy** = meeting `start_time`, **New Customers** = "
+        "deal `closedate` (or `stage_entry_date` for DIY/90-Day). "
+        "**New Customers** column totals the same closed-won deals that drive "
+        "Executive Money YTD (Total Customers)."
     )
 
     # --- Data loaders, each in its own try/except ---
