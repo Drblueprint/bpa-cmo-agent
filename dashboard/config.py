@@ -180,6 +180,8 @@ FORMER_OWNER_IDS: set[str] = {
     "135970974",  # Brent Weldon
     "337212494",  # Dylan Dault
     "377861017",  # Dr. Samantha Luther
+    "56929167",   # Dr. Michael McCracken
+    "78947719",   # Gage Humbarger
 }
 
 
