@@ -171,11 +171,24 @@ HS_OWNER_NAMES: dict[str, str] = {
     "135970974": "Brent Weldon",
 }
 
+# Former team members no longer with BPA in 2026. When their ID appears as
+# an owner on a contact / deal / meeting, resolve_owner() returns
+# "(unassigned)" so it red-flags in the dashboard — prompts reassignment.
+# Keep in sync with HS_OWNER_NAMES (these IDs ARE in the names map so we
+# could still surface the historical attribution if needed).
+FORMER_OWNER_IDS: set[str] = {
+    "135970974",  # Brent Weldon
+    "337212494",  # Dylan Dault
+    "377861017",  # Dr. Samantha Luther
+}
+
 
 def resolve_owner(value) -> str:
     """Map a HubSpot owner field value (numeric ID, string, or None) to a name.
 
     - If value is None/empty: "(unassigned)"
+    - If value is in FORMER_OWNER_IDS: "(unassigned)" so stale ownership
+      red-flags in the dashboard and prompts reassignment.
     - If value is in HS_OWNER_NAMES: returns the mapped name.
     - Otherwise: returns the raw value with "(unknown)" suffix.
     """
@@ -183,6 +196,8 @@ def resolve_owner(value) -> str:
         return "(unassigned)"
     s = str(value).strip()
     if not s:
+        return "(unassigned)"
+    if s in FORMER_OWNER_IDS:
         return "(unassigned)"
     if s in HS_OWNER_NAMES:
         return HS_OWNER_NAMES[s]
