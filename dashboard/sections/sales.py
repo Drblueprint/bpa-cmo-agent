@@ -844,11 +844,28 @@ def render_sales(start: date, end: date) -> None:
         "= closed after a follow-up call. **Close %** = total closed / "
         "showed · **DQ %** = disqualified / showed."
     )
+    # Filter deals to those actually CLOSED in window so the rollup doesn't
+    # count old closes that merely got hs_lastmodifieddate touched (which is
+    # what load_deals_in_window filters on). closedate — or stage_entry_date
+    # for DIY/90-Day stages with no closedate — must be in [start, end].
+    if not deals.empty:
+        _no_close = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
+        _cdt = pd.to_datetime(deals.get("closedate"), utc=True, errors="coerce").dt.date
+        _sed = (pd.to_datetime(deals["stage_entry_date"], utc=True, errors="coerce").dt.date
+                 if "stage_entry_date" in deals.columns else pd.Series([None] * len(deals), index=deals.index, dtype=object))
+        _cre = pd.to_datetime(deals.get("createdate"), utc=True, errors="coerce").dt.date
+        _m_close = _cdt.between(start, end)
+        _no_close_mask = deals["dealstage"].isin(_no_close) & _cdt.isna()
+        _m_stage = _no_close_mask & _sed.between(start, end)
+        _m_create = _no_close_mask & _sed.isna() & _cre.between(start, end)
+        deals_for_sme = deals[_m_close | _m_stage | _m_create]
+    else:
+        deals_for_sme = deals
     sme = sales_sme_rollup(
         contacts=marketing,
         meetings=meetings,
         contact_deals=contact_deals,
-        deals=deals,
+        deals=deals_for_sme,
         asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         stages_closed_won=cfg.STAGES_CLOSED_WON,
