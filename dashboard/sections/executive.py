@@ -656,8 +656,24 @@ def render_executive(start: date, end: date) -> None:
         st.subheader("SME Performance")
         st.caption("SME holds the Strategy call and closes the deal. Tracks: "
                    "strategy held → deals closed → revenue.")
+        # Filter deals to those actually CLOSED in window so the rollup
+        # doesn't count old closes that got hs_lastmodifieddate touched.
+        # closedate (or stage_entry_date for DIY/90-Day) in [start, end].
+        if not deals.empty:
+            _no_close = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
+            _cdt = pd.to_datetime(deals.get("closedate"), utc=True, errors="coerce").dt.date
+            _sed = (pd.to_datetime(deals["stage_entry_date"], utc=True, errors="coerce").dt.date
+                     if "stage_entry_date" in deals.columns else pd.Series([None] * len(deals), index=deals.index, dtype=object))
+            _cre = pd.to_datetime(deals.get("createdate"), utc=True, errors="coerce").dt.date
+            _m_close = _cdt.between(start, end)
+            _no_close_mask = deals["dealstage"].isin(_no_close) & _cdt.isna()
+            _m_stage = _no_close_mask & _sed.between(start, end)
+            _m_create = _no_close_mask & _sed.isna() & _cre.between(start, end)
+            deals_for_sme = deals[_m_close | _m_stage | _m_create]
+        else:
+            deals_for_sme = deals
         sme = executive_sme_rollup(
-            contacts_for_reps, meetings, contact_deals, deals,
+            contacts_for_reps, meetings, contact_deals, deals_for_sme,
             asset_to_group=cfg.ASSET_TO_GROUP,
             group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
             stages_closed_won=cfg.STAGES_CLOSED_WON,
