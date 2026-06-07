@@ -686,8 +686,22 @@ def render_executive(start: date, end: date) -> None:
     # which calls and which leads are in play.
     # =============================================================
     if not meetings.empty and not contacts_for_reps.empty:
-        # Contact lookup with needed properties
-        contact_lookup = contacts_for_reps[[
+        # Exclude existing customers + internal team — they're not active
+        # leads being worked. Existing-customer signal = lifecycle == "customer"
+        # OR contract_tier populated (catches customers whose lifecycle wasn't
+        # promoted). Same rule the Sales tab uses.
+        cfr = contacts_for_reps.copy()
+        cfr = cfr[
+            ~cfr.apply(
+                lambda r: (
+                    cfg.is_internal_team_contact(r.get("email"))
+                    or cfg.is_existing_customer(r.get("lifecycle_stage"),
+                                                  r.get("contract_tier"))
+                ),
+                axis=1,
+            )
+        ]
+        contact_lookup = cfr[[
             "hs_id", "name", "email", "bds", "sme", "typeform_asset_download",
         ]].rename(columns={"hs_id": "contact_id"})
         contact_lookup["contact_id"] = contact_lookup["contact_id"].astype(str)
@@ -696,12 +710,17 @@ def render_executive(start: date, end: date) -> None:
         meetings_x["contact_id"] = meetings_x["contact_id"].astype(str)
         meetings_x = meetings_x.merge(contact_lookup, on="contact_id", how="inner")
 
+        # Filter meetings to the current dashboard window (start_time in window).
+        # Without this, historical meetings within the 180-day data floor leak
+        # into the Call Detail tables (e.g., a Dec 2025 strategy call appearing
+        # on a 2026 YTD view).
+        _mstart = pd.to_datetime(meetings_x["start_time"], utc=True, errors="coerce")
+        _ws = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
+        _we = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
+        meetings_x = meetings_x[(_mstart >= _ws) & (_mstart < _we)]
+
         # Format start_time to Central Time
-        st_dt = pd.to_datetime(meetings_x["start_time"], utc=True, errors="coerce")
-        st_dt_ct = st_dt.dt.tz_convert("America/Chicago")
-        meetings_x["scheduled_ct"] = st_dt_ct.apply(
-            lambda x: x.strftime("%m/%d/%Y %I:%M %p") if pd.notna(x) else ""
-        )
+        meetings_x["scheduled_ct"] = cfg.format_ct_series(meetings_x["start_time"])
 
         types = meetings_x["activity_type"].fillna("").astype(str).str.lower()
         fifteen_detail = meetings_x[types.str.contains("15 min", na=False)].copy()
