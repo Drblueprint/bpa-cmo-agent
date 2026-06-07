@@ -23,6 +23,11 @@ HS_PROP_SEND_CONTRACT_OPTIONS = "send_contract_options"  # enum; MUDA detection 
 # Use this instead of typeform_submission_date for date-based lead filtering.
 HS_PROP_RECENT_CONVERSION_DATE = "recent_conversion_date"
 HS_PROP_RECENT_CONVERSION_EVENT = "recent_conversion_event_name"
+# HubSpot analytics: data_1 holds the inbound traffic source (domain / ad
+# platform). Used to detect TheraRay-origin closes when no typeform asset
+# is present (e.g., direct-traffic contacts from theraray.org).
+HS_PROP_ANALYTICS_SOURCE = "hs_analytics_source"
+HS_PROP_ANALYTICS_SOURCE_DATA_1 = "hs_analytics_source_data_1"
 # Substring that identifies a MUDA (Multi Unit Discount Agreement) deal in the
 # send_contract_options value 'MUDA - CHIRO (Multi Unit Discount Agreement)'.
 SEND_CONTRACT_MUDA_TOKEN = "MUDA"

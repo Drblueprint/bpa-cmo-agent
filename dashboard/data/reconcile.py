@@ -1976,15 +1976,30 @@ def build_closed_deals_table(
         except Exception:
             pass
 
-        # Group derivation: prefer contract_tier suffix (more reliable than
-        # typeform asset for non-marketing closes), fall back to asset map,
-        # then to override's group, else "(unmapped)".
+        # TheraRay detection: contacts whose inbound source is theraray.org
+        # are TheraRay leads regardless of their contract tier suffix. Without
+        # this, a TheraRay lead who buys a "90-DAY - C" contract would tag as
+        # Chiro via tier-suffix derivation.
+        analytics_src = (primary_contact.get("analytics_source_data_1") or "").lower()
+        is_theraray_signal = "theraray" in analytics_src
+        if is_theraray_signal and not (asset and asset_to_group.get(asset)):
+            # No explicit typeform attribution + TheraRay analytics signal
+            # → mark as TheraRay marketing close.
+            source = "TheraRay (direct traffic)"
+            group = "TheraRay"
+            is_marketing = True
+
+        # Group derivation priority:
+        #  1. Explicit asset/override group (set above)
+        #  2. TheraRay analytics signal (now folded into group above)
+        #  3. Tier-suffix → derived group (fallback for non-marketing closes)
+        #  4. "(unmapped)"
         tier_val = primary_contact.get("contract_tier") or ""
         group_from_tier = _group_from_tier(tier_val)
-        if group_from_tier:
-            final_group = group_from_tier
-        elif group:  # group already set by typeform asset OR override branch above
+        if group:  # asset map, override, or TheraRay signal above
             final_group = group
+        elif group_from_tier:
+            final_group = group_from_tier
         else:
             final_group = "(unmapped)"
 

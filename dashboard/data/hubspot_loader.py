@@ -70,6 +70,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "firstname", "lastname", "email", "createdate",
             cfg.HS_PROP_TYPEFORM_ASSET, cfg.HS_PROP_TYPEFORM_SUBMISSION_DATE,
             cfg.HS_PROP_RECENT_CONVERSION_DATE, cfg.HS_PROP_RECENT_CONVERSION_EVENT,
+            cfg.HS_PROP_ANALYTICS_SOURCE, cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1,
             cfg.HS_PROP_SDR_OWNER, cfg.HS_PROP_BDS, cfg.HS_PROP_SME,
             cfg.HS_PROP_UTM_SOURCE,
             cfg.HS_PROP_15MIN_CALL_DATE, cfg.HS_PROP_LIFECYCLE_STAGE,
@@ -78,6 +79,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
             cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
             cfg.HS_PROP_RECENT_CONVERSION_DATE, cfg.HS_PROP_RECENT_CONVERSION_EVENT,
+            cfg.HS_PROP_ANALYTICS_SOURCE, cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1,
         ],
         "limit": 100,
     }
@@ -118,6 +120,8 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "send_contract_options": p.get(cfg.HS_PROP_SEND_CONTRACT_OPTIONS),
             "recent_conversion_date": p.get(cfg.HS_PROP_RECENT_CONVERSION_DATE),
             "recent_conversion_event": p.get(cfg.HS_PROP_RECENT_CONVERSION_EVENT),
+            "analytics_source": p.get(cfg.HS_PROP_ANALYTICS_SOURCE),
+            "analytics_source_data_1": p.get(cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1),
         })
     return pd.DataFrame(rows, columns=[
         "hs_id", "name", "email", "created",
@@ -129,6 +133,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
         "pt_webinar_registration_date", "pt_webinar_completed_date",
         "contract_tier", "send_contract_options",
         "recent_conversion_date", "recent_conversion_event",
+        "analytics_source", "analytics_source_data_1",
     ])
 
 
@@ -487,6 +492,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
         "pt_webinar_registration_date", "pt_webinar_completed_date",
         "contract_tier", "send_contract_options",
         "recent_conversion_date", "recent_conversion_event",
+        "analytics_source", "analytics_source_data_1",
     ]
     if not contact_ids:
         return pd.DataFrame(columns=cols)
@@ -512,6 +518,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
                     cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
                     cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
                     cfg.HS_PROP_RECENT_CONVERSION_DATE, cfg.HS_PROP_RECENT_CONVERSION_EVENT,
+            cfg.HS_PROP_ANALYTICS_SOURCE, cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1,
                 ],
                 "inputs": [{"id": cid} for cid in batch],
             },
@@ -552,6 +559,8 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
             "send_contract_options": p.get(cfg.HS_PROP_SEND_CONTRACT_OPTIONS),
             "recent_conversion_date": p.get(cfg.HS_PROP_RECENT_CONVERSION_DATE),
             "recent_conversion_event": p.get(cfg.HS_PROP_RECENT_CONVERSION_EVENT),
+            "analytics_source": p.get(cfg.HS_PROP_ANALYTICS_SOURCE),
+            "analytics_source_data_1": p.get(cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1),
             })
 
     return pd.DataFrame(rows, columns=cols)
@@ -742,6 +751,7 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
         "pt_webinar_registration_date", "pt_webinar_completed_date",
         "contract_tier", "send_contract_options",
         "recent_conversion_date", "recent_conversion_event",
+        "analytics_source", "analytics_source_data_1",
     ]
     if not campaign_ids:
         return pd.DataFrame(columns=cols)
@@ -773,6 +783,7 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
             cfg.HS_PROP_PT_WEBINAR_REG_DATE, cfg.HS_PROP_PT_WEBINAR_COMPLETED_DATE,
             cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
             cfg.HS_PROP_RECENT_CONVERSION_DATE, cfg.HS_PROP_RECENT_CONVERSION_EVENT,
+            cfg.HS_PROP_ANALYTICS_SOURCE, cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1,
         ],
         "limit": 100,
     }
@@ -811,6 +822,8 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
             "send_contract_options": p.get(cfg.HS_PROP_SEND_CONTRACT_OPTIONS),
             "recent_conversion_date": p.get(cfg.HS_PROP_RECENT_CONVERSION_DATE),
             "recent_conversion_event": p.get(cfg.HS_PROP_RECENT_CONVERSION_EVENT),
+            "analytics_source": p.get(cfg.HS_PROP_ANALYTICS_SOURCE),
+            "analytics_source_data_1": p.get(cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1),
         })
     return pd.DataFrame(rows, columns=cols)
 
