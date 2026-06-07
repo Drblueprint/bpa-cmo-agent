@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from dashboard import config as cfg
@@ -963,94 +962,25 @@ def render_sales(start: date, end: date) -> None:
 
     st.divider()
 
-    # ----- Section: Bottleneck — Where Leads Drop Off (Wave 2) -----
-    st.subheader("Bottleneck — Where Leads Drop Off")
-    st.caption(
-        "Conversion rate at each stage transition. The lowest-converting stage "
-        "(your bottleneck) is highlighted in red."
-    )
-    # Build stage counts: Marketing Leads → 15-min Booked → Held → Strategy Booked → Held → Closed-Won.
-    # Uses the marketing-only funnel for consistency with the rest of this tab.
-    lead_count = int(len(marketing)) if not marketing.empty else 0
-    stage_counts = [
-        ("Marketing Leads", lead_count),
-        ("15-min Booked", int(_v(fn_mkt, "15-min Booked"))),
-        ("15-min Held", int(_v(fn_mkt, "15-min Held"))),
-        ("Strategy Booked", int(_v(fn_mkt, "Strategy Booked"))),
-        ("Strategy Held", int(_v(fn_mkt, "Strategy Held"))),
-        ("Closed-Won", int(_v(fn_mkt, "Closed-Won"))),
-    ]
-    transitions = []
-    for i in range(len(stage_counts) - 1):
-        from_s, from_c = stage_counts[i]
-        to_s, to_c = stage_counts[i + 1]
-        rate = (to_c / from_c) if from_c else None
-        transitions.append({
-            "label": f"{from_s} → {to_s}",
-            "rate": rate,
-            "from_count": from_c,
-            "to_count": to_c,
-        })
-    trans_df = pd.DataFrame(transitions)
-    non_null = trans_df["rate"].dropna()
-    min_rate = float(non_null.min()) if not non_null.empty else None
-    trans_df["color"] = trans_df["rate"].apply(
-        lambda r: "#d62728" if (r is not None and not pd.isna(r) and min_rate is not None and r == min_rate)
-        else "#1f77b4"
-    )
-    trans_df["label_text"] = trans_df.apply(
-        lambda r: (f"{r['rate']*100:.0f}%  ({r['to_count']}/{r['from_count']})"
-                   if r["rate"] is not None and not pd.isna(r["rate"]) else "—"),
-        axis=1,
-    )
-    bottleneck_fig = go.Figure(go.Bar(
-        x=[(r * 100 if r is not None and not pd.isna(r) else 0) for r in trans_df["rate"]],
-        y=trans_df["label"],
-        orientation="h",
-        marker_color=trans_df["color"].tolist(),
-        text=trans_df["label_text"],
-        textposition="outside",
-    ))
-    bottleneck_fig.update_layout(
-        xaxis=dict(title="Conversion rate (%)", range=[0, 110]),
-        yaxis=dict(autorange="reversed"),
-        height=320,
-        margin=dict(l=10, r=10, t=10, b=10),
-        showlegend=False,
-    )
-    st.plotly_chart(bottleneck_fig, use_container_width=True)
-    if min_rate is not None:
-        worst_row = trans_df.loc[trans_df["rate"] == min_rate].iloc[0]
-        st.caption(
-            f"**Biggest leak:** {worst_row['label']} at "
-            f"{min_rate*100:.0f}% ({worst_row['to_count']} of "
-            f"{worst_row['from_count']})."
-        )
-
-    st.divider()
-
-    # ----- Section: Pipeline Funnel (existing — moved below) -----
-    st.subheader("Pipeline Funnel")
-    combined = fn_mkt.rename(columns={"count": "Marketing", "revenue": "mkt_rev"}).merge(
-        fn_all.rename(columns={"count": "All Sources", "revenue": "all_rev"}),
-        on="stage",
-    )
-    show = combined[["stage", "Marketing", "All Sources"]]
-    st.dataframe(show, use_container_width=True, hide_index=True)
-
-    fig = go.Figure()
-    fig.add_trace(go.Funnel(name="Marketing", y=combined["stage"],
-                            x=combined["Marketing"]))
-    fig.add_trace(go.Funnel(name="All", y=combined["stage"],
-                            x=combined["All Sources"]))
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
-
     # ----- Section: Marketing Lead Detail (existing) -----
     st.subheader("Marketing Lead Detail")
+    st.caption(
+        f"{_win_label}. One row per marketing lead with a known asset "
+        "(submitted in this window). Blank-asset rows (past opt-ins and "
+        "non-marketing conversions) are excluded so every name traces back "
+        "to a campaign. Sorted by submission date."
+    )
     if marketing.empty:
         st.info("No marketing leads in this window.")
+        return
+
+    # Only leads with a real marketing asset. A blank asset means the contact
+    # re-entered via a past opt-in or a non-marketing path, which is noise in a
+    # "where did this lead come from" view.
+    _asset = marketing["typeform_asset_download"].fillna("").astype(str).str.strip()
+    mkt_detail = marketing[_asset != ""].copy()
+    if mkt_detail.empty:
+        st.info("No asset-attributed marketing leads in this window.")
         return
     if deals.empty or contact_deals.empty:
         st.info("No deal data available — drill-down hidden.")
@@ -1065,7 +995,7 @@ def render_sales(start: date, end: date) -> None:
         .drop_duplicates("contact_id")
         .rename(columns={"contact_id": "hs_id"})
     )
-    detail = marketing.merge(
+    detail = mkt_detail.merge(
         latest_deal[["hs_id", "dealstage", "amount"]],
         on="hs_id", how="left",
     )
