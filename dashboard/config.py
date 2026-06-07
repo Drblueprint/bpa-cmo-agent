@@ -187,6 +187,8 @@ FORMER_OWNER_IDS: set[str] = {
     "377861017",  # Dr. Samantha Luther
     "56929167",   # Dr. Michael McCracken
     "78947719",   # Gage Humbarger
+    "61097347",   # Haley Stewart
+    "568393136",  # Haley Stewart (variant)
 }
 
 

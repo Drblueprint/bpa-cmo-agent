@@ -311,6 +311,15 @@ def render_executive(start: date, end: date) -> None:
                 sdr_payroll_monthly=cfg.SDR_PAYROLL_MONTHLY,
                 sme_payroll_monthly=cfg.SME_PAYROLL_MONTHLY,
             )
+            # Suppress groups with no leads + no funnel activity in this
+            # window — keeps the table clean and avoids misleading
+            # all-zero rows (e.g., TheraRay uses a different funnel
+            # without 15-min Discovery / Strategy meetings).
+            if (kg["new_leads"] == 0
+                and kg["discovery_booked"] == 0
+                and kg["sme_booked"] == 0
+                and kg["closed_won"] == 0):
+                continue
             conv_rows.append({
                 "Group": g,
                 "Leads": kg["new_leads"],
