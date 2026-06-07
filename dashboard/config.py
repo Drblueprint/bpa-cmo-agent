@@ -18,6 +18,11 @@ HS_PROP_15MIN_CALL_DATE = "n15_min_call_date"  # confirmed via probe on 2026-05-
 HS_PROP_LIFECYCLE_STAGE = "lifecyclestage"  # HubSpot standard property
 HS_PROP_CONTRACT_TIER = "contract_tier"  # BPA plan/tier (PRIMARY, FULL, 90-DAY, DIY, etc.)
 HS_PROP_SEND_CONTRACT_OPTIONS = "send_contract_options"  # enum; MUDA detection lives here
+# Real form/meeting submission event timestamp — survived the Apr 7 2026
+# bulk-stamp that overwrote typeform_submission_date for 1,602 contacts.
+# Use this instead of typeform_submission_date for date-based lead filtering.
+HS_PROP_RECENT_CONVERSION_DATE = "recent_conversion_date"
+HS_PROP_RECENT_CONVERSION_EVENT = "recent_conversion_event_name"
 # Substring that identifies a MUDA (Multi Unit Discount Agreement) deal in the
 # send_contract_options value 'MUDA - CHIRO (Multi Unit Discount Agreement)'.
 SEND_CONTRACT_MUDA_TOKEN = "MUDA"

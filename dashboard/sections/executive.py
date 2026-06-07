@@ -377,23 +377,10 @@ def render_executive(start: date, end: date) -> None:
     # --- Cost per Stage by Source ---
     def _render_funnel_costs(window_start, window_end, label: str):
         try:
+            # load_marketing_contacts now filters by recent_conversion_date
+            # (the real form-submit event timestamp — survived the Apr 7
+            # bulk-stamp). No extra filter needed here.
             typeform_contacts = load_marketing_contacts(window_start, window_end)
-            # Filter to FRESH leads: contact's createdate must fall in the
-            # window. Excludes pre-existing contacts whose submission_date
-            # was bulk-stamped (e.g., 1,155 of 1,419 Chiro contacts on
-            # Apr 7 2026). Honest CPL.
-            if not typeform_contacts.empty and "created" in typeform_contacts.columns:
-                _ws = pd.Timestamp(year=window_start.year,
-                                    month=window_start.month,
-                                    day=window_start.day, tz="UTC")
-                _we = pd.Timestamp(year=window_end.year,
-                                    month=window_end.month,
-                                    day=window_end.day, tz="UTC") + pd.Timedelta(days=1)
-                _cre = pd.to_datetime(typeform_contacts["created"],
-                                       utc=True, errors="coerce")
-                typeform_contacts = typeform_contacts[
-                    (_cre >= _ws) & (_cre < _we)
-                ].reset_index(drop=True)
             tr_contacts = pd.DataFrame()
             try:
                 memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
@@ -504,10 +491,9 @@ def render_executive(start: date, end: date) -> None:
             st.caption(
                 f"{window_start.strftime('%b %d, %Y')} → "
                 f"{window_end.strftime('%b %d, %Y')}. **Leads** = contacts "
-                "whose HubSpot **createdate** falls in this window (excludes "
-                "pre-existing contacts whose submission_date was bulk-stamped). "
-                "Counts are unique contacts reaching each stage; "
-                "Cost / X = Ad Spend ÷ X."
+                "whose HubSpot **recent_conversion_date** (real form / meeting-"
+                "link submission event) falls in this window. Counts are "
+                "unique contacts reaching each stage; Cost / X = Ad Spend ÷ X."
             )
             st.dataframe(disp, use_container_width=True, hide_index=True)
         except Exception as e:
