@@ -475,10 +475,29 @@ STAGE_SOURCE_FALLBACK: dict[str, tuple[str, str, bool]] = {
 # contact filled a form for testing, partner referral, or some other reason
 # the marketing team doesn't want them counted).
 # Key by email (lowercase).
+# recent_conversion_event_name prefixes that indicate a SALES-CYCLE action
+# (not a fresh marketing form fill). Filtered out of load_marketing_contacts
+# so the lead count only includes real lead-acquisition events.
+# Mirrors the user's source-of-truth tool's "Exclude Typ...(6)" opt-in
+# filter. Matched as case-insensitive startswith.
+SALES_CYCLE_CONVERSION_PREFIXES: tuple[str, ...] = (
+    "Meetings Link:",                  # all sales-stage meeting bookings
+    "Call Schedule Form",              # BOFU + master booking forms
+    "Day 1 Success Series",            # post-close onboarding
+    "Nutrition Certification",         # certification path (not lead)
+    "Case Management Certification",   # certification path (not lead)
+)
+
+
 MARKETING_EXCLUDED_EMAILS: set[str] = {
     # Casey Berry — filled EMX Kansas City form, but wasn't from marketing.
     # Per Dr. Gumm, 2026-05-20.
     "drberry2608@gmail.com",
+    # Kurt Kleinpeter (BPA team) — fills typeforms for testing, his personal
+    # gmail address (his @yourautomatedpractice.com is caught by the domain
+    # rule, but the personal one slipped through and inflated marketing
+    # leads).
+    "kurttechnola@gmail.com",
 }
 
 # Internal team email domains — any contact whose email ends in one of these

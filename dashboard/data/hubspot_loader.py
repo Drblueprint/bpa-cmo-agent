@@ -96,6 +96,26 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
         _em = (p.get("email") or "").strip().lower()
         if _em in cfg.MARKETING_EXCLUDED_EMAILS:
             continue
+        # Skip internal-team emails (Kurt etc.) — they fill typeforms for
+        # testing and shouldn't pollute marketing-lead counts.
+        if cfg.is_internal_team_contact(_em):
+            continue
+        # Skip CURRENT customers (lifecycle == "customer") — the marketing
+        # lead count tracks NEW prospects + legitimate re-opts. Contract_tier
+        # alone isn't enough to exclude — a contact who churned and now has
+        # only an old contract_tier set but lifecycle = lead / MQL is a real
+        # re-engagement and should count. Matches Dr. Gumm's source-of-truth
+        # tool definition.
+        _lc = (p.get(cfg.HS_PROP_LIFECYCLE_STAGE) or "").strip().lower()
+        if _lc == "customer":
+            continue
+        # NOTE: NOT filtering by recent_conversion_event_name. We tried
+        # excluding contacts whose latest event was sales-cycle (Meetings
+        # Link / BOFU booking / kickoff), but that over-filtered legit
+        # marketing leads whose typeform fill was followed by a later
+        # sales-cycle action. HubSpot only exposes the LATEST event via
+        # this property — without form-submission history we can't tell
+        # if the original lead-acquisition was a marketing form.
         hs_id = r.get("id")
         rows.append({
             "hs_id": str(hs_id) if hs_id is not None else None,
