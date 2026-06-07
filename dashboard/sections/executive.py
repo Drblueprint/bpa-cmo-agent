@@ -137,8 +137,19 @@ def render_executive(start: date, end: date) -> None:
                     if contacts.empty:
                         contacts = tr_contacts
                     else:
-                        contacts = pd.concat([contacts, tr_contacts], ignore_index=True) \
+                        # TheraRay rows FIRST so dedup keeps the tagged
+                        # version (was reversed — load_marketing_contacts
+                        # entries / closed-deal expansion entries with no
+                        # typeform asset were winning, breaking the
+                        # TheraRay group routing).
+                        contacts = pd.concat([tr_contacts, contacts], ignore_index=True) \
                             .drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
+                    # Belt + suspenders: force the TheraRay tag onto any
+                    # contact whose hs_id is in the list-membership window,
+                    # in case concat-order alone misses an edge.
+                    _tr_ids = set(tr_contacts["hs_id"].astype(str))
+                    _mask = contacts["hs_id"].astype(str).isin(_tr_ids)
+                    contacts.loc[_mask, "typeform_asset_download"] = "TheraRay FB Lead"
                     # Refresh meetings + contact_deals for the expanded set
                     contact_deals = load_contact_deals(contacts["hs_id"].tolist())
                     meetings = load_meetings_for_contacts(contacts["hs_id"].tolist(), data_floor_days_back=floor_days)
@@ -423,9 +434,17 @@ def render_executive(start: date, end: date) -> None:
                 if typeform_contacts.empty:
                     all_contacts = tr_contacts
                 else:
+                    # TheraRay rows FIRST so dedup keeps the tagged
+                    # version (otherwise an existing-contact row with no
+                    # typeform asset wins and TheraRay routing breaks).
                     all_contacts = pd.concat(
-                        [typeform_contacts, tr_contacts], ignore_index=True
+                        [tr_contacts, typeform_contacts], ignore_index=True
                     ).drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
+                # Belt + suspenders: force the TheraRay tag onto any
+                # contact whose hs_id is in the list-membership window.
+                _tr_ids = set(tr_contacts["hs_id"].astype(str))
+                _mask = all_contacts["hs_id"].astype(str).isin(_tr_ids)
+                all_contacts.loc[_mask, "typeform_asset_download"] = "TheraRay FB Lead"
             else:
                 all_contacts = typeform_contacts
 
