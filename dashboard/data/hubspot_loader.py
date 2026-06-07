@@ -555,6 +555,10 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
             em = (p.get("email") or "").strip().lower()
             if em in cfg.MARKETING_EXCLUDED_EMAILS:
                 continue
+            # Drop internal-team contacts (Aaron Gumm, etc.) — they're not
+            # leads/prospects. Same rule as load_marketing_contacts.
+            if cfg.is_internal_team_contact(em):
+                continue
             hs_id = c.get("id")
             rows.append({
                 "hs_id": str(hs_id) if hs_id is not None else None,

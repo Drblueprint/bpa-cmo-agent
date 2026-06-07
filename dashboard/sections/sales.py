@@ -219,11 +219,25 @@ def render_sales(start: date, end: date) -> None:
                 on="deal_id", how="left",
             )
             cd_join["contact_id"] = cd_join["contact_id"].astype(str)
-            c_lite_cols = ["hs_id", "name", "email", "typeform_asset_download", "sdr_owner", "bds"]
+            c_lite_cols = ["hs_id", "name", "email",
+                            "typeform_asset_download", "sdr_owner", "bds",
+                            "lifecycle_stage", "contract_tier"]
             existing_cols = [c for c in c_lite_cols if c in marketing.columns]
             c_lite = marketing[existing_cols].copy()
             c_lite["hs_id"] = c_lite["hs_id"].astype(str)
-            pdf = cd_join.merge(c_lite, left_on="contact_id", right_on="hs_id", how="left")
+            # Drop existing customers + internal-team contacts before joining
+            # so the Pipeline detail shows ONLY active leads being worked.
+            if {"lifecycle_stage", "contract_tier", "email"}.issubset(c_lite.columns):
+                _excl = c_lite.apply(
+                    lambda r: (
+                        cfg.is_internal_team_contact(r.get("email"))
+                        or cfg.is_existing_customer(r.get("lifecycle_stage"),
+                                                      r.get("contract_tier"))
+                    ),
+                    axis=1,
+                )
+                c_lite = c_lite[~_excl].reset_index(drop=True)
+            pdf = cd_join.merge(c_lite, left_on="contact_id", right_on="hs_id", how="inner")
             pdf["15-min Booked"] = pdf["dealstage"].isin(stages["15min_booked"])
             pdf["15-min Held"]   = pdf["dealstage"].isin(stages["15min_held"])
             pdf["Strategy Booked"] = pdf["dealstage"].isin(stages["strategy_booked"])
@@ -257,9 +271,16 @@ def render_sales(start: date, end: date) -> None:
                 ascending=False,
             ).reset_index(drop=True)
             with st.expander(
-                f"Pipeline detail — {len(out)} deals currently in the funnel",
+                f"Pipeline detail — {len(out)} active funnel rows",
                 expanded=False,
             ):
+                st.caption(
+                    "One row per (deal × contact) where the deal's CURRENT "
+                    "stage is 15-min Booked / Held or Strategy Booked / Held "
+                    "and the contact is not an internal-team member or "
+                    "existing customer. Closed-Won deals and customer "
+                    "re-engagements are excluded."
+                )
                 st.dataframe(
                     cfg.style_unassigned(
                         out, columns=["SDR", "BDS", "Asset", "Group"],
