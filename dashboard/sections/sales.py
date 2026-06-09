@@ -1201,3 +1201,38 @@ def render_sales(start: date, end: date) -> None:
                     display_text="HubSpot ↗"),
             },
         )
+
+    # ----- Section: DIY / 90-Day / Basic Roster -----
+    # Roster-scoped rebuild of the YTD closed-deals table so it is unaffected
+    # by the "marketing-only" checkbox reassignment of deals_table above.
+    roster_table = build_closed_deals_table(
+        deals_ytd, contact_deals_ytd, contacts_ytd,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+        stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+    )
+    with st.expander("DIY / 90-Day / Basic Roster", expanded=False):
+        st.caption(
+            "Doctors on a DIY, 90-Day, or Basic plan (by contract_tier), with "
+            "their HubSpot deal value and close date. These are not on the full "
+            "program."
+        )
+        if roster_table.empty:
+            st.info("No closed deals YTD.")
+        else:
+            _t = roster_table.copy()
+            _tier_u = _t["tier"].fillna("").astype(str).str.upper()
+            mask = (_tier_u.str.contains("DIY") | _tier_u.str.contains("90")
+                    | _tier_u.str.contains("BASIC"))
+            roster = _t[mask].copy()
+            if roster.empty:
+                st.info("No DIY / 90-Day / Basic doctors YTD.")
+            else:
+                roster["Deal $"] = roster["deal_amount"].map(
+                    lambda x: f"${x:,.0f}" if pd.notna(x) and x > 0 else "—")
+                roster["Closed"] = cfg.format_ct_series(
+                    roster["closedate"], fmt=cfg.DEFAULT_DATE_FORMAT)
+                roster = roster[["contact_name", "tier", "Deal $", "Closed"]].rename(
+                    columns={"contact_name": "Doctor", "tier": "Tier"})
+                st.dataframe(roster, use_container_width=True, hide_index=True)
