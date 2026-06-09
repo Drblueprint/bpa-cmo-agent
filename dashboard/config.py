@@ -229,6 +229,19 @@ GROUP_CASH_COLLECTED_PER_DEAL: dict[str, float] = {
     "PT Recovery": 23928.0,
 }
 
+# --- Tier money model (Kurt, 2026-06-09) ---------------------------------
+# HubSpot deal.amount is a flat $40k placeholder unrelated to the real
+# contract, so all money is derived from contract_tier instead.
+#   Full / PRIMARY: $1,997/mo x 24mo = $47,928 (Chiro)
+#   90-Day:         $5,991 one-time (Chiro)
+#   DIY:            $997/mo, month-to-month, no fixed term (Chiro)
+#   PT Recovery   = 0.5 x Chiro for every tier.
+FULL_MONTHLY = 1997.0
+FULL_TERM_MONTHS = 24
+NINETY_DAY_AMOUNT = 5991.0
+DIY_MONTHLY = 997.0
+PT_MULTIPLIER = 0.5
+
 # --- Monthly payroll for CAC calc. None = "ad-only CAC" shown with a tooltip flag. ---
 # Provide real numbers when ready and CAC will auto-include them.
 SDR_PAYROLL_MONTHLY: float | None = None

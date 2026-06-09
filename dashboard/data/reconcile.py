@@ -7,6 +7,28 @@ from typing import Iterable
 import pandas as pd
 
 
+def classify_tier(contract_tier) -> tuple[str, str]:
+    """Map a HubSpot contract_tier string to (plan, group).
+
+    plan in {"FULL", "90DAY", "DIY", "BASIC", "UNKNOWN"};
+    group in {"Chiro", "PT"}. Substring match, order-sensitive: DIY / 90 /
+    BASIC are checked before PRIMARY / FULL so e.g. "PT - DIY" is DIY, not FULL.
+    """
+    s = (str(contract_tier) if contract_tier is not None else "").upper()
+    group = "PT" if "PT" in s else "Chiro"
+    if "DIY" in s:
+        plan = "DIY"
+    elif "90" in s:
+        plan = "90DAY"
+    elif "BASIC" in s:
+        plan = "BASIC"
+    elif "PRIMARY" in s or "FULL" in s:
+        plan = "FULL"
+    else:
+        plan = "UNKNOWN"
+    return plan, group
+
+
 def _group_from_tier(tier: str | None) -> str | None:
     """Derive group (Chiro / PT Recovery) from contract_tier suffix.
 
