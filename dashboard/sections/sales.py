@@ -353,6 +353,7 @@ def render_sales(start: date, end: date) -> None:
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
         group_cash_per_deal=cfg.GROUP_CASH_COLLECTED_PER_DEAL,
+        today=date.today(),
     )
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric(
@@ -411,6 +412,7 @@ def render_sales(start: date, end: date) -> None:
                 group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
                 source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
                 stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+                today=date.today(),
             )
             if not window_table.empty:
                 wt = window_table.copy()
@@ -901,6 +903,7 @@ def render_sales(start: date, end: date) -> None:
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         stages_closed_won=cfg.STAGES_CLOSED_WON,
         stages_strategy_dq=cfg.STAGES_STRATEGY_DQ,
+        today=date.today(),
     )
     if sme.empty:
         st.info("No SME activity in this window.")
@@ -1087,6 +1090,7 @@ def render_sales(start: date, end: date) -> None:
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        today=date.today(),
     )
     if deals_table.empty:
         st.info("No closed-won deals YTD.")

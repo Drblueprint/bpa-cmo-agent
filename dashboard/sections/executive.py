@@ -173,6 +173,7 @@ def render_executive(start: date, end: date) -> None:
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        today=date.today(),
     )
 
     # YTD ad spend for Marketing CAC calculation
@@ -199,6 +200,7 @@ def render_executive(start: date, end: date) -> None:
             group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
             source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
             stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+            today=date.today(),
         )
         commissions = compute_close_commissions(
             ytd_deals_table,
@@ -483,6 +485,7 @@ def render_executive(start: date, end: date) -> None:
                 group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
                 source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
                 stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+                today=date.today(),
             )
             funnel = group_funnel_costs(
                 fb_ytd=fb_win,
@@ -861,6 +864,7 @@ def render_executive(start: date, end: date) -> None:
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        today=date.today(),
     )
     if deals_table.empty:
         st.info("No closed-won deals YTD.")
