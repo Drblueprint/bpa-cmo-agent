@@ -467,3 +467,42 @@ def test_asset_performance_rollup():
     assert top["close_rate"] == 0.5           # 1 closed / 2 leads
     emx = r.iloc[1]
     assert emx["leads"] == 1 and emx["closed"] == 0 and emx["revenue"] == 0.0
+
+
+def test_asset_performance_rollup_closes_from_table():
+    """With a closed_deals_table, closes/revenue attribute to the closer's
+    originating asset (regardless of opt-in date); rows are the union of
+    lead-bearing and close-bearing assets; close_rate is None when leads == 0."""
+    from dashboard.data.reconcile import asset_performance_rollup
+    # YTD opt-in leads: 2 Kansas City, none closed yet this year
+    contacts = pd.DataFrame([
+        {"hs_id": "10", "typeform_asset_download": "EMX Kansas City 2026"},
+        {"hs_id": "11", "typeform_asset_download": "EMX Kansas City 2026"},
+    ])
+    # closed-won table: a Fort Worth closer (no current leads) + a KC closer
+    closed = pd.DataFrame([
+        {"asset": "EMX Fort Worth 2026", "group": "EMX", "deal_amount": 40000.0},
+        {"asset": "EMX Kansas City 2026", "group": "EMX", "deal_amount": 47928.0},
+    ])
+    empty_meet = pd.DataFrame(columns=["meeting_id", "contact_id",
+                                       "activity_type", "outcome", "start_time"])
+    r = asset_performance_rollup(
+        contacts=contacts, meetings=empty_meet,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        asset_to_group={"EMX Kansas City 2026": "EMX", "EMX Fort Worth 2026": "EMX"},
+        group_default_amount={}, stages_closed_won={"closedwon"},
+        closed_deals_table=closed,
+    )
+    by = {x["asset"]: x for _, x in r.iterrows()}
+    # Kansas City: 2 leads + 1 close from the table
+    assert by["EMX Kansas City 2026"]["leads"] == 2
+    assert by["EMX Kansas City 2026"]["closed"] == 1
+    assert by["EMX Kansas City 2026"]["revenue"] == 47928.0
+    assert by["EMX Kansas City 2026"]["close_rate"] == 0.5
+    # Fort Worth: 0 leads (no current campaign) but 1 close -> union row
+    assert by["EMX Fort Worth 2026"]["leads"] == 0
+    assert by["EMX Fort Worth 2026"]["closed"] == 1
+    assert by["EMX Fort Worth 2026"]["revenue"] == 40000.0
+    # leads == 0 -> close_rate is None from _safe_div, NaN after DataFrame build
+    assert pd.isna(by["EMX Fort Worth 2026"]["close_rate"])

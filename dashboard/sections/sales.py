@@ -145,12 +145,6 @@ def render_sales(start: date, end: date) -> None:
             "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
         ])
 
-    # Snapshot the TRUE opt-in set (contacts whose recent_conversion is in the
-    # window) BEFORE the deal-expansion below adds old customers/opportunities
-    # tied to in-window deals. Asset Performance counts leads from this set so a
-    # paused campaign's old closers don't show up as fresh leads.
-    leads_optin = marketing.copy()
-
     # Full-window contact attribution: pull every contact tied to a deal in
     # the window so marketing-attribution works across long sales cycles.
     # Without this, a contact who filled the typeform in March but had their
@@ -1057,23 +1051,51 @@ def render_sales(start: date, end: date) -> None:
 
     # ----- Section: Asset Performance (replaces Marketing Lead Detail) -----
     st.subheader("Asset Performance")
+    _yr_start = today.replace(month=1, day=1)
+    _yr_floor = (today - _yr_start).days + 30  # cover the full year + buffer
     st.caption(
-        f"{_win_label}. One row per marketing asset (typeform). Leads = "
-        "contacts whose opt-in (recent conversion) is in this window via that "
-        "asset - so a paused campaign shows no new leads. Closed/revenue = "
-        "those leads who have any won deal on record (deal.amount, group "
-        "default as fallback); since closes lag opt-ins, recent windows show "
-        "few closes. Close % = closed / leads. Sorted by revenue."
+        f"**Year to date (Jan 1 - {today.strftime('%b %d, %Y')})**, regardless "
+        "of the view above - closes lag opt-ins, so this is only meaningful "
+        "over a longer horizon. One row per marketing asset (typeform). Leads "
+        "= contacts whose opt-in (recent conversion) is YTD via that asset (a "
+        "paused campaign shows no new leads). Closed/revenue = YTD closed-won "
+        "deals attributed to that asset (marketing closers' original opt-in "
+        "asset; deal.amount, group default as fallback) - closers usually "
+        "opted in earlier, so Close % (closed / leads) is a rough cross-cohort "
+        "ratio, not a same-cohort conversion. Sorted by revenue."
     )
-    asset_perf = asset_performance_rollup(
-        contacts=leads_optin, meetings=meetings,
-        contact_deals=contact_deals, deals=deals,
-        asset_to_group=cfg.ASSET_TO_GROUP,
-        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
-        stages_closed_won=cfg.STAGES_CLOSED_WON,
-    )
+    try:
+        _ap_leads = load_marketing_contacts(_yr_start, today)
+        _ap_ids = _ap_leads["hs_id"].tolist() if not _ap_leads.empty else []
+        _ap_meet = (load_meetings_for_contacts(_ap_ids, data_floor_days_back=_yr_floor)
+                    if _ap_ids else pd.DataFrame(columns=[
+                        "meeting_id", "contact_id", "activity_type",
+                        "outcome", "start_time"]))
+        # Closes/revenue are attributed to each closer's originating asset from
+        # the YTD closed-won table (already-loaded deals_ytd), NOT the opt-in
+        # cohort - closers usually opted in before this year, so a lead-cohort
+        # match would show ~0 closes.
+        _ap_closed = build_closed_deals_table(
+            deals_ytd, contact_deals_ytd, contacts_ytd,
+            asset_to_group=cfg.ASSET_TO_GROUP,
+            group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+            source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+            stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        ) if not deals_ytd.empty else pd.DataFrame()
+        asset_perf = asset_performance_rollup(
+            contacts=_ap_leads, meetings=_ap_meet,
+            contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+            deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+            asset_to_group=cfg.ASSET_TO_GROUP,
+            group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+            stages_closed_won=cfg.STAGES_CLOSED_WON,
+            closed_deals_table=_ap_closed,
+        )
+    except Exception as e:
+        st.warning(f"Asset Performance unavailable: {e}")
+        asset_perf = pd.DataFrame()
     if asset_perf.empty:
-        st.info("No asset-attributed leads in this window.")
+        st.info("No asset-attributed leads YTD.")
     else:
         ap = asset_perf.copy()
         ap["close_rate"] = ap["close_rate"].map(_fmt_pct)

@@ -1369,76 +1369,131 @@ def asset_performance_rollup(
     asset_to_group: dict,
     group_default_amount: dict,
     stages_closed_won,
+    closed_deals_table: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per marketing-asset performance summary.
 
-    One row per typeform_asset_download (blank assets excluded).
-    Columns: asset, group, leads, fifteen_booked, strategy_booked, closed,
-             revenue, close_rate (closed / leads).
-    Revenue uses Option-C: deal.amount when > 0, else group_default per group.
+    One row per asset (blank assets excluded). Columns: asset, group, leads,
+    fifteen_booked, strategy_booked, closed, revenue, close_rate.
+
+    - leads + fifteen_booked + strategy_booked come from `contacts` (the opt-in
+      lead cohort) and `meetings`.
+    - closed + revenue are attributed to the asset that ORIGINATED each
+      closed-won deal:
+        * if `closed_deals_table` (a build_closed_deals_table output) is given,
+          closes/revenue are grouped from its `asset` + `deal_amount` columns —
+          regardless of when the lead opted in. Closes lag opt-ins, so the lead
+          cohort and the closer cohort barely overlap; attributing by the
+          closer's asset is what makes (YTD) revenue meaningful.
+        * else they fall back to the lead cohort's own won deals (Option-C:
+          deal.amount, group_default fallback) — original behavior.
+    - Rows are the UNION of lead-bearing and close-bearing assets.
+    - close_rate = closed / leads (None when leads == 0).
     Sorted by revenue, then closed, then leads (descending).
     """
     cols = ["asset", "group", "leads", "fifteen_booked", "strategy_booked",
             "closed", "revenue", "close_rate"]
-    if contacts.empty:
-        return pd.DataFrame(columns=cols)
-    c = contacts.copy()
-    c["asset"] = c["typeform_asset_download"].fillna("").astype(str).str.strip()
-    c = c[c["asset"] != ""]
-    if c.empty:
-        return pd.DataFrame(columns=cols)
 
-    if not meetings.empty:
-        types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        booked_15 = set(meetings.loc[types.str.contains("15 min", na=False),
-                                     "contact_id"].astype(str))
-        booked_strat = set(meetings.loc[types.str.contains("strategy", na=False),
-                                        "contact_id"].astype(str))
+    # ---- Leads + funnel per asset (opt-in cohort) ----
+    leads_by_asset: dict[str, int] = {}
+    f15_by_asset: dict[str, int] = {}
+    strat_by_asset: dict[str, int] = {}
+    group_by_asset: dict[str, str] = {}
+    if not contacts.empty:
+        c = contacts.copy()
+        c["asset"] = c["typeform_asset_download"].fillna("").astype(str).str.strip()
+        c = c[c["asset"] != ""]
+        if not c.empty:
+            if not meetings.empty:
+                types = meetings["activity_type"].fillna("").astype(str).str.lower()
+                booked_15 = set(meetings.loc[types.str.contains("15 min", na=False),
+                                             "contact_id"].astype(str))
+                booked_strat = set(meetings.loc[types.str.contains("strategy", na=False),
+                                                "contact_id"].astype(str))
+            else:
+                booked_15, booked_strat = set(), set()
+            for asset, grp in c.groupby("asset"):
+                ids = set(grp["hs_id"].astype(str))
+                leads_by_asset[asset] = len(ids)
+                f15_by_asset[asset] = len(ids & booked_15)
+                strat_by_asset[asset] = len(ids & booked_strat)
+                group_by_asset[asset] = asset_to_group.get(asset, "")
+
+    # ---- Closed + revenue per asset ----
+    closed_by_asset: dict[str, int] = {}
+    rev_by_asset: dict[str, float] = {}
+    if closed_deals_table is not None and not closed_deals_table.empty:
+        # Attribute each closed-won deal to its originating asset. Restrict to
+        # marketing-attributed closers so sales/referral/unattributed source
+        # labels don't show up as "assets".
+        cdt = closed_deals_table.copy()
+        if "is_marketing" in cdt.columns:
+            cdt = cdt[cdt["is_marketing"] == True]
+        cdt["_asset"] = cdt["asset"].fillna("").astype(str).str.strip()
+        cdt = cdt[cdt["_asset"] != ""]
+        if not cdt.empty:
+            cdt["_amt"] = pd.to_numeric(cdt["deal_amount"], errors="coerce").fillna(0.0)
+            for asset, g in cdt.groupby("_asset"):
+                closed_by_asset[asset] = int(len(g))
+                rev_by_asset[asset] = float(g["_amt"].sum())
+                if asset not in group_by_asset:
+                    group_by_asset[asset] = (str(g["group"].iloc[0])
+                                             if "group" in g.columns
+                                             else asset_to_group.get(asset, ""))
     else:
-        booked_15, booked_strat = set(), set()
+        # Fallback: lead-cohort won deals (original behavior).
+        won_set = set(stages_closed_won)
+        won_contact_ids = _contacts_with_deal_in_stages(contact_deals, deals, won_set)
+        contact_revenue: dict[str, float] = {}
+        if not deals.empty and not contact_deals.empty and won_set and leads_by_asset:
+            c2 = contacts.copy()
+            c2["asset"] = c2["typeform_asset_download"].fillna("").astype(str).str.strip()
+            c_group = dict(zip(c2["hs_id"].astype(str), c2["asset"].map(asset_to_group)))
+            won_deals = deals[deals["dealstage"].isin(won_set)].copy()
 
-    won_set = set(stages_closed_won)
-    won_contact_ids = _contacts_with_deal_in_stages(contact_deals, deals, won_set)
+            def _rev(row) -> float:
+                amt = float(row.get("amount") or 0)
+                if amt > 0:
+                    return amt
+                cids = contact_deals[
+                    contact_deals["deal_id"] == row["deal_id"]
+                ]["contact_id"].astype(str)
+                for cid in cids:
+                    g = c_group.get(cid)
+                    if g and g in group_default_amount:
+                        return float(group_default_amount[g])
+                return 0.0
 
-    contact_revenue: dict[str, float] = {}
-    if not deals.empty and not contact_deals.empty and won_set:
-        c_group = dict(zip(c["hs_id"].astype(str), c["asset"].map(asset_to_group)))
-        won_deals = deals[deals["dealstage"].isin(won_set)].copy()
+            won_deals["_rev"] = won_deals.apply(_rev, axis=1)
+            rev_map = dict(zip(won_deals["deal_id"], won_deals["_rev"]))
+            for _, row in contact_deals.iterrows():
+                did = row["deal_id"]
+                cid = str(row["contact_id"])
+                if did in rev_map:
+                    contact_revenue[cid] = contact_revenue.get(cid, 0.0) + rev_map[did]
+            # roll cohort closes/revenue up to each lead asset
+            c3 = contacts.copy()
+            c3["asset"] = c3["typeform_asset_download"].fillna("").astype(str).str.strip()
+            for asset, grp in c3[c3["asset"] != ""].groupby("asset"):
+                ids = set(grp["hs_id"].astype(str))
+                closed_by_asset[asset] = len(ids & won_contact_ids)
+                rev_by_asset[asset] = sum(contact_revenue.get(i, 0.0) for i in ids)
 
-        def _rev(row) -> float:
-            amt = float(row.get("amount") or 0)
-            if amt > 0:
-                return amt
-            cids = contact_deals[
-                contact_deals["deal_id"] == row["deal_id"]
-            ]["contact_id"].astype(str)
-            for cid in cids:
-                g = c_group.get(cid)
-                if g and g in group_default_amount:
-                    return float(group_default_amount[g])
-            return 0.0
-
-        won_deals["_rev"] = won_deals.apply(_rev, axis=1)
-        rev_map = dict(zip(won_deals["deal_id"], won_deals["_rev"]))
-        for _, row in contact_deals.iterrows():
-            did = row["deal_id"]
-            cid = str(row["contact_id"])
-            if did in rev_map:
-                contact_revenue[cid] = contact_revenue.get(cid, 0.0) + rev_map[did]
-
+    all_assets = set(leads_by_asset) | set(closed_by_asset)
+    if not all_assets:
+        return pd.DataFrame(columns=cols)
     rows = []
-    for asset, grp in c.groupby("asset"):
-        ids = set(grp["hs_id"].astype(str))
-        leads = len(ids)
-        closed = len(ids & won_contact_ids)
+    for asset in all_assets:
+        leads = leads_by_asset.get(asset, 0)
+        closed = closed_by_asset.get(asset, 0)
         rows.append({
             "asset": asset,
-            "group": asset_to_group.get(asset, ""),
+            "group": group_by_asset.get(asset, asset_to_group.get(asset, "")),
             "leads": leads,
-            "fifteen_booked": len(ids & booked_15),
-            "strategy_booked": len(ids & booked_strat),
+            "fifteen_booked": f15_by_asset.get(asset, 0),
+            "strategy_booked": strat_by_asset.get(asset, 0),
             "closed": closed,
-            "revenue": sum(contact_revenue.get(i, 0.0) for i in ids),
+            "revenue": rev_by_asset.get(asset, 0.0),
             "close_rate": _safe_div(closed, leads),
         })
     return pd.DataFrame(rows, columns=cols).sort_values(
