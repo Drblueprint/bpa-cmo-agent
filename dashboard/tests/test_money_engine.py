@@ -63,3 +63,53 @@ def test_deal_money_basic_excluded():
     assert m["booked_revenue"] == 0.0
     assert m["est_cash_collected"] == 0.0
     assert m["counts_as_sale"] is False
+
+
+import pandas as pd
+from dashboard.data.reconcile import build_closed_deals_table
+
+RATE_KW = dict(full_monthly=1997.0, full_term_months=24,
+               ninety_day_amount=5991.0, diy_monthly=997.0, pt_multiplier=0.5)
+
+
+def test_build_closed_deals_table_uses_tier_not_amount():
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 40000.0,
+         "createdate": "2026-04-01T00:00:00Z", "closedate": "2026-04-15T00:00:00Z",
+         "stage_entry_date": None},
+        {"deal_id": "d2", "dealstage": "1163151789", "amount": 40000.0,
+         "createdate": "2026-03-01T00:00:00Z", "closedate": None,
+         "stage_entry_date": "2026-03-10T00:00:00Z"},
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "c1", "deal_id": "d1"},
+        {"contact_id": "c2", "deal_id": "d2"},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "name": "Full Doc", "email": "f@x.com",
+         "typeform_asset_download": "Top 10 typeform", "contract_tier": "1:  PRIMARY",
+         "send_contract_options": "", "analytics_source_data_1": "",
+         "typeform_submission_date": None, "created": "2026-04-01T00:00:00Z",
+         "sdr_owner": "", "bds": "", "sme": ""},
+        {"hs_id": "c2", "name": "DIY Doc", "email": "d@x.com",
+         "typeform_asset_download": "Top 10 typeform", "contract_tier": "DIY - C",
+         "send_contract_options": "", "analytics_source_data_1": "",
+         "typeform_submission_date": None, "created": "2026-03-01T00:00:00Z",
+         "sdr_owner": "", "bds": "", "sme": ""},
+    ])
+    t = build_closed_deals_table(
+        deals, contact_deals, contacts,
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        today=date(2026, 6, 9), **RATE_KW,
+    )
+    full = t[t["hs_id"] == "c1"].iloc[0]
+    diy = t[t["hs_id"] == "c2"].iloc[0]
+    # deal.amount ($40k) ignored; FULL booked = 47928
+    assert full["deal_amount"] == 47928.0
+    assert full["est_cash_collected"] == 1997.0 * 2
+    assert full["plan"] == "FULL"
+    # DIY: no booked TCV, cash accrues (Mar->Jun = 3)
+    assert diy["deal_amount"] == 0.0
+    assert diy["est_cash_collected"] == 997.0 * 3
+    assert diy["plan"] == "DIY"

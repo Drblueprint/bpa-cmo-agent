@@ -1947,18 +1947,30 @@ def build_closed_deals_table(
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
+    today=None,
+    full_monthly: float = 1997.0,
+    full_term_months: int = 24,
+    ninety_day_amount: float = 5991.0,
+    diy_monthly: float = 997.0,
+    pt_multiplier: float = 0.5,
 ) -> pd.DataFrame:
     """Build a row-per-deal detail table for closed-won deals.
 
     Each row: hs_id (for link), contact_name, email, group, asset, source,
-    is_marketing, closedate, deal_amount (Option C fallback),
+    is_marketing, closedate, deal_amount (tier-derived booked revenue),
+    est_cash_collected, monthly, plan,
     sales_cycle_days (typeform_submission to closedate), sdr_owner, bds, sme.
     """
     cols = ["hs_id", "contact_name", "email", "typeform", "group", "asset", "source",
             "tier", "send_contract", "is_marketing", "closedate", "deal_amount",
+            "est_cash_collected", "monthly", "plan",
             "sales_cycle_days", "sdr_owner", "bds", "sme"]
     if deals.empty or contact_deals.empty or contacts.empty:
         return pd.DataFrame(columns=cols)
+
+    from datetime import date as _date
+    if today is None:
+        today = _date.today()
 
     contacts = contacts.copy()
     contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
@@ -2001,8 +2013,17 @@ def build_closed_deals_table(
             group = primary_contact.get("group")
             is_marketing = False
 
-        # Option C: deal.amount if > 0, else group default
-        effective_amt = amt if amt > 0 else float(group_default_amount.get(group, 0.0))
+        # Tier-derived money (deal.amount is a $40k placeholder, ignored).
+        tier_val = primary_contact.get("contract_tier") or ""
+        _plan, _mgroup = classify_tier(tier_val)
+        _eff_close = (deal.get("closedate") or deal.get("stage_entry_date")
+                      or deal.get("createdate"))
+        _money = deal_money(
+            _plan, _mgroup, _eff_close, today,
+            full_monthly=full_monthly, full_term_months=full_term_months,
+            ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
+            pt_multiplier=pt_multiplier,
+        )
 
         # Sales cycle: prefer typeform_submission_date as lead-start; fall back
         # to HubSpot createdate when submission is missing OR appears to be
@@ -2057,7 +2078,6 @@ def build_closed_deals_table(
         #  2. TheraRay analytics signal (now folded into group above)
         #  3. Tier-suffix → derived group (fallback for non-marketing closes)
         #  4. "(unmapped)"
-        tier_val = primary_contact.get("contract_tier") or ""
         group_from_tier = _group_from_tier(tier_val)
         if group:  # asset map, override, or TheraRay signal above
             final_group = group
@@ -2080,7 +2100,10 @@ def build_closed_deals_table(
             "closedate": (deal.get("closedate")
                           or deal.get("stage_entry_date")
                           or deal.get("createdate")),
-            "deal_amount": effective_amt,
+            "deal_amount": _money["booked_revenue"],
+            "est_cash_collected": _money["est_cash_collected"],
+            "monthly": _money["monthly"],
+            "plan": _plan,
             "sales_cycle_days": cycle_days,
             "sdr_owner": primary_contact.get("sdr_owner") or "",
             "bds": primary_contact.get("bds") or "",
