@@ -8,6 +8,7 @@ from dashboard.data.reconcile import (
     sales_sdr_rollup,
     sales_bds_rollup,
     sales_sme_rollup,
+    team_total_row,
     windowed_sales_money,
 )
 
@@ -333,7 +334,6 @@ def test_sales_sme_first_vs_fu_close():
 
 
 def test_team_total_row_sums_and_recomputes_rates():
-    from dashboard.data.reconcile import team_total_row
     df = pd.DataFrame([
         {"sme_id": "Dr A", "appointments": 4, "showed": 3, "deals_closed": 2,
          "show_rate": 0.75, "close_rate": 2/3, "revenue": 80000.0},
@@ -357,6 +357,28 @@ def test_team_total_row_sums_and_recomputes_rates():
     assert total["close_rate"] == 0.5         # 3/6
     assert len(out) == 3                       # total + 2 reps
     assert list(out["sme_id"])[1:] == ["Dr A", "Dr B"]
+
+
+def test_team_total_row_edges():
+    """Empty df passes through; zero-denominator rate yields None (no div-by-zero)."""
+    # Empty df returns unchanged (len 0).
+    empty = team_total_row(
+        pd.DataFrame(columns=["a", "r"]),
+        sum_cols=["a"],
+        rate_cols={"r": ("a", "a")},
+        label_col="a",
+    )
+    assert len(empty) == 0
+
+    # Zero denominator → rate cell is None, no ZeroDivisionError.
+    df = pd.DataFrame([{"label": "Dr A", "count": 0, "rate": None}])
+    out = team_total_row(
+        df,
+        sum_cols=["count"],
+        rate_cols={"rate": ("count", "count")},
+        label_col="label",
+    )
+    assert out.iloc[0]["rate"] is None
 
 
 def test_windowed_sales_money_filters_by_closedate():

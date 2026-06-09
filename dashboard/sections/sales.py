@@ -28,25 +28,25 @@ from dashboard.data.reconcile import (
 
 
 def _fmt_money(x) -> str:
-    if x is None or pd.isna(x):
+    if x is None or isinstance(x, str) or pd.isna(x):
         return "—"
     return f"${x:,.0f}"
 
 
 def _fmt_int(x) -> str:
-    if x is None or pd.isna(x):
+    if x is None or isinstance(x, str) or pd.isna(x):
         return "—"
     return f"{int(x):,}"
 
 
 def _fmt_pct(x) -> str:
-    if x is None or pd.isna(x):
+    if x is None or isinstance(x, str) or pd.isna(x):
         return "—"
     return f"{x * 100:.0f}%"
 
 
 def _fmt_minutes(x) -> str:
-    if x is None or pd.isna(x):
+    if x is None or isinstance(x, str) or pd.isna(x):
         return "—"
     return f"{x:.0f}"
 
@@ -714,10 +714,7 @@ def render_sales(start: date, end: date) -> None:
         )
         display["talk_time_min"] = display["talk_time_min"].map(_fmt_minutes)
         display["booking_rate"] = display["booking_rate"].map(_fmt_pct)
-        display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(
-            lambda x: f"{x:.1f} min"
-            if isinstance(x, (int, float)) and not pd.isna(x) else "—"
-        )
+        display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(_fmt_minutes)
         display = display[[
             "user_name", "dials", "pick_ups", "contacts_made", "talk_time_min",
             "appointments_booked", "booking_rate",
