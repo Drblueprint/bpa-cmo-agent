@@ -1250,6 +1250,12 @@ def sales_sme_rollup(
     group_default_amount: dict,
     stages_closed_won,
     stages_strategy_dq: set,
+    today=None,
+    full_monthly: float = 1997.0,
+    full_term_months: int = 24,
+    ninety_day_amount: float = 5991.0,
+    diy_monthly: float = 997.0,
+    pt_multiplier: float = 0.5,
 ) -> pd.DataFrame:
     """Per-SME rollup with appointments + DQ + first/FU close split.
 
@@ -1301,38 +1307,40 @@ def sales_sme_rollup(
         booked_strat_ids = set()
         held_strat_ids = set()
 
-    # Closed-won + revenue (Option C)
+    # Closed-won contacts
     won_set = set(stages_closed_won)
     won_contact_ids = _contacts_with_deal_in_stages(contact_deals, deals, won_set)
+
+    # Revenue per contact = tier-derived booked revenue of their won deal(s).
+    # deal.amount is a $40k placeholder and is NOT used.
+    from datetime import date as _date
+    if today is None:
+        today = _date.today()
+    tier_by_contact = dict(zip(contacts["hs_id"].astype(str),
+                               contacts.get("contract_tier", pd.Series(dtype=object))))
     contact_revenue: dict[str, float] = {}
     if not deals.empty and not contact_deals.empty and won_set:
-        contact_to_group = dict(zip(
-            contacts["hs_id"].astype(str), contacts["group"]
-        ))
-
-        def _deal_revenue(row) -> float:
-            amt = float(row.get("amount") or 0)
-            if amt > 0:
-                return amt
-            cids = contact_deals[
-                contact_deals["deal_id"] == row["deal_id"]
-            ]["contact_id"].astype(str)
-            for cid in cids:
-                g = contact_to_group.get(cid)
-                if g and g in group_default_amount:
-                    return float(group_default_amount[g])
-            return 0.0
-
-        won_deals = deals[deals["dealstage"].isin(won_set)].copy()
-        won_deals["effective_amount"] = won_deals.apply(_deal_revenue, axis=1)
-        deal_revenue_map = dict(zip(
-            won_deals["deal_id"], won_deals["effective_amount"]
-        ))
-        for _, row in contact_deals.iterrows():
-            cid = str(row["contact_id"])
-            did = row["deal_id"]
-            if did in deal_revenue_map:
-                contact_revenue[cid] = contact_revenue.get(cid, 0.0) + deal_revenue_map[did]
+        won_deal_ids = set(deals.loc[deals["dealstage"].isin(won_set), "deal_id"])
+        # effective close per won deal for the cash/booked date:
+        # closedate, else stage_entry_date, else createdate.
+        def _eff_close_for(row):
+            return (row.get("closedate") or row.get("stage_entry_date")
+                    or row.get("createdate"))
+        won_close = {row["deal_id"]: _eff_close_for(row)
+                     for _, row in deals.iterrows()}
+        for _, cd_row in contact_deals.iterrows():
+            cid = str(cd_row["contact_id"])
+            did = cd_row["deal_id"]
+            if did not in won_deal_ids:
+                continue
+            plan, mgroup = classify_tier(tier_by_contact.get(cid))
+            money = deal_money(
+                plan, mgroup, won_close.get(did), today,
+                full_monthly=full_monthly, full_term_months=full_term_months,
+                ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
+                pt_multiplier=pt_multiplier,
+            )
+            contact_revenue[cid] = contact_revenue.get(cid, 0.0) + money["booked_revenue"]
 
     dq_contact_ids = _contacts_with_deal_in_stages(
         contact_deals, deals, set(stages_strategy_dq),

@@ -198,11 +198,14 @@ def test_sales_sme_rollup_with_dq():
     """SME table tracks Strategy appointments, showed, closed, DQ, revenue."""
     contacts = pd.DataFrame([
         {"hs_id": "c1", "sme": "77643349",
-         "typeform_asset_download": "Top 10 typeform"},
+         "typeform_asset_download": "Top 10 typeform",
+         "contract_tier": "1:  PRIMARY"},
         {"hs_id": "c2", "sme": "77643349",
-         "typeform_asset_download": "Top 10 typeform"},
+         "typeform_asset_download": "Top 10 typeform",
+         "contract_tier": "BASIC - NOT CERTIFIED"},
         {"hs_id": "c3", "sme": "24801837",
-         "typeform_asset_download": "Recovery Program (PT) typeform"},
+         "typeform_asset_download": "Recovery Program (PT) typeform",
+         "contract_tier": None},
     ])
     meetings = pd.DataFrame([
         {"meeting_id": "m1", "contact_id": "c1",
@@ -220,8 +223,10 @@ def test_sales_sme_rollup_with_dq():
         {"contact_id": "c2", "deal_id": "d2"},
     ])
     deals = pd.DataFrame([
-        {"deal_id": "d1", "dealstage": "closedwon", "amount": 50000},
-        {"deal_id": "d2", "dealstage": "1205515693", "amount": 0},
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 50000,
+         "closedate": "2026-05-21T00:00:00Z", "createdate": "2026-05-01T00:00:00Z"},
+        {"deal_id": "d2", "dealstage": "1205515693", "amount": 0,
+         "closedate": None, "createdate": "2026-05-01T00:00:00Z"},
     ])
 
     out = sales_sme_rollup(
@@ -234,6 +239,7 @@ def test_sales_sme_rollup_with_dq():
         group_default_amount={"Chiro": 47928.0, "PT Recovery": 23928.0},
         stages_closed_won={"closedwon"},
         stages_strategy_dq={"1205515693", "1031449110"},
+        today=_d(2026, 6, 9),
     )
     by_sme = out.set_index("sme_id")
     assert by_sme.loc["77643349", "appointments"] == 2
@@ -242,7 +248,8 @@ def test_sales_sme_rollup_with_dq():
     assert by_sme.loc["77643349", "disqualified"] == 1
     assert by_sme.loc["77643349", "close_rate"] == 0.5
     assert by_sme.loc["77643349", "dq_rate"] == 0.5
-    assert by_sme.loc["77643349", "revenue"] == 50000.0
+    # deal.amount ($50k) ignored; c1 FULL/PRIMARY -> tier-derived booked 47928
+    assert by_sme.loc["77643349", "revenue"] == 47928.0
     # c1 closed-won with 1 Strategy meeting → First Close
     assert by_sme.loc["77643349", "first_closes"] == 1
     assert by_sme.loc["77643349", "fu_closes"] == 0
