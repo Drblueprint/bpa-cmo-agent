@@ -1054,12 +1054,14 @@ def render_sales(start: date, end: date) -> None:
     st.caption(
         f"{_win_label}. One row per marketing asset (typeform). Leads = "
         "contacts who opted in via that asset this window; closed/revenue = "
-        "their won deals (deal.amount, group default as fallback). "
-        "Close % = closed / leads. Sorted by revenue."
+        "those leads who have any won deal on record (deal.amount, group "
+        "default as fallback) - closes lag opt-ins, so this is an asset->"
+        "conversion view, not a same-window cohort. Close % = closed / leads. "
+        "Sorted by revenue."
     )
     asset_perf = asset_performance_rollup(
         contacts=marketing, meetings=meetings,
-        contact_deals=contact_deals, deals=deals_for_sme,
+        contact_deals=contact_deals, deals=deals,
         asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         stages_closed_won=cfg.STAGES_CLOSED_WON,
@@ -1135,6 +1137,9 @@ def render_sales(start: date, end: date) -> None:
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
     )
+    # Snapshot before the marketing-only checkbox can reassign deals_table, so
+    # the DIY/90-Day/Basic roster below sees the full closed-deals set.
+    roster_table = deals_table.copy()
     if deals_table.empty:
         st.info("No closed-won deals YTD.")
     else:
@@ -1203,15 +1208,8 @@ def render_sales(start: date, end: date) -> None:
         )
 
     # ----- Section: DIY / 90-Day / Basic Roster -----
-    # Roster-scoped rebuild of the YTD closed-deals table so it is unaffected
-    # by the "marketing-only" checkbox reassignment of deals_table above.
-    roster_table = build_closed_deals_table(
-        deals_ytd, contact_deals_ytd, contacts_ytd,
-        asset_to_group=cfg.ASSET_TO_GROUP,
-        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
-        source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
-        stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
-    )
+    # Uses roster_table (snapshot of the full closed-deals table taken above,
+    # before the marketing-only checkbox could reassign deals_table).
     with st.expander("DIY / 90-Day / Basic Roster", expanded=False):
         st.caption(
             "Doctors on a DIY, 90-Day, or Basic plan (by contract_tier), with "
