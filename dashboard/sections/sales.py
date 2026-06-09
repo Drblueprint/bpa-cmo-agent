@@ -145,6 +145,12 @@ def render_sales(start: date, end: date) -> None:
             "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
         ])
 
+    # Snapshot the TRUE opt-in set (contacts whose recent_conversion is in the
+    # window) BEFORE the deal-expansion below adds old customers/opportunities
+    # tied to in-window deals. Asset Performance counts leads from this set so a
+    # paused campaign's old closers don't show up as fresh leads.
+    leads_optin = marketing.copy()
+
     # Full-window contact attribution: pull every contact tied to a deal in
     # the window so marketing-attribution works across long sales cycles.
     # Without this, a contact who filled the typeform in March but had their
@@ -1053,14 +1059,14 @@ def render_sales(start: date, end: date) -> None:
     st.subheader("Asset Performance")
     st.caption(
         f"{_win_label}. One row per marketing asset (typeform). Leads = "
-        "contacts who opted in via that asset this window; closed/revenue = "
+        "contacts whose opt-in (recent conversion) is in this window via that "
+        "asset - so a paused campaign shows no new leads. Closed/revenue = "
         "those leads who have any won deal on record (deal.amount, group "
-        "default as fallback) - closes lag opt-ins, so this is an asset->"
-        "conversion view, not a same-window cohort. Close % = closed / leads. "
-        "Sorted by revenue."
+        "default as fallback); since closes lag opt-ins, recent windows show "
+        "few closes. Close % = closed / leads. Sorted by revenue."
     )
     asset_perf = asset_performance_rollup(
-        contacts=marketing, meetings=meetings,
+        contacts=leads_optin, meetings=meetings,
         contact_deals=contact_deals, deals=deals,
         asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
