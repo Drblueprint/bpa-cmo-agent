@@ -2131,6 +2131,12 @@ def compute_ytd_money(
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
+    today=None,
+    full_monthly: float = 1997.0,
+    full_term_months: int = 24,
+    ninety_day_amount: float = 5991.0,
+    diy_monthly: float = 997.0,
+    pt_multiplier: float = 0.5,
 ) -> dict:
     """Compute YTD money KPIs in TWO views: Total (all closed) + Marketing-only.
 
@@ -2142,16 +2148,22 @@ def compute_ytd_money(
         group_default_amount=group_default_amount,
         source_overrides=source_overrides,
         stage_source_fallback=stage_source_fallback,
+        today=today,
+        full_monthly=full_monthly, full_term_months=full_term_months,
+        ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
+        pt_multiplier=pt_multiplier,
     )
 
     def _kpis(df: pd.DataFrame) -> dict:
         n = int(len(df))
         revenue = float(df["deal_amount"].sum()) if not df.empty else 0.0
+        cash = float(df["est_cash_collected"].sum()) if not df.empty else 0.0
         avg = (revenue / n) if n else None
         cycle_vals = df["sales_cycle_days"].dropna().tolist()
         cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
         return {
             "new_revenue": revenue,
+            "est_cash_collected": cash,
             "avg_deal_size": avg,
             "new_customers": n,
             "sales_cycle_median": cycle_median,
@@ -2162,10 +2174,12 @@ def compute_ytd_money(
 
     return {
         "total_new_revenue": total["new_revenue"],
+        "total_est_cash_collected": total["est_cash_collected"],
         "total_avg_deal_size": total["avg_deal_size"],
         "total_new_customers": total["new_customers"],
         "total_sales_cycle_median": total["sales_cycle_median"],
         "mkt_new_revenue": marketing["new_revenue"],
+        "mkt_est_cash_collected": marketing["est_cash_collected"],
         "mkt_avg_deal_size": marketing["avg_deal_size"],
         "mkt_new_customers": marketing["new_customers"],
         "mkt_sales_cycle_median": marketing["sales_cycle_median"],
