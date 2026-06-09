@@ -332,6 +332,33 @@ def test_sales_sme_first_vs_fu_close():
     assert row["fu_close_rate"] == 0.5     # 1 / 2 showed
 
 
+def test_team_total_row_sums_and_recomputes_rates():
+    from dashboard.data.reconcile import team_total_row
+    df = pd.DataFrame([
+        {"sme_id": "Dr A", "appointments": 4, "showed": 3, "deals_closed": 2,
+         "show_rate": 0.75, "close_rate": 2/3, "revenue": 80000.0},
+        {"sme_id": "Dr B", "appointments": 6, "showed": 3, "deals_closed": 1,
+         "show_rate": 0.5, "close_rate": 1/3, "revenue": 40000.0},
+    ])
+    out = team_total_row(
+        df,
+        sum_cols=["appointments", "showed", "deals_closed", "revenue"],
+        rate_cols={"show_rate": ("showed", "appointments"),
+                   "close_rate": ("deals_closed", "showed")},
+        label_col="sme_id",
+    )
+    total = out.iloc[0]                       # prepended at top
+    assert total["sme_id"] == "TEAM TOTAL"
+    assert total["appointments"] == 10
+    assert total["showed"] == 6
+    assert total["deals_closed"] == 3
+    assert total["revenue"] == 120000.0
+    assert total["show_rate"] == 0.6          # 6/10, not avg of 0.75 & 0.5
+    assert total["close_rate"] == 0.5         # 3/6
+    assert len(out) == 3                       # total + 2 reps
+    assert list(out["sme_id"])[1:] == ["Dr A", "Dr B"]
+
+
 def test_windowed_sales_money_filters_by_closedate():
     """Window-bounded money keeps only deals closed in the window."""
     deals = pd.DataFrame([

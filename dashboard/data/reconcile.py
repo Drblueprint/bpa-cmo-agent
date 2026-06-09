@@ -1360,6 +1360,28 @@ def sales_sme_rollup(
     ).reset_index(drop=True)
 
 
+def team_total_row(df, *, sum_cols, rate_cols, label_col, label="TEAM TOTAL"):
+    """Prepend a team-total row to a per-rep rollup.
+
+    - sum_cols: columns summed across rows.
+    - rate_cols: {col: (numerator_col, denominator_col)} recomputed from the
+      SUMMED totals (not averaged), so a team rate is true aggregate.
+    - label_col: column that holds `label`; every other non-sum/non-rate column
+      is left blank ("") in the total row.
+    Returns a new df with the total row at index 0 and the original rows after.
+    """
+    if df.empty:
+        return df
+    total = {c: "" for c in df.columns}
+    total[label_col] = label
+    for c in sum_cols:
+        total[c] = df[c].sum()
+    for c, (num, den) in rate_cols.items():
+        d = df[den].sum()
+        total[c] = (df[num].sum() / d) if d else None
+    return pd.concat([pd.DataFrame([total]), df], ignore_index=True)
+
+
 def windowed_sales_money(
     deals: pd.DataFrame,
     contact_deals: pd.DataFrame,
