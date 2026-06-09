@@ -1077,6 +1077,53 @@ def render_sales(start: date, end: date) -> None:
         })
         st.dataframe(ap, use_container_width=True, hide_index=True)
 
+    # ----- Section: Upcoming Calls -----
+    st.divider()
+    st.subheader("Upcoming Calls")
+    st.caption(
+        "Scheduled 15-min and Strategy calls with a start time in the future. "
+        "Reps should not book more than 14 days out - calls beyond that are "
+        "flagged in red."
+    )
+    _now = pd.Timestamp.now(tz="UTC")
+    if meetings_full.empty:
+        st.info("No upcoming calls.")
+    else:
+        mf = meetings_full.copy()
+        mf["_start"] = pd.to_datetime(mf["start_time"], utc=True, errors="coerce")
+        upcoming = mf[mf["_start"] > _now].copy()
+        if upcoming.empty:
+            st.info("No upcoming calls.")
+        else:
+            name_map = dict(zip(marketing["hs_id"].astype(str),
+                                marketing.get("name", pd.Series(dtype=object))))
+            bds_map = dict(zip(marketing["hs_id"].astype(str),
+                               marketing.get("bds", pd.Series(dtype=object))))
+            sme_map = dict(zip(marketing["hs_id"].astype(str),
+                               marketing.get("sme", pd.Series(dtype=object))))
+            upcoming["_cid"] = upcoming["contact_id"].astype(str)
+            upcoming["Contact"] = upcoming["_cid"].map(name_map).fillna("")
+            _atype = upcoming["activity_type"].fillna("").astype(str).str.lower()
+            upcoming["Type"] = upcoming["activity_type"].fillna("")
+            upcoming["Owner"] = [
+                cfg.resolve_owner(sme_map.get(c) if "strategy" in t else bds_map.get(c))
+                for c, t in zip(upcoming["_cid"], _atype)
+            ]
+            upcoming["_days_out"] = (upcoming["_start"] - _now).dt.days
+            upcoming = upcoming.sort_values("_start").reset_index(drop=True)
+            upcoming["When (CT)"] = cfg.format_ct_series(upcoming["start_time"])
+            disp = upcoming[["Contact", "Owner", "Type", "When (CT)"]]
+
+            def _flag_far(row):
+                far = bool(upcoming.loc[row.name, "_days_out"] > 14)
+                style = "color: #d62728; font-weight: bold" if far else ""
+                return [style for _ in row]
+
+            st.dataframe(
+                disp.style.apply(_flag_far, axis=1),
+                use_container_width=True, hide_index=True,
+            )
+
     # ----- Section: Closed Deals YTD (existing) -----
     st.divider()
     st.subheader("Closed Deals — Year to Date")
