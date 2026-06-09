@@ -29,6 +29,47 @@ def classify_tier(contract_tier) -> tuple[str, str]:
     return plan, group
 
 
+def _months_elapsed(closedate, today) -> int:
+    """Whole calendar months from close to today, floored at 1 (0 if no date)."""
+    c = pd.to_datetime(closedate, utc=True, errors="coerce")
+    if pd.isna(c):
+        return 0
+    months = (today.year - c.year) * 12 + (today.month - c.month)
+    return max(1, months)
+
+
+def deal_money(plan, group, closedate, today, *,
+               full_monthly, full_term_months,
+               ninety_day_amount, diy_monthly, pt_multiplier) -> dict:
+    """Tier-derived money for one closed deal.
+
+    Returns {booked_revenue, est_cash_collected, monthly, counts_as_sale}.
+    - FULL:  booked = monthly x term;  cash = monthly x min(months, term)
+    - 90DAY: booked = cash = one-time amount
+    - DIY:   booked = 0 (no TCV);      cash = monthly x months
+    - BASIC/UNKNOWN: all 0, counts_as_sale False
+    PT group halves every dollar figure (pt_multiplier).
+    """
+    factor = pt_multiplier if group == "PT" else 1.0
+    if plan == "FULL":
+        monthly = full_monthly * factor
+        months = min(_months_elapsed(closedate, today), full_term_months)
+        return {"booked_revenue": monthly * full_term_months,
+                "est_cash_collected": monthly * months,
+                "monthly": monthly, "counts_as_sale": True}
+    if plan == "90DAY":
+        amt = ninety_day_amount * factor
+        return {"booked_revenue": amt, "est_cash_collected": amt,
+                "monthly": 0.0, "counts_as_sale": True}
+    if plan == "DIY":
+        monthly = diy_monthly * factor
+        months = _months_elapsed(closedate, today)
+        return {"booked_revenue": 0.0, "est_cash_collected": monthly * months,
+                "monthly": monthly, "counts_as_sale": True}
+    return {"booked_revenue": 0.0, "est_cash_collected": 0.0,
+            "monthly": 0.0, "counts_as_sale": False}
+
+
 def _group_from_tier(tier: str | None) -> str | None:
     """Derive group (Chiro / PT Recovery) from contract_tier suffix.
 
