@@ -1458,9 +1458,9 @@ def windowed_sales_money(
 
     - window_revenue: sum of effective deal amounts (HubSpot amount with
       group-default fallback).
-    - window_cash_collection: sum of group_cash_per_deal[group] across closed
-      deals in the window. Differs from revenue when contract values exceed
-      cash-up-front. None when group_cash_per_deal is not provided.
+    - window_cash_collection: tier-derived est_cash_collected summed across the
+      closed-deals table (sum of the table's `est_cash_collected` column).
+      Differs from revenue when contract values exceed cash collected to date.
     """
     if deals.empty:
         return {
@@ -1468,7 +1468,7 @@ def windowed_sales_money(
             "window_revenue": 0.0,
             "window_avg_deal_size": None,
             "window_cycle_median_days": None,
-            "window_cash_collection": 0.0 if group_cash_per_deal else None,
+            "window_cash_collection": 0.0,
         }
 
     # Effective close date:
@@ -1991,7 +1991,6 @@ def build_closed_deals_table(
     rows = []
     for _, deal in deals.iterrows():
         deal_id = deal["deal_id"]
-        amt = float(deal.get("amount") or 0)
         cd_rows = contact_deals[contact_deals["deal_id"] == deal_id]
         contact_ids = [str(c) for c in cd_rows["contact_id"].tolist()]
         primary_contact = None

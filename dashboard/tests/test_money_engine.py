@@ -143,3 +143,32 @@ def test_compute_ytd_money_tier_revenue():
     assert result["total_est_cash_collected"] == 1997.0 * 2  # Apr->Jun = 2mo
     assert result["mkt_new_revenue"] == 47928.0
     assert result["mkt_est_cash_collected"] == 1997.0 * 2
+
+
+def test_build_closed_deals_table_unknown_tier_zero_money():
+    """A closed-won deal whose contact has an unmapped/None contract_tier
+    derives no money: deal_amount and est_cash_collected are 0.0 and plan is
+    UNKNOWN (deal.amount placeholder is never used)."""
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 40000.0,
+         "createdate": "2026-04-01T00:00:00Z", "closedate": "2026-04-15T00:00:00Z",
+         "stage_entry_date": None},
+    ])
+    contact_deals = pd.DataFrame([{"contact_id": "c1", "deal_id": "d1"}])
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "name": "Mystery Doc", "email": "m@x.com",
+         "typeform_asset_download": "Top 10 typeform", "contract_tier": None,
+         "send_contract_options": "", "analytics_source_data_1": "",
+         "typeform_submission_date": None, "created": "2026-04-01T00:00:00Z",
+         "sdr_owner": "", "bds": "", "sme": ""},
+    ])
+    t = build_closed_deals_table(
+        deals, contact_deals, contacts,
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        today=date(2026, 6, 9), **RATE_KW,
+    )
+    row = t[t["hs_id"] == "c1"].iloc[0]
+    assert row["deal_amount"] == 0.0
+    assert row["est_cash_collected"] == 0.0
+    assert row["plan"] == "UNKNOWN"

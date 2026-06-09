@@ -354,6 +354,9 @@ def render_sales(start: date, end: date) -> None:
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
         group_cash_per_deal=cfg.GROUP_CASH_COLLECTED_PER_DEAL,
         today=date.today(),
+        full_monthly=cfg.FULL_MONTHLY, full_term_months=cfg.FULL_TERM_MONTHS,
+        ninety_day_amount=cfg.NINETY_DAY_AMOUNT, diy_monthly=cfg.DIY_MONTHLY,
+        pt_multiplier=cfg.PT_MULTIPLIER,
     )
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric(
@@ -413,6 +416,9 @@ def render_sales(start: date, end: date) -> None:
                 source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
                 stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
                 today=date.today(),
+                full_monthly=cfg.FULL_MONTHLY, full_term_months=cfg.FULL_TERM_MONTHS,
+                ninety_day_amount=cfg.NINETY_DAY_AMOUNT, diy_monthly=cfg.DIY_MONTHLY,
+                pt_multiplier=cfg.PT_MULTIPLIER,
             )
             if not window_table.empty:
                 wt = window_table.copy()
@@ -904,6 +910,9 @@ def render_sales(start: date, end: date) -> None:
         stages_closed_won=cfg.STAGES_CLOSED_WON,
         stages_strategy_dq=cfg.STAGES_STRATEGY_DQ,
         today=date.today(),
+        full_monthly=cfg.FULL_MONTHLY, full_term_months=cfg.FULL_TERM_MONTHS,
+        ninety_day_amount=cfg.NINETY_DAY_AMOUNT, diy_monthly=cfg.DIY_MONTHLY,
+        pt_multiplier=cfg.PT_MULTIPLIER,
     )
     if sme.empty:
         st.info("No SME activity in this window.")

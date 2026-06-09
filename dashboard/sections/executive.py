@@ -174,6 +174,9 @@ def render_executive(start: date, end: date) -> None:
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
         today=date.today(),
+        full_monthly=cfg.FULL_MONTHLY, full_term_months=cfg.FULL_TERM_MONTHS,
+        ninety_day_amount=cfg.NINETY_DAY_AMOUNT, diy_monthly=cfg.DIY_MONTHLY,
+        pt_multiplier=cfg.PT_MULTIPLIER,
     )
 
     # YTD ad spend for Marketing CAC calculation
@@ -201,6 +204,9 @@ def render_executive(start: date, end: date) -> None:
             source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
             stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
             today=date.today(),
+            full_monthly=cfg.FULL_MONTHLY, full_term_months=cfg.FULL_TERM_MONTHS,
+            ninety_day_amount=cfg.NINETY_DAY_AMOUNT, diy_monthly=cfg.DIY_MONTHLY,
+            pt_multiplier=cfg.PT_MULTIPLIER,
         )
         commissions = compute_close_commissions(
             ytd_deals_table,
@@ -486,6 +492,9 @@ def render_executive(start: date, end: date) -> None:
                 source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
                 stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
                 today=date.today(),
+                full_monthly=cfg.FULL_MONTHLY, full_term_months=cfg.FULL_TERM_MONTHS,
+                ninety_day_amount=cfg.NINETY_DAY_AMOUNT, diy_monthly=cfg.DIY_MONTHLY,
+                pt_multiplier=cfg.PT_MULTIPLIER,
             )
             funnel = group_funnel_costs(
                 fb_ytd=fb_win,
@@ -865,6 +874,9 @@ def render_executive(start: date, end: date) -> None:
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
         today=date.today(),
+        full_monthly=cfg.FULL_MONTHLY, full_term_months=cfg.FULL_TERM_MONTHS,
+        ninety_day_amount=cfg.NINETY_DAY_AMOUNT, diy_monthly=cfg.DIY_MONTHLY,
+        pt_multiplier=cfg.PT_MULTIPLIER,
     )
     if deals_table.empty:
         st.info("No closed-won deals YTD.")
