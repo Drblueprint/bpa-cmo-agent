@@ -194,6 +194,38 @@ def test_sales_bds_rollup_with_dq():
     assert by_bds.loc["61097347", "shows"] == 1
 
 
+def test_bds_booking_and_dq_rates_capped_at_100():
+    """sme_booked / disqualified must be a subset of shows, so rates <= 100%."""
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "bds": "b1"},
+        {"hs_id": "2", "bds": "b1"},
+    ])
+    meetings = pd.DataFrame([
+        # c1: showed the 15-min (COMPLETE) AND booked a strategy
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-05-01T00:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "SCHEDULED", "start_time": "2026-05-03T00:00:00Z"},
+        # c2: did NOT show the 15-min (SCHEDULED) but still booked a strategy
+        {"meeting_id": "m3", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "SCHEDULED", "start_time": "2026-05-02T00:00:00Z"},
+        {"meeting_id": "m4", "contact_id": "2", "activity_type": "Strategy Call",
+         "outcome": "SCHEDULED", "start_time": "2026-05-04T00:00:00Z"},
+    ])
+    r = sales_bds_rollup(
+        contacts=contacts, meetings=meetings,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage"]),
+        stages_15min_dq=set(),
+    )
+    row = r.iloc[0]
+    assert row["appointments"] == 2          # both booked a 15-min
+    assert row["shows"] == 1                  # only c1 was COMPLETE
+    assert row["sme_booked"] == 1             # only c1 showed AND booked strategy
+    assert row["booking_rate"] == 1.0         # 1/1, was 2/1 = 2.0 before the fix
+    assert row["booking_rate"] <= 1.0
+
+
 def test_sales_sme_rollup_with_dq():
     """SME table tracks Strategy appointments, showed, closed, DQ, revenue."""
     contacts = pd.DataFrame([

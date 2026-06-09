@@ -1120,8 +1120,12 @@ def sales_bds_rollup(
 
     - appointments: contacts in this BDS group with a 15-min meeting (any outcome).
     - shows: 15-min meetings with COMPLETE outcome.
-    - sme_booked: contacts with a Strategy meeting booked.
-    - disqualified: contacts with a deal in STAGES_15MIN_DQ.
+    - sme_booked: contacts who SHOWED the 15-min (COMPLETE) AND booked a
+      Strategy meeting. Restricted to the showed set so booking_rate is a true
+      post-show conversion and cannot exceed 100%.
+    - disqualified: contacts who SHOWED the 15-min AND have a deal in
+      STAGES_15MIN_DQ. Restricted to the showed set so dq_rate cannot exceed
+      100%.
     - show_rate: shows / appointments.
     - booking_rate: sme_booked / shows.
     - dq_rate: disqualified / shows.
@@ -1160,8 +1164,8 @@ def sales_bds_rollup(
         ids = set(grp["hs_id"].astype(str))
         appts = len(ids & booked_15_ids)
         shows = len(ids & held_15_ids)
-        sme_booked = len(ids & booked_strat_ids)
-        dq = len(ids & dq_contact_ids)
+        sme_booked = len(ids & held_15_ids & booked_strat_ids)
+        dq = len(ids & held_15_ids & dq_contact_ids)
         rows.append({
             "bds_id": str(bds_id) if pd.notna(bds_id) else "",
             "appointments": appts,
