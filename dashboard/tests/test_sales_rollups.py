@@ -198,14 +198,11 @@ def test_sales_sme_rollup_with_dq():
     """SME table tracks Strategy appointments, showed, closed, DQ, revenue."""
     contacts = pd.DataFrame([
         {"hs_id": "c1", "sme": "77643349",
-         "typeform_asset_download": "Top 10 typeform",
-         "contract_tier": "1:  PRIMARY"},
+         "typeform_asset_download": "Top 10 typeform"},
         {"hs_id": "c2", "sme": "77643349",
-         "typeform_asset_download": "Top 10 typeform",
-         "contract_tier": "BASIC - NOT CERTIFIED"},
+         "typeform_asset_download": "Top 10 typeform"},
         {"hs_id": "c3", "sme": "24801837",
-         "typeform_asset_download": "Recovery Program (PT) typeform",
-         "contract_tier": None},
+         "typeform_asset_download": "Recovery Program (PT) typeform"},
     ])
     meetings = pd.DataFrame([
         {"meeting_id": "m1", "contact_id": "c1",
@@ -223,10 +220,8 @@ def test_sales_sme_rollup_with_dq():
         {"contact_id": "c2", "deal_id": "d2"},
     ])
     deals = pd.DataFrame([
-        {"deal_id": "d1", "dealstage": "closedwon", "amount": 50000,
-         "closedate": "2026-05-21T00:00:00Z", "createdate": "2026-05-01T00:00:00Z"},
-        {"deal_id": "d2", "dealstage": "1205515693", "amount": 0,
-         "closedate": None, "createdate": "2026-05-01T00:00:00Z"},
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 50000},
+        {"deal_id": "d2", "dealstage": "1205515693", "amount": 0},
     ])
 
     out = sales_sme_rollup(
@@ -239,7 +234,6 @@ def test_sales_sme_rollup_with_dq():
         group_default_amount={"Chiro": 47928.0, "PT Recovery": 23928.0},
         stages_closed_won={"closedwon"},
         stages_strategy_dq={"1205515693", "1031449110"},
-        today=_d(2026, 6, 9),
     )
     by_sme = out.set_index("sme_id")
     assert by_sme.loc["77643349", "appointments"] == 2
@@ -248,8 +242,7 @@ def test_sales_sme_rollup_with_dq():
     assert by_sme.loc["77643349", "disqualified"] == 1
     assert by_sme.loc["77643349", "close_rate"] == 0.5
     assert by_sme.loc["77643349", "dq_rate"] == 0.5
-    # deal.amount ($50k) ignored; c1 FULL/PRIMARY -> tier-derived booked 47928
-    assert by_sme.loc["77643349", "revenue"] == 47928.0
+    assert by_sme.loc["77643349", "revenue"] == 50000.0
     # c1 closed-won with 1 Strategy meeting → First Close
     assert by_sme.loc["77643349", "first_closes"] == 1
     assert by_sme.loc["77643349", "fu_closes"] == 0
@@ -327,17 +320,17 @@ def test_windowed_sales_money_filters_by_closedate():
          "typeform_asset_download": "Top 10 typeform",
          "typeform_submission_date": "2026-04-10T00:00:00Z",
          "created": "2026-04-10T00:00:00Z",
-         "contract_tier": "1:  PRIMARY", "sdr_owner": "", "bds": "", "sme": ""},
+         "contract_tier": None, "sdr_owner": "", "bds": "", "sme": ""},
         {"hs_id": "c2", "name": "B", "email": "b@x.com",
          "typeform_asset_download": "Top 10 typeform",
          "typeform_submission_date": "2026-02-10T00:00:00Z",
          "created": "2026-02-10T00:00:00Z",
-         "contract_tier": "1:  PRIMARY", "sdr_owner": "", "bds": "", "sme": ""},
+         "contract_tier": None, "sdr_owner": "", "bds": "", "sme": ""},
         {"hs_id": "c3", "name": "C", "email": "c@x.com",
          "typeform_asset_download": "Top 10 typeform",
          "typeform_submission_date": None,
          "created": "2026-05-01T00:00:00Z",
-         "contract_tier": "DIY - C", "sdr_owner": "", "bds": "", "sme": ""},
+         "contract_tier": "FULL - C", "sdr_owner": "", "bds": "", "sme": ""},
     ])
 
     result = windowed_sales_money(
@@ -348,13 +341,9 @@ def test_windowed_sales_money_filters_by_closedate():
         stages_closed_won={"closedwon", "1163151789"},
         stages_closed_won_no_closedate={"1163151789"},
         group_cash_per_deal={"Chiro": 47928.0, "PT Recovery": 23928.0},
-        today=_d(2026, 5, 31),
-        full_monthly=1997.0, full_term_months=24,
-        ninety_day_amount=5991.0, diy_monthly=997.0, pt_multiplier=0.5,
     )
-    # d1 closed 2026-05-10 FULL -> booked 47928; d3 DIY in window -> booked 0
+    # d1 (50000) + d3 (47928 default for Chiro via tier suffix)
     assert result["window_closed_count"] == 2
-    assert result["window_revenue"] == 47928.0 + 0.0
-    # Est cash: d1 FULL closed May, today May 31 -> 1mo = 1997;
-    #           d3 DIY stage-entered May -> 1mo = 997
-    assert result["window_cash_collection"] == 1997.0 + 997.0
+    assert result["window_revenue"] == 50000.0 + 47928.0
+    # Cash Collection always uses the per-group cash default — 2 Chiro deals.
+    assert result["window_cash_collection"] == 47928.0 * 2

@@ -7,69 +7,6 @@ from typing import Iterable
 import pandas as pd
 
 
-def classify_tier(contract_tier) -> tuple[str, str]:
-    """Map a HubSpot contract_tier string to (plan, group).
-
-    plan in {"FULL", "90DAY", "DIY", "BASIC", "UNKNOWN"};
-    group in {"Chiro", "PT"}. Substring match, order-sensitive: DIY / 90 /
-    BASIC are checked before PRIMARY / FULL so e.g. "PT - DIY" is DIY, not FULL.
-    """
-    s = (str(contract_tier) if contract_tier is not None else "").upper()
-    group = "PT" if "PT" in s else "Chiro"
-    if "DIY" in s:
-        plan = "DIY"
-    elif "90" in s:
-        plan = "90DAY"
-    elif "BASIC" in s:
-        plan = "BASIC"
-    elif "PRIMARY" in s or "FULL" in s:
-        plan = "FULL"
-    else:
-        plan = "UNKNOWN"
-    return plan, group
-
-
-def _months_elapsed(closedate, today) -> int:
-    """Whole calendar months from close to today, floored at 1 (0 if no date)."""
-    c = pd.to_datetime(closedate, utc=True, errors="coerce")
-    if pd.isna(c):
-        return 0
-    months = (today.year - c.year) * 12 + (today.month - c.month)
-    return max(1, months)
-
-
-def deal_money(plan, group, closedate, today, *,
-               full_monthly, full_term_months,
-               ninety_day_amount, diy_monthly, pt_multiplier) -> dict:
-    """Tier-derived money for one closed deal.
-
-    Returns {booked_revenue, est_cash_collected, monthly, counts_as_sale}.
-    - FULL:  booked = monthly x term;  cash = monthly x min(months, term)
-    - 90DAY: booked = cash = one-time amount
-    - DIY:   booked = 0 (no TCV);      cash = monthly x months
-    - BASIC/UNKNOWN: all 0, counts_as_sale False
-    PT group halves every dollar figure (pt_multiplier).
-    """
-    factor = pt_multiplier if group == "PT" else 1.0
-    if plan == "FULL":
-        monthly = full_monthly * factor
-        months = min(_months_elapsed(closedate, today), full_term_months)
-        return {"booked_revenue": monthly * full_term_months,
-                "est_cash_collected": monthly * months,
-                "monthly": monthly, "counts_as_sale": True}
-    if plan == "90DAY":
-        amt = ninety_day_amount * factor
-        return {"booked_revenue": amt, "est_cash_collected": amt,
-                "monthly": 0.0, "counts_as_sale": True}
-    if plan == "DIY":
-        monthly = diy_monthly * factor
-        months = _months_elapsed(closedate, today)
-        return {"booked_revenue": 0.0, "est_cash_collected": monthly * months,
-                "monthly": monthly, "counts_as_sale": True}
-    return {"booked_revenue": 0.0, "est_cash_collected": 0.0,
-            "monthly": 0.0, "counts_as_sale": False}
-
-
 def _group_from_tier(tier: str | None) -> str | None:
     """Derive group (Chiro / PT Recovery) from contract_tier suffix.
 
@@ -1250,12 +1187,6 @@ def sales_sme_rollup(
     group_default_amount: dict,
     stages_closed_won,
     stages_strategy_dq: set,
-    today=None,
-    full_monthly: float = 1997.0,
-    full_term_months: int = 24,
-    ninety_day_amount: float = 5991.0,
-    diy_monthly: float = 997.0,
-    pt_multiplier: float = 0.5,
 ) -> pd.DataFrame:
     """Per-SME rollup with appointments + DQ + first/FU close split.
 
@@ -1307,40 +1238,38 @@ def sales_sme_rollup(
         booked_strat_ids = set()
         held_strat_ids = set()
 
-    # Closed-won contacts
+    # Closed-won + revenue (Option C)
     won_set = set(stages_closed_won)
     won_contact_ids = _contacts_with_deal_in_stages(contact_deals, deals, won_set)
-
-    # Revenue per contact = tier-derived booked revenue of their won deal(s).
-    # deal.amount is a $40k placeholder and is NOT used.
-    from datetime import date as _date
-    if today is None:
-        today = _date.today()
-    tier_by_contact = dict(zip(contacts["hs_id"].astype(str),
-                               contacts.get("contract_tier", pd.Series(dtype=object))))
     contact_revenue: dict[str, float] = {}
     if not deals.empty and not contact_deals.empty and won_set:
-        won_deal_ids = set(deals.loc[deals["dealstage"].isin(won_set), "deal_id"])
-        # effective close per won deal for the cash/booked date:
-        # closedate, else stage_entry_date, else createdate.
-        def _eff_close_for(row):
-            return (row.get("closedate") or row.get("stage_entry_date")
-                    or row.get("createdate"))
-        won_close = {row["deal_id"]: _eff_close_for(row)
-                     for _, row in deals.iterrows()}
-        for _, cd_row in contact_deals.iterrows():
-            cid = str(cd_row["contact_id"])
-            did = cd_row["deal_id"]
-            if did not in won_deal_ids:
-                continue
-            plan, mgroup = classify_tier(tier_by_contact.get(cid))
-            money = deal_money(
-                plan, mgroup, won_close.get(did), today,
-                full_monthly=full_monthly, full_term_months=full_term_months,
-                ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
-                pt_multiplier=pt_multiplier,
-            )
-            contact_revenue[cid] = contact_revenue.get(cid, 0.0) + money["booked_revenue"]
+        contact_to_group = dict(zip(
+            contacts["hs_id"].astype(str), contacts["group"]
+        ))
+
+        def _deal_revenue(row) -> float:
+            amt = float(row.get("amount") or 0)
+            if amt > 0:
+                return amt
+            cids = contact_deals[
+                contact_deals["deal_id"] == row["deal_id"]
+            ]["contact_id"].astype(str)
+            for cid in cids:
+                g = contact_to_group.get(cid)
+                if g and g in group_default_amount:
+                    return float(group_default_amount[g])
+            return 0.0
+
+        won_deals = deals[deals["dealstage"].isin(won_set)].copy()
+        won_deals["effective_amount"] = won_deals.apply(_deal_revenue, axis=1)
+        deal_revenue_map = dict(zip(
+            won_deals["deal_id"], won_deals["effective_amount"]
+        ))
+        for _, row in contact_deals.iterrows():
+            cid = str(row["contact_id"])
+            did = row["deal_id"]
+            if did in deal_revenue_map:
+                contact_revenue[cid] = contact_revenue.get(cid, 0.0) + deal_revenue_map[did]
 
     dq_contact_ids = _contacts_with_deal_in_stages(
         contact_deals, deals, set(stages_strategy_dq),
@@ -1441,12 +1370,6 @@ def windowed_sales_money(
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
     group_cash_per_deal: dict | None = None,
-    today=None,
-    full_monthly: float = 1997.0,
-    full_term_months: int = 24,
-    ninety_day_amount: float = 5991.0,
-    diy_monthly: float = 997.0,
-    pt_multiplier: float = 0.5,
 ) -> dict:
     """Window-bounded money + cash + time-to-close.
 
@@ -1458,9 +1381,9 @@ def windowed_sales_money(
 
     - window_revenue: sum of effective deal amounts (HubSpot amount with
       group-default fallback).
-    - window_cash_collection: tier-derived est_cash_collected summed across the
-      closed-deals table (sum of the table's `est_cash_collected` column).
-      Differs from revenue when contract values exceed cash collected to date.
+    - window_cash_collection: sum of group_cash_per_deal[group] across closed
+      deals in the window. Differs from revenue when contract values exceed
+      cash-up-front. None when group_cash_per_deal is not provided.
     """
     if deals.empty:
         return {
@@ -1468,7 +1391,7 @@ def windowed_sales_money(
             "window_revenue": 0.0,
             "window_avg_deal_size": None,
             "window_cycle_median_days": None,
-            "window_cash_collection": 0.0,
+            "window_cash_collection": 0.0 if group_cash_per_deal else None,
         }
 
     # Effective close date:
@@ -1496,17 +1419,19 @@ def windowed_sales_money(
         group_default_amount=group_default_amount,
         source_overrides=source_overrides,
         stage_source_fallback=stage_source_fallback,
-        today=today,
-        full_monthly=full_monthly, full_term_months=full_term_months,
-        ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
-        pt_multiplier=pt_multiplier,
     )
     n = int(len(table))
     revenue = float(table["deal_amount"].sum()) if n else 0.0
     avg = (revenue / n) if n else None
     cycle_vals = table["sales_cycle_days"].dropna().tolist() if n else []
     cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
-    cash = float(table["est_cash_collected"].sum()) if n else 0.0
+
+    if group_cash_per_deal:
+        cash = float(
+            table["group"].map(lambda g: group_cash_per_deal.get(g, 0.0)).sum()
+        ) if n else 0.0
+    else:
+        cash = None
 
     return {
         "window_closed_count": n,
@@ -1959,30 +1884,18 @@ def build_closed_deals_table(
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
-    today=None,
-    full_monthly: float = 1997.0,
-    full_term_months: int = 24,
-    ninety_day_amount: float = 5991.0,
-    diy_monthly: float = 997.0,
-    pt_multiplier: float = 0.5,
 ) -> pd.DataFrame:
     """Build a row-per-deal detail table for closed-won deals.
 
     Each row: hs_id (for link), contact_name, email, group, asset, source,
-    is_marketing, closedate, deal_amount (tier-derived booked revenue),
-    est_cash_collected, monthly, plan,
+    is_marketing, closedate, deal_amount (Option C fallback),
     sales_cycle_days (typeform_submission to closedate), sdr_owner, bds, sme.
     """
     cols = ["hs_id", "contact_name", "email", "typeform", "group", "asset", "source",
             "tier", "send_contract", "is_marketing", "closedate", "deal_amount",
-            "est_cash_collected", "monthly", "plan",
             "sales_cycle_days", "sdr_owner", "bds", "sme"]
     if deals.empty or contact_deals.empty or contacts.empty:
         return pd.DataFrame(columns=cols)
-
-    from datetime import date as _date
-    if today is None:
-        today = _date.today()
 
     contacts = contacts.copy()
     contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
@@ -1991,6 +1904,7 @@ def build_closed_deals_table(
     rows = []
     for _, deal in deals.iterrows():
         deal_id = deal["deal_id"]
+        amt = float(deal.get("amount") or 0)
         cd_rows = contact_deals[contact_deals["deal_id"] == deal_id]
         contact_ids = [str(c) for c in cd_rows["contact_id"].tolist()]
         primary_contact = None
@@ -2024,17 +1938,8 @@ def build_closed_deals_table(
             group = primary_contact.get("group")
             is_marketing = False
 
-        # Tier-derived money (deal.amount is a $40k placeholder, ignored).
-        tier_val = primary_contact.get("contract_tier") or ""
-        _plan, _mgroup = classify_tier(tier_val)
-        _eff_close = (deal.get("closedate") or deal.get("stage_entry_date")
-                      or deal.get("createdate"))
-        _money = deal_money(
-            _plan, _mgroup, _eff_close, today,
-            full_monthly=full_monthly, full_term_months=full_term_months,
-            ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
-            pt_multiplier=pt_multiplier,
-        )
+        # Option C: deal.amount if > 0, else group default
+        effective_amt = amt if amt > 0 else float(group_default_amount.get(group, 0.0))
 
         # Sales cycle: prefer typeform_submission_date as lead-start; fall back
         # to HubSpot createdate when submission is missing OR appears to be
@@ -2089,6 +1994,7 @@ def build_closed_deals_table(
         #  2. TheraRay analytics signal (now folded into group above)
         #  3. Tier-suffix → derived group (fallback for non-marketing closes)
         #  4. "(unmapped)"
+        tier_val = primary_contact.get("contract_tier") or ""
         group_from_tier = _group_from_tier(tier_val)
         if group:  # asset map, override, or TheraRay signal above
             final_group = group
@@ -2111,10 +2017,7 @@ def build_closed_deals_table(
             "closedate": (deal.get("closedate")
                           or deal.get("stage_entry_date")
                           or deal.get("createdate")),
-            "deal_amount": _money["booked_revenue"],
-            "est_cash_collected": _money["est_cash_collected"],
-            "monthly": _money["monthly"],
-            "plan": _plan,
+            "deal_amount": effective_amt,
             "sales_cycle_days": cycle_days,
             "sdr_owner": primary_contact.get("sdr_owner") or "",
             "bds": primary_contact.get("bds") or "",
@@ -2138,12 +2041,6 @@ def compute_ytd_money(
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
-    today=None,
-    full_monthly: float = 1997.0,
-    full_term_months: int = 24,
-    ninety_day_amount: float = 5991.0,
-    diy_monthly: float = 997.0,
-    pt_multiplier: float = 0.5,
 ) -> dict:
     """Compute YTD money KPIs in TWO views: Total (all closed) + Marketing-only.
 
@@ -2155,22 +2052,16 @@ def compute_ytd_money(
         group_default_amount=group_default_amount,
         source_overrides=source_overrides,
         stage_source_fallback=stage_source_fallback,
-        today=today,
-        full_monthly=full_monthly, full_term_months=full_term_months,
-        ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
-        pt_multiplier=pt_multiplier,
     )
 
     def _kpis(df: pd.DataFrame) -> dict:
         n = int(len(df))
         revenue = float(df["deal_amount"].sum()) if not df.empty else 0.0
-        cash = float(df["est_cash_collected"].sum()) if not df.empty else 0.0
         avg = (revenue / n) if n else None
         cycle_vals = df["sales_cycle_days"].dropna().tolist()
         cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
         return {
             "new_revenue": revenue,
-            "est_cash_collected": cash,
             "avg_deal_size": avg,
             "new_customers": n,
             "sales_cycle_median": cycle_median,
@@ -2181,12 +2072,10 @@ def compute_ytd_money(
 
     return {
         "total_new_revenue": total["new_revenue"],
-        "total_est_cash_collected": total["est_cash_collected"],
         "total_avg_deal_size": total["avg_deal_size"],
         "total_new_customers": total["new_customers"],
         "total_sales_cycle_median": total["sales_cycle_median"],
         "mkt_new_revenue": marketing["new_revenue"],
-        "mkt_est_cash_collected": marketing["est_cash_collected"],
         "mkt_avg_deal_size": marketing["avg_deal_size"],
         "mkt_new_customers": marketing["new_customers"],
         "mkt_sales_cycle_median": marketing["sales_cycle_median"],
