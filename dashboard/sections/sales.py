@@ -714,7 +714,10 @@ def render_sales(start: date, end: date) -> None:
         )
         display["talk_time_min"] = display["talk_time_min"].map(_fmt_minutes)
         display["booking_rate"] = display["booking_rate"].map(_fmt_pct)
-        display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(_fmt_minutes)
+        display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(
+            lambda x: "—" if (x is None or isinstance(x, str) or pd.isna(x))
+            else f"{x:.1f} min"
+        )
         display = display[[
             "user_name", "dials", "pick_ups", "contacts_made", "talk_time_min",
             "appointments_booked", "booking_rate",
