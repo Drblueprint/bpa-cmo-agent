@@ -16,6 +16,7 @@ from dashboard.data.hubspot_loader import (
     load_closed_deals_ytd,
 )
 from dashboard.data.reconcile import (
+    asset_performance_rollup,
     build_closed_deals_table,
     compute_speed_to_lead,
     pipeline_funnel,
@@ -1048,88 +1049,33 @@ def render_sales(start: date, end: date) -> None:
 
     st.divider()
 
-    # ----- Section: Marketing Lead Detail (existing) -----
-    st.subheader("Marketing Lead Detail")
+    # ----- Section: Asset Performance (replaces Marketing Lead Detail) -----
+    st.subheader("Asset Performance")
     st.caption(
-        f"{_win_label}. One row per marketing lead with a known asset "
-        "(submitted in this window). Blank-asset rows (past opt-ins and "
-        "non-marketing conversions) are excluded so every name traces back "
-        "to a campaign. Sorted by submission date."
+        f"{_win_label}. One row per marketing asset (typeform). Leads = "
+        "contacts who opted in via that asset this window; closed/revenue = "
+        "their won deals (deal.amount, group default as fallback). "
+        "Close % = closed / leads. Sorted by revenue."
     )
-    if marketing.empty:
-        st.info("No marketing leads in this window.")
-        return
-
-    # Only leads with a real marketing asset. A blank asset means the contact
-    # re-entered via a past opt-in or a non-marketing path, which is noise in a
-    # "where did this lead come from" view.
-    _asset = marketing["typeform_asset_download"].fillna("").astype(str).str.strip()
-    mkt_detail = marketing[_asset != ""].copy()
-    if mkt_detail.empty:
-        st.info("No asset-attributed marketing leads in this window.")
-        return
-    if deals.empty or contact_deals.empty:
-        st.info("No deal data available — drill-down hidden.")
-        return
-
-    deals_by_contact = contact_deals.merge(
-        deals[["deal_id", "dealstage", "amount", "createdate"]],
-        on="deal_id", how="left",
+    asset_perf = asset_performance_rollup(
+        contacts=marketing, meetings=meetings,
+        contact_deals=contact_deals, deals=deals_for_sme,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        stages_closed_won=cfg.STAGES_CLOSED_WON,
     )
-    latest_deal = (
-        deals_by_contact.sort_values("createdate", ascending=False)
-        .drop_duplicates("contact_id")
-        .rename(columns={"contact_id": "hs_id"})
-    )
-    detail = mkt_detail.merge(
-        latest_deal[["hs_id", "dealstage", "amount"]],
-        on="hs_id", how="left",
-    )
-
-    detail["_sort_ts"] = pd.to_datetime(
-        detail["typeform_submission_date"], utc=True, errors="coerce"
-    )
-    detail = detail.sort_values("_sort_ts", ascending=False, na_position="last")
-    detail = detail.drop(columns=["_sort_ts"])
-
-    detail["sdr_owner"] = detail["sdr_owner"].map(cfg.resolve_owner)
-    detail["bds"] = detail["bds"].map(cfg.resolve_owner)
-    detail["hubspot_link"] = detail["hs_id"].apply(cfg.hubspot_contact_url)
-    detail["typeform_submission_date"] = cfg.format_ct_series(
-        detail["typeform_submission_date"]
-    )
-    detail["fifteen_min_call_date"] = cfg.format_ct_series(
-        detail["fifteen_min_call_date"]
-    )
-    detail = detail[[
-        "hubspot_link",
-        "name", "email", "typeform_asset_download", "typeform_submission_date",
-        "fifteen_min_call_date", "lifecycle_stage",
-        "sdr_owner", "bds", "dealstage", "amount",
-    ]].rename(columns={
-        "hubspot_link": "Open",
-        "typeform_asset_download": "Asset",
-        "typeform_submission_date": "Submitted (CT)",
-        "fifteen_min_call_date": "15-min Call Date (CT)",
-        "lifecycle_stage": "Lifecycle",
-        "sdr_owner": "SDR Owner",
-        "bds": "BDS",
-        "dealstage": "Current Stage",
-        "amount": "Deal $",
-    })
-    st.dataframe(
-        cfg.style_unassigned(detail,
-                              columns=["SDR Owner", "BDS", "Asset", "Current Stage"]),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Open": st.column_config.LinkColumn(
-                "Open",
-                help="Open contact in HubSpot",
-                display_text="HubSpot ↗",
-            ),
-        },
-    )
+    if asset_perf.empty:
+        st.info("No asset-attributed leads in this window.")
+    else:
+        ap = asset_perf.copy()
+        ap["close_rate"] = ap["close_rate"].map(_fmt_pct)
+        ap["revenue"] = ap["revenue"].map(_fmt_money)
+        ap = ap.rename(columns={
+            "asset": "Asset", "group": "Group", "leads": "Leads",
+            "fifteen_booked": "15-min Booked", "strategy_booked": "Strategy Booked",
+            "closed": "Closed", "revenue": "Revenue", "close_rate": "Close %",
+        })
+        st.dataframe(ap, use_container_width=True, hide_index=True)
 
     # ----- Section: Closed Deals YTD (existing) -----
     st.divider()
