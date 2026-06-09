@@ -428,3 +428,42 @@ def test_windowed_sales_money_filters_by_closedate():
     assert result["window_revenue"] == 50000.0 + 47928.0
     # Cash Collection always uses the per-group cash default — 2 Chiro deals.
     assert result["window_cash_collection"] == 47928.0 * 2
+
+
+def test_asset_performance_rollup():
+    from dashboard.data.reconcile import asset_performance_rollup
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "2", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "3", "typeform_asset_download": "EMX Kansas City 2026"},
+        {"hs_id": "4", "typeform_asset_download": ""},   # blank -> excluded
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE", "start_time": "2026-05-01T00:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "1", "activity_type": "Strategy Call",
+         "outcome": "SCHEDULED", "start_time": "2026-05-03T00:00:00Z"},
+    ])
+    contact_deals = pd.DataFrame([{"contact_id": "1", "deal_id": "d1"}])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 50000.0},
+    ])
+    r = asset_performance_rollup(
+        contacts=contacts, meetings=meetings,
+        contact_deals=contact_deals, deals=deals,
+        asset_to_group={"Top 10 typeform": "Chiro",
+                        "EMX Kansas City 2026": "EMX"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+    )
+    # blank-asset contact 4 excluded -> 2 asset rows; sorted by revenue desc
+    assert list(r["asset"]) == ["Top 10 typeform", "EMX Kansas City 2026"]
+    top = r.iloc[0]
+    assert top["leads"] == 2
+    assert top["fifteen_booked"] == 1
+    assert top["strategy_booked"] == 1
+    assert top["closed"] == 1
+    assert top["revenue"] == 50000.0          # deal.amount used (Option C)
+    assert top["close_rate"] == 0.5           # 1 closed / 2 leads
+    emx = r.iloc[1]
+    assert emx["leads"] == 1 and emx["closed"] == 0 and emx["revenue"] == 0.0

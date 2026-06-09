@@ -1360,6 +1360,92 @@ def sales_sme_rollup(
     ).reset_index(drop=True)
 
 
+def asset_performance_rollup(
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    deals: pd.DataFrame,
+    *,
+    asset_to_group: dict,
+    group_default_amount: dict,
+    stages_closed_won,
+) -> pd.DataFrame:
+    """Per marketing-asset performance summary.
+
+    One row per typeform_asset_download (blank assets excluded).
+    Columns: asset, group, leads, fifteen_booked, strategy_booked, closed,
+             revenue, close_rate (closed / leads).
+    Revenue uses Option-C: deal.amount when > 0, else group_default per group.
+    Sorted by revenue, then closed, then leads (descending).
+    """
+    cols = ["asset", "group", "leads", "fifteen_booked", "strategy_booked",
+            "closed", "revenue", "close_rate"]
+    if contacts.empty:
+        return pd.DataFrame(columns=cols)
+    c = contacts.copy()
+    c["asset"] = c["typeform_asset_download"].fillna("").astype(str).str.strip()
+    c = c[c["asset"] != ""]
+    if c.empty:
+        return pd.DataFrame(columns=cols)
+
+    if not meetings.empty:
+        types = meetings["activity_type"].fillna("").astype(str).str.lower()
+        booked_15 = set(meetings.loc[types.str.contains("15 min", na=False),
+                                     "contact_id"].astype(str))
+        booked_strat = set(meetings.loc[types.str.contains("strategy", na=False),
+                                        "contact_id"].astype(str))
+    else:
+        booked_15, booked_strat = set(), set()
+
+    won_set = set(stages_closed_won)
+    won_contact_ids = _contacts_with_deal_in_stages(contact_deals, deals, won_set)
+
+    contact_revenue: dict[str, float] = {}
+    if not deals.empty and not contact_deals.empty and won_set:
+        c_group = dict(zip(c["hs_id"].astype(str), c["asset"].map(asset_to_group)))
+        won_deals = deals[deals["dealstage"].isin(won_set)].copy()
+
+        def _rev(row) -> float:
+            amt = float(row.get("amount") or 0)
+            if amt > 0:
+                return amt
+            cids = contact_deals[
+                contact_deals["deal_id"] == row["deal_id"]
+            ]["contact_id"].astype(str)
+            for cid in cids:
+                g = c_group.get(cid)
+                if g and g in group_default_amount:
+                    return float(group_default_amount[g])
+            return 0.0
+
+        won_deals["_rev"] = won_deals.apply(_rev, axis=1)
+        rev_map = dict(zip(won_deals["deal_id"], won_deals["_rev"]))
+        for _, row in contact_deals.iterrows():
+            did = row["deal_id"]
+            cid = str(row["contact_id"])
+            if did in rev_map:
+                contact_revenue[cid] = contact_revenue.get(cid, 0.0) + rev_map[did]
+
+    rows = []
+    for asset, grp in c.groupby("asset"):
+        ids = set(grp["hs_id"].astype(str))
+        leads = len(ids)
+        closed = len(ids & won_contact_ids)
+        rows.append({
+            "asset": asset,
+            "group": asset_to_group.get(asset, ""),
+            "leads": leads,
+            "fifteen_booked": len(ids & booked_15),
+            "strategy_booked": len(ids & booked_strat),
+            "closed": closed,
+            "revenue": sum(contact_revenue.get(i, 0.0) for i in ids),
+            "close_rate": _safe_div(closed, leads),
+        })
+    return pd.DataFrame(rows, columns=cols).sort_values(
+        ["revenue", "closed", "leads"], ascending=False
+    ).reset_index(drop=True)
+
+
 def team_total_row(df, *, sum_cols, rate_cols, label_col, label="TEAM TOTAL"):
     """Prepend a team-total row to a per-rep rollup.
 
