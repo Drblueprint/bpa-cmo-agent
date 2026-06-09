@@ -22,6 +22,7 @@ from dashboard.data.reconcile import (
     sales_bds_rollup,
     sales_sdr_rollup,
     sales_sme_rollup,
+    team_total_row,
     windowed_sales_money,
 )
 
@@ -48,6 +49,21 @@ def _fmt_minutes(x) -> str:
     if x is None or pd.isna(x):
         return "—"
     return f"{x:.0f}"
+
+
+def _style_perf_table(df, *, owner_cols, total_label_col):
+    """Style a performance table: existing unassigned styling + bold TEAM TOTAL row.
+
+    Returns a pandas Styler. Bolding uses .apply(axis=1) for Streamlit Cloud
+    (pandas < 2.1) compatibility.
+    """
+    styler = cfg.style_unassigned(df, columns=owner_cols)
+
+    def _bold_total(row):
+        is_total = str(row.get(total_label_col, "")) == "TEAM TOTAL"
+        return ["font-weight: bold" if is_total else "" for _ in row]
+
+    return styler.apply(_bold_total, axis=1)
 
 
 def _stage_groups() -> dict[str, set[str]]:
@@ -670,7 +686,9 @@ def render_sales(start: date, end: date) -> None:
         "in window with a 15-min meeting assigned to this SDR. "
         f"**Pick Up** = call answered. **Contact Made** = answered + "
         f"≥{cfg.AIRCALL_CONNECT_DURATION_SEC}s (real conversation, filters "
-        "voicemail). **Booking %** = Appts Booked / Contacts Made."
+        "voicemail). **Booking %** = Appts Booked / Contacts Made. "
+        "**Team Total** row (bold) = sum across reps; rates recomputed from "
+        "the totals."
     )
     sdr = sales_sdr_rollup(
         contacts=marketing,
@@ -687,10 +705,18 @@ def render_sales(start: date, end: date) -> None:
         st.info("No SDR activity in this window.")
     else:
         display = sdr.copy()
+        display = team_total_row(
+            display,
+            sum_cols=["dials", "pick_ups", "contacts_made", "talk_time_min",
+                      "appointments_booked"],
+            rate_cols={"booking_rate": ("appointments_booked", "contacts_made")},
+            label_col="user_name",
+        )
         display["talk_time_min"] = display["talk_time_min"].map(_fmt_minutes)
         display["booking_rate"] = display["booking_rate"].map(_fmt_pct)
         display["median_speed_to_lead_min"] = display["median_speed_to_lead_min"].map(
-            lambda x: f"{x:.1f} min" if x is not None and not pd.isna(x) else "—"
+            lambda x: f"{x:.1f} min"
+            if isinstance(x, (int, float)) and not pd.isna(x) else "—"
         )
         display = display[[
             "user_name", "dials", "pick_ups", "contacts_made", "talk_time_min",
@@ -706,7 +732,10 @@ def render_sales(start: date, end: date) -> None:
             "booking_rate": "Booking %",
             "median_speed_to_lead_min": "Median Speed",
         })
-        st.dataframe(display, use_container_width=True, hide_index=True)
+        st.dataframe(
+            _style_perf_table(display, owner_cols=["SDR"], total_label_col="SDR"),
+            use_container_width=True, hide_index=True,
+        )
 
     # SDR Lead Detail — every marketing lead with per-contact dial activity + speed
     sdr_rows = []
@@ -787,7 +816,9 @@ def render_sales(start: date, end: date) -> None:
         "this window**, grouped by the BDS assigned. BDS holds the Discovery, "
         "qualifies the prospect, and books the Strategy when qualified. "
         "**Show %** = Shows / Appointments · **Booking %** = SME Booked / "
-        "Shows · **DQ %** = Disqualified / Shows."
+        "Shows · **DQ %** = Disqualified / Shows. "
+        "**Team Total** row (bold) = sum across reps; rates recomputed from "
+        "the totals. `(unassigned)` reps are excluded."
     )
     bds = sales_bds_rollup(
         contacts=marketing,
@@ -801,6 +832,15 @@ def render_sales(start: date, end: date) -> None:
     else:
         display = bds.copy()
         display["bds_id"] = display["bds_id"].map(cfg.resolve_owner)
+        display = display[display["bds_id"] != "(unassigned)"].reset_index(drop=True)
+        display = team_total_row(
+            display,
+            sum_cols=["appointments", "shows", "sme_booked", "disqualified"],
+            rate_cols={"show_rate": ("shows", "appointments"),
+                       "booking_rate": ("sme_booked", "shows"),
+                       "dq_rate": ("disqualified", "shows")},
+            label_col="bds_id",
+        )
         display["show_rate"] = display["show_rate"].map(_fmt_pct)
         display["booking_rate"] = display["booking_rate"].map(_fmt_pct)
         display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
@@ -815,7 +855,7 @@ def render_sales(start: date, end: date) -> None:
             "dq_rate": "DQ %",
         })
         st.dataframe(
-            cfg.style_unassigned(display, columns=["BDS"]),
+            _style_perf_table(display, owner_cols=["BDS"], total_label_col="BDS"),
             use_container_width=True, hide_index=True,
         )
 
@@ -873,7 +913,9 @@ def render_sales(start: date, end: date) -> None:
         "whose closedate (or stage-entry date for DIY/90-Day) is in window. "
         "**First Close** = closed on the first Strategy call · **FU Close** "
         "= closed after a follow-up call. **Close %** = total closed / "
-        "showed · **DQ %** = disqualified / showed."
+        "showed · **DQ %** = disqualified / showed. "
+        "**Team Total** row (bold) = sum across reps; rates recomputed from "
+        "the totals. `(unassigned)` reps are excluded."
     )
     # Filter deals to those actually CLOSED in window so the rollup doesn't
     # count old closes that merely got hs_lastmodifieddate touched (which is
@@ -907,6 +949,18 @@ def render_sales(start: date, end: date) -> None:
     else:
         display = sme.copy()
         display["sme_id"] = display["sme_id"].map(cfg.resolve_owner)
+        display = display[display["sme_id"] != "(unassigned)"].reset_index(drop=True)
+        display = team_total_row(
+            display,
+            sum_cols=["appointments", "showed", "deals_closed", "first_closes",
+                      "fu_closes", "disqualified", "revenue"],
+            rate_cols={"show_rate": ("showed", "appointments"),
+                       "close_rate": ("deals_closed", "showed"),
+                       "first_close_rate": ("first_closes", "showed"),
+                       "fu_close_rate": ("fu_closes", "showed"),
+                       "dq_rate": ("disqualified", "showed")},
+            label_col="sme_id",
+        )
         display["show_rate"] = display["show_rate"].map(_fmt_pct)
         display["close_rate"] = display["close_rate"].map(_fmt_pct)
         display["first_close_rate"] = display["first_close_rate"].map(_fmt_pct)
@@ -934,7 +988,7 @@ def render_sales(start: date, end: date) -> None:
             "revenue": "Revenue",
         })
         st.dataframe(
-            cfg.style_unassigned(display, columns=["SME"]),
+            _style_perf_table(display, owner_cols=["SME"], total_label_col="SME"),
             use_container_width=True, hide_index=True,
         )
 
