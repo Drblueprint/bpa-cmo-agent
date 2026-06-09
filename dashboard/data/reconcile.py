@@ -1433,6 +1433,12 @@ def windowed_sales_money(
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
     group_cash_per_deal: dict | None = None,
+    today=None,
+    full_monthly: float = 1997.0,
+    full_term_months: int = 24,
+    ninety_day_amount: float = 5991.0,
+    diy_monthly: float = 997.0,
+    pt_multiplier: float = 0.5,
 ) -> dict:
     """Window-bounded money + cash + time-to-close.
 
@@ -1482,19 +1488,17 @@ def windowed_sales_money(
         group_default_amount=group_default_amount,
         source_overrides=source_overrides,
         stage_source_fallback=stage_source_fallback,
+        today=today,
+        full_monthly=full_monthly, full_term_months=full_term_months,
+        ninety_day_amount=ninety_day_amount, diy_monthly=diy_monthly,
+        pt_multiplier=pt_multiplier,
     )
     n = int(len(table))
     revenue = float(table["deal_amount"].sum()) if n else 0.0
     avg = (revenue / n) if n else None
     cycle_vals = table["sales_cycle_days"].dropna().tolist() if n else []
     cycle_median = float(pd.Series(cycle_vals).median()) if cycle_vals else None
-
-    if group_cash_per_deal:
-        cash = float(
-            table["group"].map(lambda g: group_cash_per_deal.get(g, 0.0)).sum()
-        ) if n else 0.0
-    else:
-        cash = None
+    cash = float(table["est_cash_collected"].sum()) if n else 0.0
 
     return {
         "window_closed_count": n,

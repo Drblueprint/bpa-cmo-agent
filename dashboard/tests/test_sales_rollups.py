@@ -320,17 +320,17 @@ def test_windowed_sales_money_filters_by_closedate():
          "typeform_asset_download": "Top 10 typeform",
          "typeform_submission_date": "2026-04-10T00:00:00Z",
          "created": "2026-04-10T00:00:00Z",
-         "contract_tier": None, "sdr_owner": "", "bds": "", "sme": ""},
+         "contract_tier": "1:  PRIMARY", "sdr_owner": "", "bds": "", "sme": ""},
         {"hs_id": "c2", "name": "B", "email": "b@x.com",
          "typeform_asset_download": "Top 10 typeform",
          "typeform_submission_date": "2026-02-10T00:00:00Z",
          "created": "2026-02-10T00:00:00Z",
-         "contract_tier": None, "sdr_owner": "", "bds": "", "sme": ""},
+         "contract_tier": "1:  PRIMARY", "sdr_owner": "", "bds": "", "sme": ""},
         {"hs_id": "c3", "name": "C", "email": "c@x.com",
          "typeform_asset_download": "Top 10 typeform",
          "typeform_submission_date": None,
          "created": "2026-05-01T00:00:00Z",
-         "contract_tier": "FULL - C", "sdr_owner": "", "bds": "", "sme": ""},
+         "contract_tier": "DIY - C", "sdr_owner": "", "bds": "", "sme": ""},
     ])
 
     result = windowed_sales_money(
@@ -341,9 +341,13 @@ def test_windowed_sales_money_filters_by_closedate():
         stages_closed_won={"closedwon", "1163151789"},
         stages_closed_won_no_closedate={"1163151789"},
         group_cash_per_deal={"Chiro": 47928.0, "PT Recovery": 23928.0},
+        today=_d(2026, 5, 31),
+        full_monthly=1997.0, full_term_months=24,
+        ninety_day_amount=5991.0, diy_monthly=997.0, pt_multiplier=0.5,
     )
-    # d1 (50000) + d3 (47928 default for Chiro via tier suffix)
+    # d1 closed 2026-05-10 FULL -> booked 47928; d3 DIY in window -> booked 0
     assert result["window_closed_count"] == 2
-    assert result["window_revenue"] == 50000.0 + 47928.0
-    # Cash Collection always uses the per-group cash default — 2 Chiro deals.
-    assert result["window_cash_collection"] == 47928.0 * 2
+    assert result["window_revenue"] == 47928.0 + 0.0
+    # Est cash: d1 FULL closed May, today May 31 -> 1mo = 1997;
+    #           d3 DIY stage-entered May -> 1mo = 997
+    assert result["window_cash_collection"] == 1997.0 + 997.0
