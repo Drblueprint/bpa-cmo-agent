@@ -107,14 +107,21 @@ def _render_daily_summary() -> None:
     except Exception as e:
         st.warning(f"TheraRay list memberships unavailable: {e}")
         theraray = pd.DataFrame(columns=["contact_id", "membership_timestamp"])
+    try:
+        nlap = load_list_memberships(cfg.NLAP_HUBSPOT_LIST_ID)
+    except Exception as e:
+        st.warning(f"NLAP list memberships unavailable: {e}")
+        nlap = pd.DataFrame(columns=["contact_id", "membership_timestamp"])
 
     mtd = daily_va_summary(
         fb=fb_month, contacts=contacts_month, theraray_memberships=theraray,
+        nlap_memberships=nlap,
         start=month_start, end=today,
         asset_to_group=cfg.ASSET_TO_GROUP,
     )
     yday = daily_va_summary(
         fb=fb_month, contacts=contacts_month, theraray_memberships=theraray,
+        nlap_memberships=nlap,
         start=yesterday, end=yesterday,
         asset_to_group=cfg.ASSET_TO_GROUP,
     )
@@ -150,6 +157,13 @@ def _render_daily_summary() -> None:
         h, _ = st.columns(2)
         h.metric("Cost / Submission", _money_or_dash(mtd["theraray_cpl"]),
                  help="TheraRay Ad Spend / Submissions.")
+        st.markdown("**NLAP**")
+        i, j = st.columns(2)
+        i.metric("Submissions", mtd["nlap_submissions"])
+        j.metric("Ad Spend", _money(mtd["nlap_ad_spend"]))
+        k, _ = st.columns(2)
+        k.metric("Cost / Submission", _money_or_dash(mtd["nlap_cpl"]),
+                 help="NLAP Ad Spend / Submissions.")
 
     with col_yday:
         st.markdown(f"**Yesterday · {yesterday.strftime('%b %d, %Y')}**")
@@ -168,6 +182,12 @@ def _render_daily_summary() -> None:
         g.metric("Ad Spend", _money(yday["theraray_ad_spend"]))
         h, _ = st.columns(2)
         h.metric("Cost / Submission", _money_or_dash(yday["theraray_cpl"]))
+        st.markdown("**NLAP**")
+        i, j = st.columns(2)
+        i.metric("Submissions", yday["nlap_submissions"])
+        j.metric("Ad Spend", _money(yday["nlap_ad_spend"]))
+        k, _ = st.columns(2)
+        k.metric("Cost / Submission", _money_or_dash(yday["nlap_cpl"]))
 
     # --- Copy-pastable text block matching the VA's format ---
     def _fmt_cpl(x) -> str:
@@ -209,6 +229,24 @@ def _render_daily_summary() -> None:
         f"{_fmt_cpl(mtd['theraray_cpl'])}\n"
         f"{yesterday.strftime('%b %d')}                 - "
         f"{_fmt_cpl(yday['theraray_cpl'])}\n"
+        f"\nNLAP Submissions\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}      - "
+        f"{mtd['nlap_submissions']} submissions\n"
+        f"{yesterday.strftime('%b %d')}                    - "
+        f"{yday['nlap_submissions']} submission\n\n"
+        f"AD Spent\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}    - "
+        f"${mtd['nlap_ad_spend']:,.2f}\n"
+        f"{yesterday.strftime('%b %d')}                 - "
+        f"${yday['nlap_ad_spend']:,.2f}\n\n"
+        f"Cost per Submission\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}    - "
+        f"{_fmt_cpl(mtd['nlap_cpl'])}\n"
+        f"{yesterday.strftime('%b %d')}                 - "
+        f"{_fmt_cpl(yday['nlap_cpl'])}\n"
     )
     st.markdown("**Copy-pastable summary**")
     st.caption("Click the copy icon in the top-right of the block.")

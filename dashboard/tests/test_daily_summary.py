@@ -55,6 +55,7 @@ def test_daily_va_summary_basic_chiro_split():
 
     out = daily_va_summary(
         fb=fb, contacts=contacts, theraray_memberships=theraray,
+        nlap_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
         start=_d(2026, 5, 1), end=_d(2026, 5, 21),
         asset_to_group={
             "Top 10 typeform": "Chiro",
@@ -83,6 +84,7 @@ def test_daily_va_summary_handles_empty_inputs():
         fb=pd.DataFrame(columns=["group", "spend", "date_start"]),
         contacts=pd.DataFrame(),
         theraray_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
+        nlap_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
         start=_d(2026, 5, 1), end=_d(2026, 5, 21),
         asset_to_group={},
     )
@@ -116,6 +118,7 @@ def test_daily_va_summary_single_day_window():
     out = daily_va_summary(
         fb=fb, contacts=contacts,
         theraray_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
+        nlap_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
         start=_d(2026, 5, 21), end=_d(2026, 5, 21),
         asset_to_group={"Top 10 typeform": "Chiro"},
     )

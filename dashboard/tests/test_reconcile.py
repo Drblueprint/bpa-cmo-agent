@@ -940,3 +940,27 @@ def test_weekly_metrics_basic_shape():
 
     # BOFU Total: 1 in w1
     assert by_id.loc["bofu_submissions_total", "w1"] == 1
+
+
+def test_daily_va_summary_nlap_block():
+    from datetime import date as _date
+    from dashboard.data.reconcile import daily_va_summary
+    fb = pd.DataFrame([
+        {"group": "NLAP", "spend": 300.0, "date_start": "2026-06-03"},
+        {"group": "Chiro", "spend": 100.0, "date_start": "2026-06-03"},
+    ])
+    nlap_mem = pd.DataFrame([
+        {"contact_id": "1", "membership_timestamp": "2026-06-03T00:00:00Z"},  # in
+        {"contact_id": "2", "membership_timestamp": "2026-06-05T00:00:00Z"},  # in
+        {"contact_id": "3", "membership_timestamp": "2026-01-01T00:00:00Z"},  # out
+    ])
+    out = daily_va_summary(
+        fb=fb, contacts=pd.DataFrame(),
+        theraray_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
+        nlap_memberships=nlap_mem,
+        start=_date(2026, 6, 1), end=_date(2026, 6, 30),
+        asset_to_group={"Top 10 typeform": "Chiro"},
+    )
+    assert out["nlap_ad_spend"] == 300.0
+    assert out["nlap_submissions"] == 2
+    assert out["nlap_cpl"] == 150.0

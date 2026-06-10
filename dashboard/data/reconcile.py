@@ -1618,6 +1618,7 @@ def daily_va_summary(
     fb: pd.DataFrame,
     contacts: pd.DataFrame,
     theraray_memberships: pd.DataFrame,
+    nlap_memberships: pd.DataFrame,
     start: 'date',
     end: 'date',
     asset_to_group: dict,
@@ -1675,9 +1676,13 @@ def daily_va_summary(
         theraray_spend = float(
             fb.loc[in_window & (fb["group"] == "TheraRay"), "spend"].sum()
         )
+        nlap_spend = float(
+            fb.loc[in_window & (fb["group"] == "NLAP"), "spend"].sum()
+        )
     else:
         chiro_spend = 0.0
         theraray_spend = 0.0
+        nlap_spend = 0.0
 
     # --- TheraRay submissions: list memberships in window ---
     if not theraray_memberships.empty \
@@ -1689,6 +1694,16 @@ def daily_va_summary(
     else:
         theraray_submissions = 0
 
+    # --- NLAP submissions: list memberships in window ---
+    if not nlap_memberships.empty \
+            and "membership_timestamp" in nlap_memberships.columns:
+        nlap_ts = pd.to_datetime(
+            nlap_memberships["membership_timestamp"], utc=True, errors="coerce"
+        ).dt.date
+        nlap_submissions = int(nlap_ts.between(start, end).sum())
+    else:
+        nlap_submissions = 0
+
     return {
         "chiro_spend": chiro_spend,
         "chiro_all_leads": chiro_all_leads,
@@ -1698,6 +1713,9 @@ def daily_va_summary(
         "theraray_submissions": theraray_submissions,
         "theraray_ad_spend": theraray_spend,
         "theraray_cpl": (theraray_spend / theraray_submissions) if theraray_submissions else None,
+        "nlap_submissions": nlap_submissions,
+        "nlap_ad_spend": nlap_spend,
+        "nlap_cpl": (nlap_spend / nlap_submissions) if nlap_submissions else None,
     }
 
 
