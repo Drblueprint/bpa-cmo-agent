@@ -832,6 +832,10 @@ def render_sales(start: date, end: date) -> None:
         st.info("No BDS activity in this window.")
     else:
         display = bds.copy()
+        # Drop SME-only owners (e.g. Dr. Eric Smith) — they are closers, not BDS.
+        display = display[
+            ~display["bds_id"].astype(str).isin(cfg.BDS_EXCLUDED_OWNERS)
+        ].reset_index(drop=True)
         display["bds_id"] = display["bds_id"].map(cfg.resolve_owner)
         display = display[display["bds_id"] != "(unassigned)"].reset_index(drop=True)
         display = team_total_row(

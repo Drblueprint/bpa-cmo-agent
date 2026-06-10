@@ -191,6 +191,12 @@ FORMER_OWNER_IDS: set[str] = {
     "568393136",  # Haley Stewart (variant)
 }
 
+# Owner IDs who are SMEs (closers), not BDS — exclude them from the BDS
+# Performance table even if a contact has them set as `bds`.
+BDS_EXCLUDED_OWNERS: set[str] = {
+    "77643349",   # Dr. Eric Smith (SME, not BDS)
+}
+
 
 def resolve_owner(value) -> str:
     """Map a HubSpot owner field value (numeric ID, string, or None) to a name.
