@@ -25,8 +25,8 @@ def test_match_group_existing_unaffected():
     assert match_group("DS | __Theraray__ Funnel Setup | CBO | USA") == "TheraRay"
     assert match_group("DS | __Chiro__ Mixed Funnel Setup | CBO") == "Chiro"
     assert match_group("DS | EMX 2026 Kansas City Mixed Funnel Setup") == "EMX"
-    assert match_group("DS | __NLAP__ but also __Chiro__") == "NLAP" or \
-           match_group("DS | __NLAP__ but also __Chiro__") == "Chiro"
+    # Chiro is listed before NLAP in CAMPAIGN_GROUPS, so first-match wins
+    assert match_group("DS | __NLAP__ but also __Chiro__") == "Chiro"
 
 
 import pandas as pd
@@ -95,3 +95,20 @@ def test_merge_list_group_no_window_members_noop():
         load_memberships=load_m, load_contacts=load_c, asset_to_group={},
     )
     assert out.equals(existing)
+
+
+def test_merge_list_group_excludes_emails():
+    memberships = pd.DataFrame([
+        {"contact_id": "1", "membership_timestamp": "2026-06-03T00:00:00Z"},
+    ])
+    list_contacts = pd.DataFrame([{"hs_id": "1", "email": "Drop@X.com", "name": "A"}])
+    existing = pd.DataFrame([{"hs_id": "9", "email": "z@x.com",
+                              "typeform_asset_download": "Top 10 typeform"}])
+    load_m, load_c = _fake_loaders(memberships, list_contacts)
+    out = merge_list_group(
+        existing, list_id="7086", asset_label="NLAP FB Lead", group="NLAP",
+        start=date(2026, 6, 1), end=date(2026, 6, 30),
+        load_memberships=load_m, load_contacts=load_c,
+        excluded_emails={"drop@x.com"}, asset_to_group={},
+    )
+    assert set(out["hs_id"].astype(str)) == {"9"}   # member 1 dropped by email

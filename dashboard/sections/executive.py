@@ -8,6 +8,7 @@ import streamlit as st
 
 from dashboard import config as cfg
 from dashboard.data.fb_loader import load_fb_insights
+from dashboard.data.groups import merge_list_group
 from dashboard.data.hubspot_loader import (
     load_contact_deals,
     load_deals_in_window,
@@ -98,7 +99,6 @@ def render_executive(start: date, end: date) -> None:
     # the window who isn't already in our fresh-leads pull. Sales cycles can
     # be 3-6 months; this preserves asset attribution for long-cycle closes.
     try:
-        from dashboard.data.hubspot_loader import load_contacts_by_ids
         if not deals.empty and not contact_deals.empty:
             won_deal_ids = set(deals.loc[deals["dealstage"].isin(cfg.STAGES_CLOSED_WON), "deal_id"])
             won_contact_ids = set(
@@ -116,12 +116,11 @@ def render_executive(start: date, end: date) -> None:
     # Merge list-based groups (TheraRay, NLAP): opt-ins captured via a HubSpot
     # list, not a typeform. Spend for these groups comes from FB by campaign
     # name; leads come from the list (FB lead counts are unreliable).
-    from dashboard.data.groups import merge_list_group
-    from dashboard.data.hubspot_loader import load_contacts_by_ids
     _list_groups = [
         (cfg.THERARAY_HUBSPOT_LIST_ID, "TheraRay FB Lead", "TheraRay"),
         (cfg.NLAP_HUBSPOT_LIST_ID, "NLAP FB Lead", "NLAP"),
     ]
+    _ids_before = set(contacts["hs_id"].astype(str)) if not contacts.empty else set()
     for _lid, _label, _grp in _list_groups:
         try:
             contacts = merge_list_group(
@@ -135,7 +134,8 @@ def render_executive(start: date, end: date) -> None:
         except Exception as e:
             st.warning(f"{_grp} merge failed: {e}")
     # Refresh meetings + contact_deals to cover the expanded contact set.
-    if not contacts.empty:
+    _ids_after = set(contacts["hs_id"].astype(str)) if not contacts.empty else set()
+    if _ids_after != _ids_before:
         try:
             contact_deals = load_contact_deals(contacts["hs_id"].tolist())
             meetings = load_meetings_for_contacts(
