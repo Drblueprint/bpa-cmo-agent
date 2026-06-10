@@ -127,6 +127,7 @@ CAMPAIGN_GROUPS: list[tuple[str, re.Pattern[str]]] = [
     ("Chiro",       re.compile(r"__Chiro__", re.IGNORECASE)),
     ("PT Recovery", re.compile(r"__PT__|__Recovery__", re.IGNORECASE)),
     ("TheraRay",    re.compile(r"__Theraray__", re.IGNORECASE)),
+    ("NLAP",        re.compile(r"__NLAP__", re.IGNORECASE)),
 ]
 
 # EMX rolls up into Chiro totals in addition to being its own row
@@ -415,6 +416,7 @@ BOFU_FORM_IDS: list[str] = [
 # TheraRay leads fill the "TheraRay User Request Form" which auto-adds them
 # to this segment list. Cleaner than matching FB campaign IDs via utm_campaign.
 THERARAY_HUBSPOT_LIST_ID: str = "6280"
+NLAP_HUBSPOT_LIST_ID: str = "7086"  # HubSpot list of NLAP opt-ins (FB lead source)
 
 # Webinar contact properties (confirmed via probe on 2026-05-19).
 HS_PROP_WEBINAR_REG_DATE = "webinar_registration_date"

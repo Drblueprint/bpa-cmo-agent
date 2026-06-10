@@ -15,3 +15,15 @@ from dashboard.data.groups import match_group
 ])
 def test_match_group(name, expected):
     assert match_group(name) == expected
+
+
+def test_match_group_nlap():
+    assert match_group("DS | __NLAP__ Funnel Setup | CBO | USA | CA") == "NLAP"
+
+
+def test_match_group_existing_unaffected():
+    assert match_group("DS | __Theraray__ Funnel Setup | CBO | USA") == "TheraRay"
+    assert match_group("DS | __Chiro__ Mixed Funnel Setup | CBO") == "Chiro"
+    assert match_group("DS | EMX 2026 Kansas City Mixed Funnel Setup") == "EMX"
+    assert match_group("DS | __NLAP__ but also __Chiro__") == "NLAP" or \
+           match_group("DS | __NLAP__ but also __Chiro__") == "Chiro"
