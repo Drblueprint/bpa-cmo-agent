@@ -113,48 +113,35 @@ def render_executive(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Closed-deal attribution lookup failed: {e}")
 
-    # Merge TheraRay contacts (HubSpot list 6280 — they don't fill a typeform).
-    # Filtered by membership_timestamp within window (mirrors marketing.py).
-    try:
-        memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
-        if not memberships.empty:
-            mt = pd.to_datetime(memberships["membership_timestamp"], utc=True, errors="coerce")
-            start_ts = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
-            end_ts = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
-            in_window = memberships[(mt >= start_ts) & (mt < end_ts)]
-            window_ids = in_window["contact_id"].tolist()
-            if window_ids:
-                tr_contacts = load_contacts_by_ids(window_ids)
-                if not tr_contacts.empty:
-                    tr_contacts = tr_contacts[
-                        ~tr_contacts["email"].fillna("").str.lower().isin(cfg.MARKETING_EXCLUDED_EMAILS)
-                    ].copy()
-                if not tr_contacts.empty:
-                    ts_map = dict(zip(in_window["contact_id"].astype(str), in_window["membership_timestamp"]))
-                    tr_contacts["typeform_asset_download"] = "TheraRay FB Lead"
-                    tr_contacts["typeform_submission_date"] = tr_contacts["hs_id"].astype(str).map(ts_map)
-                    cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
-                    if contacts.empty:
-                        contacts = tr_contacts
-                    else:
-                        # TheraRay rows FIRST so dedup keeps the tagged
-                        # version (was reversed — load_marketing_contacts
-                        # entries / closed-deal expansion entries with no
-                        # typeform asset were winning, breaking the
-                        # TheraRay group routing).
-                        contacts = pd.concat([tr_contacts, contacts], ignore_index=True) \
-                            .drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
-                    # Belt + suspenders: force the TheraRay tag onto any
-                    # contact whose hs_id is in the list-membership window,
-                    # in case concat-order alone misses an edge.
-                    _tr_ids = set(tr_contacts["hs_id"].astype(str))
-                    _mask = contacts["hs_id"].astype(str).isin(_tr_ids)
-                    contacts.loc[_mask, "typeform_asset_download"] = "TheraRay FB Lead"
-                    # Refresh meetings + contact_deals for the expanded set
-                    contact_deals = load_contact_deals(contacts["hs_id"].tolist())
-                    meetings = load_meetings_for_contacts(contacts["hs_id"].tolist(), data_floor_days_back=floor_days)
-    except Exception as e:
-        st.warning(f"TheraRay merge failed: {e}")
+    # Merge list-based groups (TheraRay, NLAP): opt-ins captured via a HubSpot
+    # list, not a typeform. Spend for these groups comes from FB by campaign
+    # name; leads come from the list (FB lead counts are unreliable).
+    from dashboard.data.groups import merge_list_group
+    from dashboard.data.hubspot_loader import load_contacts_by_ids
+    _list_groups = [
+        (cfg.THERARAY_HUBSPOT_LIST_ID, "TheraRay FB Lead", "TheraRay"),
+        (cfg.NLAP_HUBSPOT_LIST_ID, "NLAP FB Lead", "NLAP"),
+    ]
+    for _lid, _label, _grp in _list_groups:
+        try:
+            contacts = merge_list_group(
+                contacts, list_id=_lid, asset_label=_label, group=_grp,
+                start=start, end=end,
+                load_memberships=load_list_memberships,
+                load_contacts=load_contacts_by_ids,
+                excluded_emails=cfg.MARKETING_EXCLUDED_EMAILS,
+                asset_to_group=cfg.ASSET_TO_GROUP,
+            )
+        except Exception as e:
+            st.warning(f"{_grp} merge failed: {e}")
+    # Refresh meetings + contact_deals to cover the expanded contact set.
+    if not contacts.empty:
+        try:
+            contact_deals = load_contact_deals(contacts["hs_id"].tolist())
+            meetings = load_meetings_for_contacts(
+                contacts["hs_id"].tolist(), data_floor_days_back=floor_days)
+        except Exception as e:
+            st.warning(f"Expanded contact reload failed: {e}")
 
     # === YTD closed-deal data (separate pull -- always Jan 1 -> today) ===
     try:
@@ -301,7 +288,7 @@ def render_executive(start: date, end: date) -> None:
     try:
         groups_seen = list(group_metrics["group"]) if 'group_metrics' in locals() and not group_metrics.empty else []
         # Stable order, drop empty/None
-        preferred = ["Chiro", "EMX", "PT Recovery", "TheraRay"]
+        preferred = ["Chiro", "EMX", "PT Recovery", "TheraRay", "NLAP"]
         groups_to_show = [g for g in preferred if g in groups_seen] + \
                           [g for g in groups_seen if g not in preferred and g]
 
