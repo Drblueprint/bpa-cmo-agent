@@ -568,6 +568,9 @@ CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
     "drgracesyn90277@hotmail.com":                ("VEMX Marketing", "Chiro", True),
     "quintanilla_jesse@yahoo.com":                ("VEMX Marketing", "Chiro", True),
     "hackbartchiro@gmail.com":                    ("VEMX Marketing", "Chiro", True),
+    # Tamika Adams-Sajdak: typeform asset says EMX Kansas City, but she
+    # actually closed from the VEMX Marketing FB ads (Kurt, 2026-06-11).
+    "dradamssajdak@gmail.com":                    ("VEMX Marketing", "Chiro", True),
     "danielle@keldermanstherapyservices.com":     ("5 Mil Practice Secrets Marketing", "PT Recovery", True),
     "info@loomislifecare.com":                    ("Top 10 Marketing Lead", "Chiro", True),
     "rich@newhealthmadison.com":                  ("Chiro Economics Email Blast", "Chiro", True),

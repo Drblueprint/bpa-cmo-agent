@@ -2108,14 +2108,17 @@ def build_closed_deals_table(
         asset = primary_contact.get("typeform_asset_download") or ""
         override = source_overrides.get(email) if source_overrides else None
 
-        if asset and asset_to_group.get(asset):
+        if override:
+            # Email-based override: an explicit human-curated correction
+            # beats automatic typeform attribution (e.g. a contact whose
+            # typeform asset says one campaign but who actually came from
+            # another source).
+            source, group, is_marketing = override
+        elif asset and asset_to_group.get(asset):
             # Typeform-attributed: marketing
             source = asset
             group = asset_to_group.get(asset)
             is_marketing = True
-        elif override:
-            # Email-based override
-            source, group, is_marketing = override
         elif stage_source_fallback and str(deal.get("dealstage")) in stage_source_fallback:
             # Stage-based fallback (e.g., DIY, 90-Day)
             source, group, is_marketing = stage_source_fallback[str(deal.get("dealstage"))]

@@ -995,3 +995,36 @@ def test_daily_va_summary_nlap_block():
     assert out["nlap_ad_spend"] == 300.0
     assert out["nlap_submissions"] == 2
     assert out["nlap_cpl"] == 150.0
+
+
+def test_closed_deals_override_beats_typeform_asset():
+    """An email CONTACT_SOURCE_OVERRIDES entry wins over the contact's
+    typeform asset (explicit human correction beats auto attribution)."""
+    from dashboard.data.reconcile import build_closed_deals_table
+
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 40000.0,
+         "createdate": "2026-02-01T00:00:00Z",
+         "closedate": "2026-02-16T00:00:00Z", "stage_entry_date": None},
+    ])
+    contact_deals = pd.DataFrame([{"contact_id": "c1", "deal_id": "d1"}])
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "name": "Tamika", "email": "dradamssajdak@gmail.com",
+         "typeform_asset_download": "EMX Kansas City 2026",
+         "contract_tier": "1:  PRIMARY", "send_contract_options": "",
+         "analytics_source_data_1": "",
+         "typeform_submission_date": None,
+         "created": "2026-01-15T00:00:00Z",
+         "sdr_owner": "", "bds": "", "sme": ""},
+    ])
+    t = build_closed_deals_table(
+        deals, contact_deals, contacts,
+        asset_to_group={"EMX Kansas City 2026": "EMX"},
+        group_default_amount={"Chiro": 47928.0},
+        source_overrides={"dradamssajdak@gmail.com":
+                          ("VEMX Marketing", "Chiro", True)},
+    )
+    row = t.iloc[0]
+    assert row["source"] == "VEMX Marketing"   # override, not the typeform
+    assert row["group"] == "Chiro"             # override group, not EMX
+    assert bool(row["is_marketing"]) is True
