@@ -35,7 +35,7 @@ with col_preset:
         "Quick range",
         ["Custom", "Last 7 days", "Last 14 days", "Last 30 days",
          "This Month", "Last Month", "Last 90 days", "Year to Date"],
-        index=1,
+        index=4,  # default = This Month (MTD)
         key="date_preset",
         help="Pick a preset and the date range updates automatically. "
              "Choose 'Custom' to set dates manually.",
@@ -62,8 +62,8 @@ with col_dates:
     elif preset == "Year to Date":
         preset_start = date(today.year, 1, 1)
         preset_end = today
-    else:  # Custom — default to last 7 days as a starting point
-        preset_start, preset_end = today - timedelta(days=7), today
+    else:  # Custom — default to month-to-date as a starting point
+        preset_start, preset_end = today.replace(day=1), today
 
     # Key includes the preset name so the widget refreshes when preset changes
     date_range = st.date_input(

@@ -641,6 +641,15 @@ def render_sales(start: date, end: date) -> None:
                                          _c.get("contract_tier")):
                 _excl_cids.add(str(_c.get("hs_id")))
 
+    # Active-lead contact frame for the SDR/BDS/SME rollups: same exclusions
+    # as the detail tables, so the Performance numbers (incl. TEAM TOTAL)
+    # always reconcile against the Meeting Detail rows shown beneath them.
+    marketing_active = (
+        marketing[~marketing["hs_id"].astype(str).isin(_excl_cids)]
+        .reset_index(drop=True)
+        if not marketing.empty else marketing
+    )
+
     # Deal stage flags per contact
     _won_cids: set = set()
     _won_revenue: dict = {}
@@ -692,7 +701,7 @@ def render_sales(start: date, end: date) -> None:
         "the totals."
     )
     sdr = sales_sdr_rollup(
-        contacts=marketing,
+        contacts=marketing_active,
         calls=aircall_calls,
         meetings=meetings,
         aircall_user_names=cfg.AIRCALL_USER_NAMES,
@@ -822,7 +831,7 @@ def render_sales(start: date, end: date) -> None:
         "the totals. `(unassigned)` reps are excluded."
     )
     bds = sales_bds_rollup(
-        contacts=marketing,
+        contacts=marketing_active,
         meetings=meetings,
         contact_deals=contact_deals,
         deals=deals,
@@ -940,7 +949,7 @@ def render_sales(start: date, end: date) -> None:
     else:
         deals_for_sme = deals
     sme = sales_sme_rollup(
-        contacts=marketing,
+        contacts=marketing_active,
         meetings=meetings,
         contact_deals=contact_deals,
         deals=deals_for_sme,
@@ -1115,9 +1124,10 @@ def render_sales(start: date, end: date) -> None:
     st.divider()
     st.subheader("Upcoming Calls")
     st.caption(
-        "Scheduled 15-min and Strategy calls with a start time in the future. "
-        "Reps should not book more than 14 days out - calls beyond that are "
-        "flagged in red."
+        "Scheduled 15-min and Strategy calls with a start time in the future - "
+        "marketing leads only (internal team and current BPA customers are "
+        "excluded, so client check-ins don't appear). Reps should not book "
+        "more than 14 days out - calls beyond that are flagged in red."
     )
     _now = pd.Timestamp.now(tz="UTC")
     if meetings_full.empty:
@@ -1126,17 +1136,27 @@ def render_sales(start: date, end: date) -> None:
         mf = meetings_full.copy()
         mf["_start"] = pd.to_datetime(mf["start_time"], utc=True, errors="coerce")
         upcoming = mf[mf["_start"] > _now].copy()
+        # Sales-team pipeline only: drop internal team + existing customers
+        # (e.g. client check-in calls with current BPA members).
+        if not upcoming.empty:
+            upcoming = upcoming[
+                ~upcoming["contact_id"].astype(str).isin(_excl_cids)
+            ].copy()
         if upcoming.empty:
             st.info("No upcoming calls.")
         else:
             name_map = dict(zip(marketing["hs_id"].astype(str),
                                 marketing.get("name", pd.Series(dtype=object))))
+            email_map = dict(zip(marketing["hs_id"].astype(str),
+                                 marketing.get("email", pd.Series(dtype=object))))
             bds_map = dict(zip(marketing["hs_id"].astype(str),
                                marketing.get("bds", pd.Series(dtype=object))))
             sme_map = dict(zip(marketing["hs_id"].astype(str),
                                marketing.get("sme", pd.Series(dtype=object))))
             upcoming["_cid"] = upcoming["contact_id"].astype(str)
+            upcoming["Open"] = upcoming["_cid"].apply(cfg.hubspot_contact_url)
             upcoming["Contact"] = upcoming["_cid"].map(name_map).fillna("")
+            upcoming["Email"] = upcoming["_cid"].map(email_map).fillna("")
             _atype = upcoming["activity_type"].fillna("").astype(str).str.lower()
             upcoming["Type"] = upcoming["activity_type"].fillna("")
             upcoming["Owner"] = [
@@ -1146,7 +1166,7 @@ def render_sales(start: date, end: date) -> None:
             upcoming["_days_out"] = (upcoming["_start"] - _now).dt.days
             upcoming = upcoming.sort_values("_start").reset_index(drop=True)
             upcoming["When (CT)"] = cfg.format_ct_series(upcoming["start_time"])
-            disp = upcoming[["Contact", "Owner", "Type", "When (CT)"]]
+            disp = upcoming[["Open", "Contact", "Email", "Owner", "Type", "When (CT)"]]
 
             def _flag_far(row):
                 far = bool(upcoming.loc[row.name, "_days_out"] > 14)
@@ -1156,6 +1176,11 @@ def render_sales(start: date, end: date) -> None:
             st.dataframe(
                 disp.style.apply(_flag_far, axis=1),
                 use_container_width=True, hide_index=True,
+                column_config={
+                    "Open": st.column_config.LinkColumn(
+                        "Open", help="Open contact in HubSpot",
+                        display_text="HubSpot ↗"),
+                },
             )
 
     # ----- Section: Closed Deals YTD (existing) -----
