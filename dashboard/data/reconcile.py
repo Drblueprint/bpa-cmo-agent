@@ -720,7 +720,9 @@ def executive_bds_rollup(
 
     BDS holds the 15-min discovery and books the Strategy call. Metrics track
     the BDS funnel: held a discovery, advanced to strategy (set rate),
-    strategy held (show rate).
+    strategy held (show rate). strategy_booked / strategy_held count ONLY
+    contacts who also HELD a discovery, so each stage is a subset of the
+    previous one and Set % / Show % cannot exceed 100%.
 
     Columns: bds_id, discovery_held, strategy_booked, set_rate,
              strategy_held, show_rate.
@@ -760,8 +762,8 @@ def executive_bds_rollup(
     for bds_id, grp in contacts.groupby("bds", dropna=False):
         ids = set(grp["hs_id"].astype(str))
         disco_held = len(ids & held_disco_ids)
-        strat_booked = len(ids & booked_strat_ids)
-        strat_held = len(ids & held_strat_ids)
+        strat_booked = len(ids & held_disco_ids & booked_strat_ids)
+        strat_held = len(ids & held_disco_ids & held_strat_ids)
         rows.append({
             "bds_id": str(bds_id) if pd.notna(bds_id) else "",
             "discovery_held": disco_held,

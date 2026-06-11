@@ -691,6 +691,37 @@ def test_executive_bds_rollup_basic():
     assert garrett["strategy_held"] == 0
 
 
+def test_executive_bds_rollup_strategy_requires_held_discovery():
+    """The BDS funnel is discovery held -> strategy set -> strategy held.
+    A contact who booked a strategy WITHOUT a held discovery must not count
+    toward strategy_booked/strategy_held, so Set % cannot exceed 100%."""
+    from dashboard.data.reconcile import executive_bds_rollup
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "bds": "44815718"},
+        {"hs_id": "2", "bds": "44815718"},
+    ])
+    meetings = pd.DataFrame([
+        # Contact 1: held discovery, no strategy
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+        # Contact 2: NO held discovery (scheduled only), but a strategy booked + held
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "SCHEDULED", "start_time": ""},
+        {"meeting_id": "m3", "contact_id": "2", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": ""},
+    ])
+
+    result = executive_bds_rollup(contacts, meetings)
+    scott = result[result["bds_id"] == "44815718"].iloc[0]
+    assert scott["discovery_held"] == 1
+    # Contact 2's strategy doesn't count - they never held the discovery.
+    assert scott["strategy_booked"] == 0
+    assert scott["strategy_held"] == 0
+    assert scott["set_rate"] == 0.0
+    assert scott["set_rate"] <= 1.0
+
+
 def test_executive_sme_rollup_uses_sme_field():
     """SME rollup must group by the `sme` field (Dr. Lewis/Dr. Smith),
     not the `bds` field."""

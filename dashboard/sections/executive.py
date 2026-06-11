@@ -638,20 +638,38 @@ def render_executive(start: date, end: date) -> None:
 
     st.divider()
 
-    # BDS + SME side by side
+    # BDS + SME side by side.
+    # Window the meetings fed to BOTH rollups to start_time in [start, end] -
+    # the same filter the Call Detail tables below use - so the Performance
+    # counts and the Call Detail rows describe the same meetings.
+    if not meetings.empty:
+        _rm_start = pd.to_datetime(meetings["start_time"], utc=True, errors="coerce")
+        _rm_ws = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
+        _rm_we = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
+        meetings_for_reps = meetings[(_rm_start >= _rm_ws) & (_rm_start < _rm_we)].reset_index(drop=True)
+    else:
+        meetings_for_reps = meetings
     col_bds, col_sme = st.columns(2)
 
     with col_bds:
         st.subheader("BDS Performance")
         st.caption("BDS holds the 15-min and books the Strategy call. Tracks: "
-                   "discovery held → strategy set → strategy held.")
+                   "discovery held → strategy set → strategy held (meetings "
+                   "whose start time is in this window - matches BDS Call "
+                   "Detail below).")
         from dashboard.data.reconcile import executive_bds_rollup
-        bds = executive_bds_rollup(contacts_for_reps, meetings)
+        bds = executive_bds_rollup(contacts_for_reps, meetings_for_reps)
+        if not bds.empty:
+            # Drop SME-only owners (Dr. Smith) misassigned as bds.
+            bds = bds[~bds["bds_id"].astype(str).isin(cfg.BDS_EXCLUDED_OWNERS)]
         if bds.empty:
             st.info("No BDS data for this window.")
         else:
             bds_display = bds.copy()
             bds_display["bds_id"] = bds_display["bds_id"].map(cfg.resolve_owner)
+            bds_display = bds_display[
+                bds_display["bds_id"] != "(unassigned)"
+            ].reset_index(drop=True)
             bds_display["set_rate"] = bds_display["set_rate"].map(_fmt_pct)
             bds_display["show_rate"] = bds_display["show_rate"].map(_fmt_pct)
             bds_display = bds_display.rename(columns={
@@ -670,7 +688,9 @@ def render_executive(start: date, end: date) -> None:
     with col_sme:
         st.subheader("SME Performance")
         st.caption("SME holds the Strategy call and closes the deal. Tracks: "
-                   "strategy held → deals closed → revenue.")
+                   "strategy held → deals closed → revenue (meetings whose "
+                   "start time is in this window - matches SME Call Detail "
+                   "below).")
         # Filter deals to those actually CLOSED in window so the rollup
         # doesn't count old closes that got hs_lastmodifieddate touched.
         # closedate (or stage_entry_date for DIY/90-Day) in [start, end].
@@ -688,7 +708,7 @@ def render_executive(start: date, end: date) -> None:
         else:
             deals_for_sme = deals
         sme = executive_sme_rollup(
-            contacts_for_reps, meetings, contact_deals, deals_for_sme,
+            contacts_for_reps, meetings_for_reps, contact_deals, deals_for_sme,
             asset_to_group=cfg.ASSET_TO_GROUP,
             group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
             stages_closed_won=cfg.STAGES_CLOSED_WON,
@@ -698,6 +718,9 @@ def render_executive(start: date, end: date) -> None:
         else:
             sme_display = sme.copy()
             sme_display["sme_id"] = sme_display["sme_id"].map(cfg.resolve_owner)
+            sme_display = sme_display[
+                sme_display["sme_id"] != "(unassigned)"
+            ].reset_index(drop=True)
             sme_display["close_rate"] = sme_display["close_rate"].map(_fmt_pct)
             sme_display["revenue"] = sme_display["revenue"].map(_fmt_money)
             sme_display["revenue_per_call"] = sme_display["revenue_per_call"].map(_fmt_money)
