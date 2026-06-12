@@ -731,6 +731,7 @@ def executive_sme_rollup(
 def executive_bds_rollup(
     contacts: pd.DataFrame,
     meetings: pd.DataFrame,
+    meetings_all: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per-BDS rollup for the Executive tab.
 
@@ -740,11 +741,19 @@ def executive_bds_rollup(
     contacts who also HELD a discovery, so each stage is a subset of the
     previous one and Set % / Show % cannot exceed 100%.
 
-    Columns: bds_id, discovery_held, strategy_booked, set_rate,
-             strategy_held, show_rate.
+    `meetings` should be the CLEANED frame (canceled/rescheduled removed).
+    `meetings_all`, when given, is the same window WITHOUT that cleaning and
+    drives the funnel-entry columns (discovery_scheduled / canceled /
+    rescheduled) so dead bookings stay visible without polluting the
+    conversion math.
+
+    Columns: bds_id, discovery_scheduled, canceled, rescheduled,
+             discovery_held, strategy_booked, set_rate, strategy_held,
+             show_rate.
     """
-    cols = ["bds_id", "discovery_held", "strategy_booked",
-            "set_rate", "strategy_held", "show_rate"]
+    cols = ["bds_id", "discovery_scheduled", "canceled", "rescheduled",
+            "discovery_held", "strategy_booked", "set_rate", "strategy_held",
+            "show_rate"]
     if contacts.empty:
         return pd.DataFrame(columns=cols)
 
@@ -769,10 +778,32 @@ def executive_bds_rollup(
             held_strat_ids = set(
                 strategy.loc[out.str.startswith("COMPLETE"), "contact_id"].astype(str)
             )
+        clean_15_ids = set(fifteen["contact_id"].astype(str)) \
+            if not fifteen.empty else set()
     else:
         held_disco_ids = set()
         booked_strat_ids = set()
         held_strat_ids = set()
+        clean_15_ids = set()
+
+    # Funnel-entry sets from the all-outcomes frame (when provided).
+    canceled_ids: set = set()
+    rescheduled_ids: set = set()
+    if meetings_all is not None and not meetings_all.empty:
+        types_a = meetings_all["activity_type"].fillna("").astype(str).str.lower()
+        fifteen_a = meetings_all[types_a.str.contains("15 min", na=False)]
+        scheduled_ids = set(fifteen_a["contact_id"].astype(str)) \
+            if not fifteen_a.empty else set()
+        if not fifteen_a.empty:
+            out_a = fifteen_a["outcome"].fillna("").astype(str).str.upper().str.strip()
+            canceled_ids = set(
+                fifteen_a.loc[out_a.str.startswith("CANCEL"), "contact_id"].astype(str)
+            )
+            rescheduled_ids = set(
+                fifteen_a.loc[out_a.str.startswith("RESCHEDULED"), "contact_id"].astype(str)
+            )
+    else:
+        scheduled_ids = clean_15_ids
 
     rows = []
     for bds_id, grp in contacts.groupby("bds", dropna=False):
@@ -782,6 +813,9 @@ def executive_bds_rollup(
         strat_held = len(ids & held_disco_ids & held_strat_ids)
         rows.append({
             "bds_id": str(bds_id) if pd.notna(bds_id) else "",
+            "discovery_scheduled": len(ids & scheduled_ids),
+            "canceled": len(ids & canceled_ids),
+            "rescheduled": len(ids & rescheduled_ids),
             "discovery_held": disco_held,
             "strategy_booked": strat_booked,
             "set_rate": _safe_div(strat_booked, disco_held),

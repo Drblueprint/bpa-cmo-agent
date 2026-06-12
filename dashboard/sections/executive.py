@@ -143,10 +143,13 @@ def render_executive(start: date, end: date) -> None:
         except Exception as e:
             st.warning(f"Expanded contact reload failed: {e}")
 
-    # Canceled / rescheduled meetings never count as appointments anywhere
-    # on this tab (canceled never happens; rescheduled is replaced by a new
-    # meeting record - counting both double-counts the appointment).
+    # Canceled / rescheduled meetings never count as held appointments or in
+    # conversion math (canceled never happens; rescheduled is replaced by a
+    # new meeting record - counting both double-counts the appointment). The
+    # UNFILTERED frame is kept so the BDS panel can show Disco Scheduled +
+    # Canceled + Rescheduled as their own funnel stages.
     from dashboard.data.reconcile import drop_dead_meetings
+    meetings_all = meetings.copy()
     meetings = drop_dead_meetings(meetings)
 
     # === YTD closed-deal data (separate pull -- always Jan 1 -> today) ===
@@ -655,6 +658,15 @@ def render_executive(start: date, end: date) -> None:
         meetings_for_reps = meetings[(_rm_start >= _rm_ws) & (_rm_start < _rm_we)].reset_index(drop=True)
     else:
         meetings_for_reps = meetings
+    # Same window over the all-outcomes frame (drives Disco Scheduled /
+    # Canceled / Rescheduled in the BDS panel).
+    if not meetings_all.empty:
+        _rma_start = pd.to_datetime(meetings_all["start_time"], utc=True, errors="coerce")
+        _rma_ws = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
+        _rma_we = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
+        meetings_for_reps_all = meetings_all[(_rma_start >= _rma_ws) & (_rma_start < _rma_we)].reset_index(drop=True)
+    else:
+        meetings_for_reps_all = meetings_all
     col_bds, col_sme = st.columns(2)
 
     with col_bds:
@@ -662,10 +674,12 @@ def render_executive(start: date, end: date) -> None:
         st.caption("BDS holds the 15-min and books the Strategy call. Tracks: "
                    "discovery held → strategy set → strategy held (meetings "
                    "whose start time is in this window - matches BDS Call "
-                   "Detail below). Canceled and rescheduled meetings are "
-                   "excluded.")
+                   "Detail below). Disco Scheduled counts every 15-min "
+                   "booked; Canceled / Rescheduled show the bookings that "
+                   "died and are excluded from the conversion rates.")
         from dashboard.data.reconcile import executive_bds_rollup
-        bds = executive_bds_rollup(contacts_for_reps, meetings_for_reps)
+        bds = executive_bds_rollup(contacts_for_reps, meetings_for_reps,
+                                   meetings_all=meetings_for_reps_all)
         if not bds.empty:
             # Drop SME-only owners (Dr. Smith) misassigned as bds.
             bds = bds[~bds["bds_id"].astype(str).isin(cfg.BDS_EXCLUDED_OWNERS)]
@@ -681,6 +695,9 @@ def render_executive(start: date, end: date) -> None:
             bds_display["show_rate"] = bds_display["show_rate"].map(_fmt_pct)
             bds_display = bds_display.rename(columns={
                 "bds_id": "BDS",
+                "discovery_scheduled": "Disco Scheduled",
+                "canceled": "Canceled",
+                "rescheduled": "Rescheduled",
                 "discovery_held": "Discovery Held",
                 "strategy_booked": "Strategy Booked",
                 "set_rate": "Set %",
