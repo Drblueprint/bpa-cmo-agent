@@ -143,6 +143,30 @@ def render_executive(start: date, end: date) -> None:
         except Exception as e:
             st.warning(f"Expanded contact reload failed: {e}")
 
+    # Window-wide meeting sweep: pull EVERY meeting whose start_time is in
+    # the window, not just meetings of contacts already in the lead set. A
+    # lead who opted in BEFORE this window but had their call now would
+    # otherwise be invisible here.
+    try:
+        from dashboard.data.hubspot_loader import load_meetings_in_window
+        win_meet = load_meetings_in_window(start, end)
+        if not win_meet.empty:
+            win_meet = win_meet[win_meet["contact_id"].notna()].copy()
+            win_meet["contact_id"] = win_meet["contact_id"].astype(str)
+            _known = set(contacts["hs_id"].astype(str)) if not contacts.empty else set()
+            _new_cids = list(set(win_meet["contact_id"]) - _known)
+            if _new_cids:
+                _extra_c = load_contacts_by_ids(_new_cids)
+                if not _extra_c.empty:
+                    contacts = pd.concat([contacts, _extra_c], ignore_index=True)
+                    contact_deals = load_contact_deals(contacts["hs_id"].tolist())
+            _mcols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time"]
+            meetings = pd.concat([meetings, win_meet[_mcols]], ignore_index=True) \
+                .drop_duplicates(subset=["meeting_id", "contact_id"]) \
+                .reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Window meeting sweep failed: {e}")
+
     # Canceled / rescheduled meetings never count as held appointments or in
     # conversion math (canceled never happens; rescheduled is replaced by a
     # new meeting record - counting both double-counts the appointment). The

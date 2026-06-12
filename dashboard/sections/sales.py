@@ -20,7 +20,6 @@ from dashboard.data.reconcile import (
     build_closed_deals_table,
     compute_speed_to_lead,
     drop_dead_meetings,
-    pipeline_funnel,
     sales_bds_rollup,
     sales_sdr_rollup,
     sales_sme_rollup,
@@ -182,6 +181,36 @@ def render_sales(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Window contact attribution lookup failed: {e}")
 
+    # Window-wide meeting sweep: pull EVERY meeting whose start_time is in
+    # the window (meetings/search), not just meetings of contacts already in
+    # the lead set. A lead who opted in BEFORE this window but had their
+    # 15-min / Strategy call now would otherwise be invisible (their
+    # conversion date is old, so load_marketing_contacts misses them and
+    # their calls never load). Their contacts are pulled in so the rollups
+    # and detail tables cover them.
+    try:
+        from dashboard.data.hubspot_loader import (
+            load_contacts_by_ids as _load_cbi,
+            load_meetings_in_window,
+        )
+        win_meet = load_meetings_in_window(start, end)
+        if not win_meet.empty:
+            win_meet = win_meet[win_meet["contact_id"].notna()].copy()
+            win_meet["contact_id"] = win_meet["contact_id"].astype(str)
+            _known = set(marketing["hs_id"].astype(str)) if not marketing.empty else set()
+            _new_cids = list(set(win_meet["contact_id"]) - _known)
+            if _new_cids:
+                _extra_c = _load_cbi(_new_cids)
+                if not _extra_c.empty:
+                    marketing = pd.concat([marketing, _extra_c], ignore_index=True)
+                    contact_deals = load_contact_deals(marketing["hs_id"].tolist())
+            _mcols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time"]
+            meetings = pd.concat([meetings, win_meet[_mcols]], ignore_index=True) \
+                .drop_duplicates(subset=["meeting_id", "contact_id"]) \
+                .reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Window meeting sweep failed: {e}")
+
     # Canceled / rescheduled meetings never count as held appointments or in
     # conversion math (a canceled meeting never happens; a rescheduled one is
     # replaced by a new meeting record - counting both double-counts). The
@@ -224,37 +253,54 @@ def render_sales(start: date, end: date) -> None:
 
     stages = _stage_groups()
 
-    fn_mkt = pipeline_funnel(marketing, contact_deals, deals,
-                              stage_groups=stages, marketing_only=True)
-    fn_all = pipeline_funnel(marketing, contact_deals, deals,
-                              stage_groups=stages, marketing_only=False)
+    # ----- Row 1: Call-activity KPIs (meeting-based, matches HubSpot's
+    # meeting reports rather than deal stages, which lag reality) -----
+    _mkt_asset_map = (
+        dict(zip(marketing["hs_id"].astype(str),
+                 marketing["typeform_asset_download"].fillna("").astype(str).str.strip()))
+        if not marketing.empty else {}
+    )
 
-    # ----- Row 1: Pipeline KPIs (existing) -----
-    def _v(df, stage, col="count"):
-        s = df.loc[df["stage"] == stage, col]
-        return s.iloc[0] if not s.empty else 0
+    def _meeting_kpis(frame):
+        """(15min_mkt, 15min_all, strat_held_mkt, strat_held_all) from a
+        windowed meetings frame; counts distinct meetings."""
+        if frame.empty:
+            return 0, 0, 0, 0
+        f = frame.drop_duplicates(subset="meeting_id").copy()
+        f["_cid"] = f["contact_id"].astype(str)
+        f["_mkt"] = f["_cid"].map(_mkt_asset_map).fillna("") != ""
+        t = f["activity_type"].fillna("").astype(str).str.lower()
+        o = f["outcome"].fillna("").astype(str).str.upper()
+        f15 = t.str.contains("15 min", na=False)
+        strat_held = t.str.contains("strategy", na=False) & o.str.startswith("COMPLETE")
+        return (int((f15 & f["_mkt"]).sum()), int(f15.sum()),
+                int((strat_held & f["_mkt"]).sum()), int(strat_held.sum()))
 
+    _k15m, _k15a, _ksm, _ksa = _meeting_kpis(meetings)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
         "15-min Calls (Marketing)",
-        _fmt_int(_v(fn_mkt, "15-min Booked")),
-        help="Deals at 15-min Booked/Held whose contact has "
-             "typeform_asset_download populated.",
+        _fmt_int(_k15m),
+        help="15-min meetings with start_time in this window whose contact "
+             "is marketing-attributed (typeform asset populated). Canceled "
+             "and rescheduled meetings are excluded.",
     )
     c2.metric(
         "15-min Calls (All)",
-        _fmt_int(_v(fn_all, "15-min Booked")),
-        help="All deals at 15-min Booked/Held, regardless of source.",
+        _fmt_int(_k15a),
+        help="All 15-min meetings with start_time in this window, any "
+             "source. Canceled and rescheduled meetings are excluded.",
     )
     c3.metric(
         "Strategy Calls Held (Mkt)",
-        _fmt_int(_v(fn_mkt, "Strategy Held")),
-        help="Strategy meetings held for marketing-attributed contacts.",
+        _fmt_int(_ksm),
+        help="Strategy meetings COMPLETED in this window for "
+             "marketing-attributed contacts.",
     )
     c4.metric(
         "Strategy Calls Held (All)",
-        _fmt_int(_v(fn_all, "Strategy Held")),
-        help="All Strategy meetings held in window, regardless of source.",
+        _fmt_int(_ksa),
+        help="All Strategy meetings COMPLETED in this window, any source.",
     )
 
     # Pipeline KPI verification — every deal in window with stage flags
