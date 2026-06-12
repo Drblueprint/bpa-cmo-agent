@@ -2188,6 +2188,8 @@ def build_closed_deals_table(
         asset = primary_contact.get("typeform_asset_download") or ""
         override = source_overrides.get(email) if source_overrides else None
 
+        _referral = str(primary_contact.get("referring_doctor") or "").strip()
+        _is_referral = False
         if override:
             # Email-based override: an explicit human-curated correction
             # beats automatic typeform attribution (e.g. a contact whose
@@ -2199,6 +2201,14 @@ def build_closed_deals_table(
             source = asset
             group = asset_to_group.get(asset)
             is_marketing = True
+        elif _referral:
+            # Doctor-referral fallback: the team fills referring_doctor_s_name
+            # when a lead came in via a referral (no typeform). Group derives
+            # from the contract-tier suffix below.
+            source = f"Referral - {_referral}"
+            group = None
+            is_marketing = False
+            _is_referral = True
         elif stage_source_fallback and str(deal.get("dealstage")) in stage_source_fallback:
             # Stage-based fallback (e.g., DIY, 90-Day)
             source, group, is_marketing = stage_source_fallback[str(deal.get("dealstage"))]
@@ -2252,7 +2262,8 @@ def build_closed_deals_table(
         # Chiro via tier-suffix derivation.
         analytics_src = (primary_contact.get("analytics_source_data_1") or "").lower()
         is_theraray_signal = "theraray" in analytics_src
-        if is_theraray_signal and not (asset and asset_to_group.get(asset)):
+        if is_theraray_signal and not _is_referral \
+                and not (asset and asset_to_group.get(asset)):
             # No explicit typeform attribution + TheraRay analytics signal
             # → mark as TheraRay marketing close.
             source = "TheraRay (direct traffic)"

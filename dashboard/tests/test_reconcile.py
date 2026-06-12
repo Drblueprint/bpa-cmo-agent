@@ -1049,3 +1049,53 @@ def test_drop_dead_meetings():
     # empty / missing-outcome frames pass through untouched
     empty = pd.DataFrame(columns=["meeting_id", "outcome"])
     assert drop_dead_meetings(empty).empty
+
+
+def test_closed_deals_referral_fallback():
+    """A contact with no typeform asset but a referring doctor set attributes
+    as 'Referral - <name>' (non-marketing); a typeform asset still wins; the
+    TheraRay analytics inference does not clobber an explicit referral."""
+    from dashboard.data.reconcile import build_closed_deals_table
+
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "closedwon", "amount": 40000.0,
+         "createdate": "2026-05-01T00:00:00Z",
+         "closedate": "2026-05-15T00:00:00Z", "stage_entry_date": None},
+        {"deal_id": "d2", "dealstage": "closedwon", "amount": 40000.0,
+         "createdate": "2026-05-01T00:00:00Z",
+         "closedate": "2026-05-20T00:00:00Z", "stage_entry_date": None},
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "c1", "deal_id": "d1"},
+        {"contact_id": "c2", "deal_id": "d2"},
+    ])
+    contacts = pd.DataFrame([
+        # referral only — and a theraray analytics signal that must NOT win
+        {"hs_id": "c1", "name": "Ref Doc", "email": "ref@x.com",
+         "typeform_asset_download": None, "referring_doctor": "James Haley",
+         "contract_tier": "1:  PRIMARY", "send_contract_options": "",
+         "analytics_source_data_1": "theraray.org",
+         "typeform_submission_date": None, "created": "2026-05-01T00:00:00Z",
+         "sdr_owner": "", "bds": "", "sme": ""},
+        # asset AND referral — asset wins
+        {"hs_id": "c2", "name": "Asset Doc", "email": "asset@x.com",
+         "typeform_asset_download": "Top 10 typeform",
+         "referring_doctor": "Someone Else",
+         "contract_tier": "1:  PRIMARY", "send_contract_options": "",
+         "analytics_source_data_1": "",
+         "typeform_submission_date": None, "created": "2026-05-01T00:00:00Z",
+         "sdr_owner": "", "bds": "", "sme": ""},
+    ])
+    t = build_closed_deals_table(
+        deals, contact_deals, contacts,
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+    )
+    ref = t[t["hs_id"] == "c1"].iloc[0]
+    ast = t[t["hs_id"] == "c2"].iloc[0]
+    assert ref["source"] == "Referral - James Haley"
+    assert bool(ref["is_marketing"]) is False
+    # "1:  PRIMARY" has no group suffix (- C / - PT), so group stays unmapped
+    assert ref["group"] == "(unmapped)"
+    assert ast["source"] == "Top 10 typeform"  # asset beats referral
+    assert bool(ast["is_marketing"]) is True

@@ -28,6 +28,10 @@ HS_PROP_RECENT_CONVERSION_EVENT = "recent_conversion_event_name"
 # is present (e.g., direct-traffic contacts from theraray.org).
 HS_PROP_ANALYTICS_SOURCE = "hs_analytics_source"
 HS_PROP_ANALYTICS_SOURCE_DATA_1 = "hs_analytics_source_data_1"
+# Custom property the team fills when a contact was referred by a doctor
+# (e.g. "James Haley"). Attribution FALLBACK for contacts with no typeform
+# asset: they surface as "Referral - <name>" instead of (unattributed).
+HS_PROP_REFERRING_DOCTOR = "referring_doctor_s_name"
 # Substring that identifies a MUDA (Multi Unit Discount Agreement) deal in the
 # send_contract_options value 'MUDA - CHIRO (Multi Unit Discount Agreement)'.
 SEND_CONTRACT_MUDA_TOKEN = "MUDA"
@@ -297,6 +301,20 @@ def hubspot_contact_url(hs_id) -> str:
     if hs_id is None or str(hs_id).strip() == "":
         return ""
     return f"https://app.hubspot.com/contacts/{HUBSPOT_PORTAL_ID}/record/0-1/{hs_id}"
+
+
+def asset_or_referral(asset, referring_doctor) -> str:
+    """Asset label for display, falling back to the doctor-referral field.
+
+    Contacts who came in via referral have no typeform asset; show
+    "Referral: <name>" (from referring_doctor_s_name) instead of a blank so
+    every lead's origin is visible in detail tables.
+    """
+    a = ("" if asset is None else str(asset)).strip()
+    if a and a.lower() != "nan":
+        return a
+    r = ("" if referring_doctor is None else str(referring_doctor)).strip()
+    return f"Referral: {r}" if r and r.lower() != "nan" else ""
 
 
 # --- Timestamp display ---

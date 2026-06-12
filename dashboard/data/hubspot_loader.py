@@ -80,6 +80,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
             cfg.HS_PROP_RECENT_CONVERSION_DATE, cfg.HS_PROP_RECENT_CONVERSION_EVENT,
             cfg.HS_PROP_ANALYTICS_SOURCE, cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1,
+            cfg.HS_PROP_REFERRING_DOCTOR,
         ],
         "limit": 100,
     }
@@ -142,6 +143,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
             "recent_conversion_event": p.get(cfg.HS_PROP_RECENT_CONVERSION_EVENT),
             "analytics_source": p.get(cfg.HS_PROP_ANALYTICS_SOURCE),
             "analytics_source_data_1": p.get(cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1),
+            "referring_doctor": p.get(cfg.HS_PROP_REFERRING_DOCTOR),
         })
     return pd.DataFrame(rows, columns=[
         "hs_id", "name", "email", "created",
@@ -154,6 +156,7 @@ def load_marketing_contacts(start: date, end: date) -> pd.DataFrame:
         "contract_tier", "send_contract_options",
         "recent_conversion_date", "recent_conversion_event",
         "analytics_source", "analytics_source_data_1",
+        "referring_doctor",
     ])
 
 
@@ -513,6 +516,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
         "contract_tier", "send_contract_options",
         "recent_conversion_date", "recent_conversion_event",
         "analytics_source", "analytics_source_data_1",
+        "referring_doctor",
     ]
     if not contact_ids:
         return pd.DataFrame(columns=cols)
@@ -539,6 +543,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
                     cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
                     cfg.HS_PROP_RECENT_CONVERSION_DATE, cfg.HS_PROP_RECENT_CONVERSION_EVENT,
             cfg.HS_PROP_ANALYTICS_SOURCE, cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1,
+                    cfg.HS_PROP_REFERRING_DOCTOR,
                 ],
                 "inputs": [{"id": cid} for cid in batch],
             },
@@ -585,6 +590,7 @@ def load_contacts_by_ids(contact_ids: list[str]) -> pd.DataFrame:
             "recent_conversion_event": p.get(cfg.HS_PROP_RECENT_CONVERSION_EVENT),
             "analytics_source": p.get(cfg.HS_PROP_ANALYTICS_SOURCE),
             "analytics_source_data_1": p.get(cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1),
+            "referring_doctor": p.get(cfg.HS_PROP_REFERRING_DOCTOR),
             })
 
     return pd.DataFrame(rows, columns=cols)
@@ -808,6 +814,7 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
             cfg.HS_PROP_CONTRACT_TIER, cfg.HS_PROP_SEND_CONTRACT_OPTIONS,
             cfg.HS_PROP_RECENT_CONVERSION_DATE, cfg.HS_PROP_RECENT_CONVERSION_EVENT,
             cfg.HS_PROP_ANALYTICS_SOURCE, cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1,
+            cfg.HS_PROP_REFERRING_DOCTOR,
         ],
         "limit": 100,
     }
@@ -848,6 +855,7 @@ def load_contacts_by_utm_campaigns(campaign_ids: tuple[str, ...],
             "recent_conversion_event": p.get(cfg.HS_PROP_RECENT_CONVERSION_EVENT),
             "analytics_source": p.get(cfg.HS_PROP_ANALYTICS_SOURCE),
             "analytics_source_data_1": p.get(cfg.HS_PROP_ANALYTICS_SOURCE_DATA_1),
+            "referring_doctor": p.get(cfg.HS_PROP_REFERRING_DOCTOR),
         })
     return pd.DataFrame(rows, columns=cols)
 

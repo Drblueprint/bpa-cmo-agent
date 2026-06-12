@@ -312,7 +312,8 @@ def render_sales(start: date, end: date) -> None:
             )
             cd_join["contact_id"] = cd_join["contact_id"].astype(str)
             c_lite_cols = ["hs_id", "name", "email",
-                            "typeform_asset_download", "sdr_owner", "bds",
+                            "typeform_asset_download", "referring_doctor",
+                            "sdr_owner", "bds",
                             "lifecycle_stage", "contract_tier"]
             existing_cols = [c for c in c_lite_cols if c in marketing.columns]
             c_lite = marketing[existing_cols].copy()
@@ -374,7 +375,10 @@ def render_sales(start: date, end: date) -> None:
             pdf["Marketing?"] = pdf["typeform_asset_download"].fillna("") \
                                     .astype(str).str.strip() != ""
             pdf["Open"]    = pdf["contact_id"].apply(cfg.hubspot_contact_url)
-            pdf["Asset"]   = pdf["typeform_asset_download"].fillna("")
+            _ref_col = pdf["referring_doctor"] if "referring_doctor" in pdf.columns \
+                else pd.Series([None] * len(pdf), index=pdf.index)
+            pdf["Asset"] = [cfg.asset_or_referral(a, r)
+                            for a, r in zip(pdf["typeform_asset_download"], _ref_col)]
             pdf["Group"]   = pdf["Asset"].map(cfg.ASSET_TO_GROUP).fillna("")
             pdf["SDR"]     = pdf["sdr_owner"].map(cfg.resolve_owner) if "sdr_owner" in pdf.columns else "(unassigned)"
             pdf["BDS"]     = pdf["bds"].map(cfg.resolve_owner) if "bds" in pdf.columns else "(unassigned)"
@@ -838,7 +842,8 @@ def render_sales(start: date, end: date) -> None:
             "Contact": _c.get("name") or "",
             "SDR": cfg.resolve_owner(_c.get("sdr_owner")),
             "Self Booked": _self,
-            "Asset": _c.get("typeform_asset_download") or "",
+            "Asset": cfg.asset_or_referral(_c.get("typeform_asset_download"),
+                                           _c.get("referring_doctor")),
             "Dials": _stats["dials"],
             "Pick Ups": _stats["pick_ups"],
             "Contacts Made": _stats["contacts_made"],
@@ -982,7 +987,8 @@ def render_sales(start: date, end: date) -> None:
             "Open": cfg.hubspot_contact_url(_cid),
             "Contact": _c.get("name") or "",
             "BDS": cfg.resolve_owner(_c.get("bds")),
-            "Asset": _c.get("typeform_asset_download") or "",
+            "Asset": cfg.asset_or_referral(_c.get("typeform_asset_download"),
+                                           _c.get("referring_doctor")),
             "15-min Outcome": _outcome.upper() if _outcome else "",
             "15-min When (CT)": "",
             "SME Booked After?": _has_strat,
@@ -1126,7 +1132,8 @@ def render_sales(start: date, end: date) -> None:
             "Open": cfg.hubspot_contact_url(_cid),
             "Contact": _c.get("name") or "",
             "SME": cfg.resolve_owner(_c.get("sme")),
-            "Asset": _c.get("typeform_asset_download") or "",
+            "Asset": cfg.asset_or_referral(_c.get("typeform_asset_download"),
+                                           _c.get("referring_doctor")),
             "Strategy Outcome": _outcome,
             "Strategy When (CT)": "",
             "Strategy Mtgs": _cnt,

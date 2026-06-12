@@ -642,6 +642,14 @@ def render_executive(start: date, end: date) -> None:
         leads["meeting_when_raw"] = leads["hs_id"].astype(str).map(m_when)
         leads["meeting_when"] = cfg.format_ct_series(leads["meeting_when_raw"])
         leads["group"] = leads["typeform_asset_download"].map(cfg.ASSET_TO_GROUP).fillna("")
+        # Show "Referral: <doctor>" for leads with no typeform asset but a
+        # referring_doctor_s_name set (e.g. Ricardo Flores <- James Haley).
+        _ref = leads["referring_doctor"] if "referring_doctor" in leads.columns \
+            else pd.Series([None] * len(leads), index=leads.index)
+        leads["typeform_asset_download"] = [
+            cfg.asset_or_referral(a, r)
+            for a, r in zip(leads["typeform_asset_download"], _ref)
+        ]
         leads["sdr_name"] = leads["sdr_owner"].map(cfg.resolve_owner)
         leads["bds_name"] = leads["bds"].map(cfg.resolve_owner)
         leads["hubspot_link"] = leads["hs_id"].apply(cfg.hubspot_contact_url)
