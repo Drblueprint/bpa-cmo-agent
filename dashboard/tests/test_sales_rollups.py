@@ -506,3 +506,39 @@ def test_asset_performance_rollup_closes_from_table():
     assert by["EMX Fort Worth 2026"]["revenue"] == 40000.0
     # leads == 0 -> close_rate is None from _safe_div, NaN after DataFrame build
     assert pd.isna(by["EMX Fort Worth 2026"]["close_rate"])
+
+
+def test_bds_rollup_disco_funnel_with_meetings_all():
+    """meetings_all drives Scheduled/Canceled/Rescheduled; conversion math
+    stays on the cleaned frame (held / sme_booked unaffected by dead rows)."""
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "bds": "b1"},   # held
+        {"hs_id": "2", "bds": "b1"},   # canceled only
+        {"hs_id": "3", "bds": "b1"},   # rescheduled only
+    ])
+    # cleaned frame: dead meetings already removed
+    meetings_clean = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-06-02T00:00:00Z"},
+    ])
+    # all-outcomes frame: same window, dead rows included
+    meetings_all = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-06-02T00:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "CANCELED", "start_time": "2026-06-03T00:00:00Z"},
+        {"meeting_id": "m3", "contact_id": "3", "activity_type": "15 min call",
+         "outcome": "RESCHEDULED - HAS BOFU", "start_time": "2026-06-04T00:00:00Z"},
+    ])
+    r = sales_bds_rollup(
+        contacts=contacts, meetings=meetings_clean,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage"]),
+        stages_15min_dq=set(), meetings_all=meetings_all,
+    )
+    row = r.iloc[0]
+    assert row["appointments"] == 3     # total scheduled incl. dead
+    assert row["canceled"] == 1
+    assert row["rescheduled"] == 1
+    assert row["shows"] == 1            # held from cleaned frame only
+    assert row["show_rate"] == 1 / 3    # held / total scheduled

@@ -1127,29 +1127,38 @@ def sales_bds_rollup(
     deals: pd.DataFrame,
     *,
     stages_15min_dq: set,
+    meetings_all: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Per-BDS rollup with DQ tracking.
+    """Per-BDS Discovery-funnel rollup with DQ tracking.
 
     BDS owns the 15-min Discovery: they hold it, qualify or disqualify the
     prospect, and book the Strategy when qualified.
 
-    Columns: bds_id, appointments, shows, sme_booked, disqualified,
-             show_rate, booking_rate, dq_rate.
+    Columns: bds_id, appointments, canceled, rescheduled, shows, sme_booked,
+             disqualified, show_rate, booking_rate, dq_rate.
 
-    - appointments: contacts in this BDS group with a 15-min meeting (any outcome).
-    - shows: 15-min meetings with COMPLETE outcome.
-    - sme_booked: contacts who SHOWED the 15-min (COMPLETE) AND booked a
-      Strategy meeting. Restricted to the showed set so booking_rate is a true
-      post-show conversion and cannot exceed 100%.
-    - disqualified: contacts who SHOWED the 15-min AND have a deal in
-      STAGES_15MIN_DQ. Restricted to the showed set so dq_rate cannot exceed
-      100%.
-    - show_rate: shows / appointments.
+    `meetings` should be the CLEANED frame (canceled/rescheduled removed) -
+    it drives shows and all conversion math. `meetings_all`, when given, is
+    the same window WITHOUT that cleaning and drives the funnel-entry
+    columns so canceled/rescheduled bookings stay visible:
+
+    - appointments: contacts with ANY in-window 15-min booked, including
+      ones later canceled/rescheduled (total Discovery Calls Scheduled).
+      Falls back to the cleaned frame when meetings_all is None.
+    - canceled / rescheduled: contacts with a 15-min in that outcome. A
+      lead who rebooked after a cancel can appear in both a dead column
+      and shows.
+    - shows: 15-min meetings with COMPLETE outcome (Discovery Calls Held).
+    - sme_booked: contacts who SHOWED the 15-min AND booked a Strategy
+      meeting (subset of shows, so booking_rate cannot exceed 100%).
+    - disqualified: contacts who SHOWED AND have a deal in STAGES_15MIN_DQ.
+    - show_rate: shows / appointments (held / total scheduled).
     - booking_rate: sme_booked / shows.
     - dq_rate: disqualified / shows.
     """
-    cols = ["bds_id", "appointments", "shows", "sme_booked", "disqualified",
-            "show_rate", "booking_rate", "dq_rate"]
+    cols = ["bds_id", "appointments", "canceled", "rescheduled", "shows",
+            "sme_booked", "disqualified", "show_rate", "booking_rate",
+            "dq_rate"]
     if contacts.empty:
         return pd.DataFrame(columns=cols)
 
@@ -1158,8 +1167,6 @@ def sales_bds_rollup(
         fifteen = meetings[types.str.contains("15 min", na=False)]
         strategy = meetings[types.str.contains("strategy", na=False)]
 
-        booked_15_ids = set(fifteen["contact_id"].astype(str)) \
-            if not fifteen.empty else set()
         held_15_ids: set = set()
         if not fifteen.empty:
             out = fifteen["outcome"].fillna("").astype(str).str.upper()
@@ -1168,10 +1175,31 @@ def sales_bds_rollup(
             )
         booked_strat_ids = set(strategy["contact_id"].astype(str)) \
             if not strategy.empty else set()
+        clean_15_ids = set(fifteen["contact_id"].astype(str)) \
+            if not fifteen.empty else set()
     else:
-        booked_15_ids = set()
         held_15_ids = set()
         booked_strat_ids = set()
+        clean_15_ids = set()
+
+    # Funnel-entry sets from the all-outcomes frame (when provided).
+    canceled_ids: set = set()
+    rescheduled_ids: set = set()
+    if meetings_all is not None and not meetings_all.empty:
+        types_a = meetings_all["activity_type"].fillna("").astype(str).str.lower()
+        fifteen_a = meetings_all[types_a.str.contains("15 min", na=False)]
+        booked_15_ids = set(fifteen_a["contact_id"].astype(str)) \
+            if not fifteen_a.empty else set()
+        if not fifteen_a.empty:
+            out_a = fifteen_a["outcome"].fillna("").astype(str).str.upper().str.strip()
+            canceled_ids = set(
+                fifteen_a.loc[out_a.str.startswith("CANCEL"), "contact_id"].astype(str)
+            )
+            rescheduled_ids = set(
+                fifteen_a.loc[out_a.str.startswith("RESCHEDULED"), "contact_id"].astype(str)
+            )
+    else:
+        booked_15_ids = clean_15_ids
 
     dq_contact_ids = _contacts_with_deal_in_stages(
         contact_deals, deals, set(stages_15min_dq),
@@ -1187,6 +1215,8 @@ def sales_bds_rollup(
         rows.append({
             "bds_id": str(bds_id) if pd.notna(bds_id) else "",
             "appointments": appts,
+            "canceled": len(ids & canceled_ids),
+            "rescheduled": len(ids & rescheduled_ids),
             "shows": shows,
             "sme_booked": sme_booked,
             "disqualified": dq,

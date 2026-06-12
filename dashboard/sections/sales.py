@@ -182,9 +182,12 @@ def render_sales(start: date, end: date) -> None:
     except Exception as e:
         st.warning(f"Window contact attribution lookup failed: {e}")
 
-    # Canceled / rescheduled meetings never count as appointments anywhere
-    # on this tab (a canceled meeting never happens; a rescheduled one is
-    # replaced by a new meeting record - counting both double-counts).
+    # Canceled / rescheduled meetings never count as held appointments or in
+    # conversion math (a canceled meeting never happens; a rescheduled one is
+    # replaced by a new meeting record - counting both double-counts). The
+    # UNFILTERED frame is kept so the BDS Discovery funnel can show total
+    # Scheduled + Canceled + Rescheduled as their own stages.
+    meetings_all = meetings.copy()
     meetings = drop_dead_meetings(meetings)
 
     # Keep a separate "full" meetings frame (180-day floor) for the SDR Lead
@@ -198,6 +201,15 @@ def render_sales(start: date, end: date) -> None:
         _ws = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
         _we = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
         meetings = meetings[(_mstart >= _ws) & (_mstart < _we)].reset_index(drop=True)
+    # Window the all-outcomes frame identically (drives the Disco Scheduled /
+    # Canceled / Rescheduled columns + the BDS Meeting Detail rows).
+    if not meetings_all.empty:
+        _mstart_a = pd.to_datetime(meetings_all["start_time"], utc=True, errors="coerce")
+        _ws_a = pd.Timestamp(year=start.year, month=start.month, day=start.day, tz="UTC")
+        _we_a = pd.Timestamp(year=end.year, month=end.month, day=end.day, tz="UTC") + pd.Timedelta(days=1)
+        meetings_win_all = meetings_all[(_mstart_a >= _ws_a) & (_mstart_a < _we_a)].reset_index(drop=True)
+    else:
+        meetings_win_all = meetings_all
 
     # YTD closed deals (used by Money cards + Closed Deals YTD section)
     try:
@@ -589,12 +601,15 @@ def render_sales(start: date, end: date) -> None:
             _f15_outcome = dict(zip(_fm["contact_id"], _fm["outcome"].fillna("")))
             _f15_when = dict(zip(_fm["contact_id"], _fm["start_time"]))
 
-    # In-window 15-min meetings (used by BDS Meeting Detail)
+    # In-window 15-min meetings (used by BDS Meeting Detail). Sourced from
+    # the ALL-OUTCOMES window so canceled/rescheduled bookings stay visible
+    # in the detail (their outcome column shows CANCELED/RESCHEDULED), and
+    # the detail row count matches the Disco Scheduled column.
     _f15w_outcome: dict = {}
     _f15w_when: dict = {}
-    if not _meetings_in_window.empty:
-        _typesw = _meetings_in_window["activity_type"].fillna("").astype(str).str.lower()
-        _fmw = _meetings_in_window[_typesw.str.contains("15 min", na=False)].copy()
+    if not meetings_win_all.empty:
+        _typesw = meetings_win_all["activity_type"].fillna("").astype(str).str.lower()
+        _fmw = meetings_win_all[_typesw.str.contains("15 min", na=False)].copy()
         if not _fmw.empty:
             _fmw = _fmw.sort_values("start_time", ascending=False, na_position="last") \
                 .drop_duplicates(subset="contact_id", keep="first")
@@ -845,14 +860,16 @@ def render_sales(start: date, end: date) -> None:
     # ----- Section: BDS Performance (Wave 1) -----
     st.subheader("BDS Performance")
     st.caption(
-        f"{_win_label}. 15-min Discovery meetings whose **start_time falls in "
-        "this window**, grouped by the BDS assigned. Canceled and rescheduled "
-        "meetings are excluded. BDS holds the Discovery, "
-        "qualifies the prospect, and books the Strategy when qualified. "
-        "**Show %** = Shows / Appointments · **Booking %** = SME Booked / "
-        "Shows · **DQ %** = Disqualified / Shows. "
-        "**Team Total** row (bold) = sum across reps; rates recomputed from "
-        "the totals. `(unassigned)` reps are excluded."
+        f"{_win_label}. Discovery (15-min) funnel by BDS, for meetings whose "
+        "**start_time falls in this window**: **Disco Scheduled** = every "
+        "15-min booked (including ones later canceled/rescheduled) · "
+        "**Canceled** / **Rescheduled** = bookings that died (a rescheduled "
+        "lead's new meeting counts again when it lands) · **Disco Held** = "
+        "completed Discovery calls. Conversion math uses held calls only: "
+        "**Held %** = Held / Scheduled · **Booking %** = SME Booked / Held · "
+        "**DQ %** = Disqualified / Held. **Team Total** row (bold) = sum "
+        "across reps; rates recomputed from the totals. `(unassigned)` reps "
+        "are excluded."
     )
     bds = sales_bds_rollup(
         contacts=marketing_active,
@@ -860,6 +877,7 @@ def render_sales(start: date, end: date) -> None:
         contact_deals=contact_deals,
         deals=deals,
         stages_15min_dq=cfg.STAGES_15MIN_DQ,
+        meetings_all=meetings_win_all,
     )
     if bds.empty:
         st.info("No BDS activity in this window.")
@@ -873,7 +891,8 @@ def render_sales(start: date, end: date) -> None:
         display = display[display["bds_id"] != "(unassigned)"].reset_index(drop=True)
         display = team_total_row(
             display,
-            sum_cols=["appointments", "shows", "sme_booked", "disqualified"],
+            sum_cols=["appointments", "canceled", "rescheduled", "shows",
+                      "sme_booked", "disqualified"],
             rate_cols={"show_rate": ("shows", "appointments"),
                        "booking_rate": ("sme_booked", "shows"),
                        "dq_rate": ("disqualified", "shows")},
@@ -884,11 +903,13 @@ def render_sales(start: date, end: date) -> None:
         display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
         display = display.rename(columns={
             "bds_id": "BDS",
-            "appointments": "Appointments",
-            "shows": "Shows",
+            "appointments": "Disco Scheduled",
+            "canceled": "Canceled",
+            "rescheduled": "Rescheduled",
+            "shows": "Disco Held",
             "sme_booked": "SME Booked",
             "disqualified": "Disqualified",
-            "show_rate": "Show %",
+            "show_rate": "Held %",
             "booking_rate": "Booking %",
             "dq_rate": "DQ %",
         })
