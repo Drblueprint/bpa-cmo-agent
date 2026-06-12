@@ -146,7 +146,13 @@ def render_executive(start: date, end: date) -> None:
     # Window-wide meeting sweep: pull EVERY meeting whose start_time is in
     # the window, not just meetings of contacts already in the lead set. A
     # lead who opted in BEFORE this window but had their call now would
-    # otherwise be invisible here.
+    # otherwise be invisible here. IMPORTANT: `contacts` itself stays the
+    # MTD marketing-lead set (it drives the lead KPIs, Conversions, group
+    # breakdown, SDR Performance, and Lead Detail). The swept-in contacts
+    # live in `contacts_sweep_extra` and only feed the meeting-based BDS /
+    # SME panels and call details.
+    contacts_sweep_extra = pd.DataFrame()
+    contact_deals_reps = contact_deals
     try:
         from dashboard.data.hubspot_loader import load_meetings_in_window
         win_meet = load_meetings_in_window(start, end)
@@ -158,8 +164,15 @@ def render_executive(start: date, end: date) -> None:
             if _new_cids:
                 _extra_c = load_contacts_by_ids(_new_cids)
                 if not _extra_c.empty:
-                    contacts = pd.concat([contacts, _extra_c], ignore_index=True)
-                    contact_deals = load_contact_deals(contacts["hs_id"].tolist())
+                    contacts_sweep_extra = _extra_c
+                    # Deal links for the swept contacts feed ONLY the BDS/SME
+                    # panels (contact_deals_reps). The lead-set contact_deals
+                    # stays untouched so the top KPIs (closed-won, money,
+                    # CAC) keep counting the marketing lead set.
+                    contact_deals_reps = load_contact_deals(
+                        contacts["hs_id"].tolist()
+                        + contacts_sweep_extra["hs_id"].tolist()
+                    )
             _mcols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time"]
             meetings = pd.concat([meetings, win_meet[_mcols]], ignore_index=True) \
                 .drop_duplicates(subset=["meeting_id", "contact_id"]) \
@@ -557,17 +570,29 @@ def render_executive(start: date, end: date) -> None:
     st.divider()
 
     # === BY-REP TABLES ===
-    contacts_for_reps = contacts.copy()
-    if group_filter != "All" and not contacts_for_reps.empty:
-        contacts_for_reps["group"] = contacts_for_reps["typeform_asset_download"] \
-            .map(cfg.ASSET_TO_GROUP)
-        contacts_for_reps = contacts_for_reps[contacts_for_reps["group"] == group_filter]
+    # contacts_for_reps: sweep-expanded set (meeting coverage for BDS/SME).
+    # contacts_for_leads: the MTD marketing-lead set (SDR Performance + Lead
+    # Detail report on the leads we generated, not on every meeting contact).
+    def _apply_group_filter(df):
+        if group_filter == "All" or df.empty:
+            return df
+        out = df.copy()
+        out["group"] = out["typeform_asset_download"].map(cfg.ASSET_TO_GROUP)
+        return out[out["group"] == group_filter]
+
+    _reps_base = (pd.concat([contacts, contacts_sweep_extra], ignore_index=True)
+                  .drop_duplicates(subset="hs_id").reset_index(drop=True)
+                  if not contacts_sweep_extra.empty else contacts.copy())
+    contacts_for_reps = _apply_group_filter(_reps_base)
+    contacts_for_leads = _apply_group_filter(contacts.copy())
 
     # SDR table — full width
     st.subheader("SDR Performance")
-    st.caption("SDR books the 15-min discovery call. Tracks: leads worked → "
-               "discovery booked → discovery held.")
-    sdr = executive_sdr_rollup(contacts_for_reps, meetings)
+    st.caption("SDR books the 15-min discovery call over the MTD marketing "
+               "leads (window opt-ins + list groups), grouped by the SDR "
+               "they are assigned to. Tracks: leads worked → discovery "
+               "booked → discovery held.")
+    sdr = executive_sdr_rollup(contacts_for_leads, meetings)
     if sdr.empty:
         st.info("No SDR data for this window.")
     else:
@@ -586,8 +611,8 @@ def render_executive(start: date, end: date) -> None:
         st.dataframe(sdr_display, use_container_width=True, hide_index=True)
 
     # === Lead Detail — every marketing lead in window with status ===
-    if not contacts_for_reps.empty:
-        leads = contacts_for_reps.copy()
+    if not contacts_for_leads.empty:
+        leads = contacts_for_leads.copy()
         # Self booking flag — sdr_owner mapped to Self Booking ID
         leads["self_booking"] = (
             leads["sdr_owner"].fillna("").astype(str) == "1266266951"
@@ -756,7 +781,7 @@ def render_executive(start: date, end: date) -> None:
         else:
             deals_for_sme = deals
         sme = executive_sme_rollup(
-            contacts_for_reps, meetings_for_reps, contact_deals, deals_for_sme,
+            contacts_for_reps, meetings_for_reps, contact_deals_reps, deals_for_sme,
             asset_to_group=cfg.ASSET_TO_GROUP,
             group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
             stages_closed_won=cfg.STAGES_CLOSED_WON,
