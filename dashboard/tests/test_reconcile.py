@@ -1028,3 +1028,24 @@ def test_closed_deals_override_beats_typeform_asset():
     assert row["source"] == "VEMX Marketing"   # override, not the typeform
     assert row["group"] == "Chiro"             # override group, not EMX
     assert bool(row["is_marketing"]) is True
+
+
+def test_drop_dead_meetings():
+    """Canceled + rescheduled meetings (any prefix variant) are removed."""
+    from dashboard.data.reconcile import drop_dead_meetings
+
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "outcome": "SCHEDULED"},
+        {"meeting_id": "m2", "outcome": "CANCELED"},
+        {"meeting_id": "m3", "outcome": "Cancelled"},          # alt spelling
+        {"meeting_id": "m4", "outcome": "RESCHEDULED"},
+        {"meeting_id": "m5", "outcome": "RESCHEDULED - HAS BOFU"},
+        {"meeting_id": "m6", "outcome": "COMPLETE - QUALIFIED"},
+        {"meeting_id": "m7", "outcome": "NO_SHOW"},
+        {"meeting_id": "m8", "outcome": None},                 # blank kept
+    ])
+    out = drop_dead_meetings(meetings)
+    assert set(out["meeting_id"]) == {"m1", "m6", "m7", "m8"}
+    # empty / missing-outcome frames pass through untouched
+    empty = pd.DataFrame(columns=["meeting_id", "outcome"])
+    assert drop_dead_meetings(empty).empty

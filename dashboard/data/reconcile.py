@@ -34,6 +34,22 @@ def _safe_div(num: float, den: float) -> float | None:
     return num / den
 
 
+def drop_dead_meetings(meetings: pd.DataFrame) -> pd.DataFrame:
+    """Remove canceled and rescheduled meetings from a meetings frame.
+
+    A CANCELED meeting never happens, and a RESCHEDULED meeting is replaced
+    by a new meeting record (counting both double-counts the appointment) -
+    so neither should count as a booked appointment anywhere. Matches outcome
+    prefixes case-insensitively: CANCELED / CANCELLED, RESCHEDULED,
+    "RESCHEDULED - HAS BOFU", etc.
+    """
+    if meetings.empty or "outcome" not in meetings.columns:
+        return meetings
+    out = meetings["outcome"].fillna("").astype(str).str.upper().str.strip()
+    dead = out.str.startswith("CANCEL") | out.str.startswith("RESCHEDULED")
+    return meetings[~dead].reset_index(drop=True)
+
+
 def group_marketing_metrics(
     fb: pd.DataFrame,
     contacts: pd.DataFrame,

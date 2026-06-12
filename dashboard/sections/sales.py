@@ -19,6 +19,7 @@ from dashboard.data.reconcile import (
     asset_performance_rollup,
     build_closed_deals_table,
     compute_speed_to_lead,
+    drop_dead_meetings,
     pipeline_funnel,
     sales_bds_rollup,
     sales_sdr_rollup,
@@ -180,6 +181,11 @@ def render_sales(start: date, end: date) -> None:
                     st.warning(f"Expanded meeting reload failed: {me}")
     except Exception as e:
         st.warning(f"Window contact attribution lookup failed: {e}")
+
+    # Canceled / rescheduled meetings never count as appointments anywhere
+    # on this tab (a canceled meeting never happens; a rescheduled one is
+    # replaced by a new meeting record - counting both double-counts).
+    meetings = drop_dead_meetings(meetings)
 
     # Keep a separate "full" meetings frame (180-day floor) for the SDR Lead
     # Detail "latest 15-min on record" lookup. ALL ROLLUPS (BDS/SME) use
@@ -801,10 +807,11 @@ def render_sales(start: date, end: date) -> None:
         _sdr_det = _sdr_det.sort_values(
             ["Dials", "Speed to Lead (min)"], ascending=[False, True], na_position="last"
         ).reset_index(drop=True)
-        with st.expander(f"SDR Lead Detail — {len(_sdr_det)} leads with activity", expanded=False):
+
+        def _render_sdr_detail(df):
             st.dataframe(
                 cfg.style_unassigned(
-                    _sdr_det,
+                    df,
                     columns=["SDR", "Asset", "15-min Status"],
                     # Green = has a 15-min appointment on record (not just "Not Booked")
                     green_when=lambda r: str(r.get("15-min Status", "")).strip()
@@ -817,13 +824,30 @@ def render_sales(start: date, end: date) -> None:
                 },
             )
 
+        # Leads with no SDR owner get their own dropdown so they don't mix
+        # with (or inflate) the assigned-lead working list.
+        _unassigned_mask = _sdr_det["SDR"] == "(unassigned)"
+        _assigned_det = _sdr_det[~_unassigned_mask].reset_index(drop=True)
+        _no_owner_det = _sdr_det[_unassigned_mask].reset_index(drop=True)
+        if not _assigned_det.empty:
+            with st.expander(f"SDR Lead Detail — {len(_assigned_det)} leads with activity", expanded=False):
+                _render_sdr_detail(_assigned_det)
+        if not _no_owner_det.empty:
+            with st.expander(f"No SDR Owner Assigned — {len(_no_owner_det)} leads", expanded=False):
+                st.caption(
+                    "Leads with activity but no SDR owner set in HubSpot. "
+                    "Assign an owner so they appear in the working list above."
+                )
+                _render_sdr_detail(_no_owner_det)
+
     st.divider()
 
     # ----- Section: BDS Performance (Wave 1) -----
     st.subheader("BDS Performance")
     st.caption(
         f"{_win_label}. 15-min Discovery meetings whose **start_time falls in "
-        "this window**, grouped by the BDS assigned. BDS holds the Discovery, "
+        "this window**, grouped by the BDS assigned. Canceled and rescheduled "
+        "meetings are excluded. BDS holds the Discovery, "
         "qualifies the prospect, and books the Strategy when qualified. "
         "**Show %** = Shows / Appointments · **Booking %** = SME Booked / "
         "Shows · **DQ %** = Disqualified / Shows. "
@@ -923,7 +947,8 @@ def render_sales(start: date, end: date) -> None:
     st.subheader("SME Performance")
     st.caption(
         f"{_win_label}. Strategy meetings whose **start_time falls in this "
-        "window**, grouped by the SME assigned. Deals closed = won deals "
+        "window**, grouped by the SME assigned. Canceled and rescheduled "
+        "meetings are excluded. Deals closed = won deals "
         "whose closedate (or stage-entry date for DIY/90-Day) is in window. "
         "**First Close** = closed on the first Strategy call · **FU Close** "
         "= closed after a follow-up call. **Close %** = total closed / "

@@ -143,6 +143,12 @@ def render_executive(start: date, end: date) -> None:
         except Exception as e:
             st.warning(f"Expanded contact reload failed: {e}")
 
+    # Canceled / rescheduled meetings never count as appointments anywhere
+    # on this tab (canceled never happens; rescheduled is replaced by a new
+    # meeting record - counting both double-counts the appointment).
+    from dashboard.data.reconcile import drop_dead_meetings
+    meetings = drop_dead_meetings(meetings)
+
     # === YTD closed-deal data (separate pull -- always Jan 1 -> today) ===
     try:
         deals_ytd, contact_deals_ytd, contacts_ytd = load_closed_deals_ytd(
@@ -656,7 +662,8 @@ def render_executive(start: date, end: date) -> None:
         st.caption("BDS holds the 15-min and books the Strategy call. Tracks: "
                    "discovery held → strategy set → strategy held (meetings "
                    "whose start time is in this window - matches BDS Call "
-                   "Detail below).")
+                   "Detail below). Canceled and rescheduled meetings are "
+                   "excluded.")
         from dashboard.data.reconcile import executive_bds_rollup
         bds = executive_bds_rollup(contacts_for_reps, meetings_for_reps)
         if not bds.empty:
@@ -690,7 +697,7 @@ def render_executive(start: date, end: date) -> None:
         st.caption("SME holds the Strategy call and closes the deal. Tracks: "
                    "strategy held → deals closed → revenue (meetings whose "
                    "start time is in this window - matches SME Call Detail "
-                   "below).")
+                   "below). Canceled and rescheduled meetings are excluded.")
         # Filter deals to those actually CLOSED in window so the rollup
         # doesn't count old closes that got hs_lastmodifieddate touched.
         # closedate (or stage_entry_date for DIY/90-Day) in [start, end].
