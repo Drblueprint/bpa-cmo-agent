@@ -2397,7 +2397,7 @@ def group_funnel_costs(
     asset_to_group: dict,
     stages_closed_won,
     closed_deals_table: pd.DataFrame | None = None,
-    groups: tuple[str, ...] = ("Chiro", "EMX", "PT Recovery", "TheraRay"),
+    groups: tuple[str, ...] = ("Chiro", "EMX", "PT Recovery", "TheraRay", "NLAP"),
 ) -> pd.DataFrame:
     """Per-source YTD funnel + cost-per-stage breakdown.
 

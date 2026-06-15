@@ -438,49 +438,26 @@ def render_executive(start: date, end: date) -> None:
             # (the real form-submit event timestamp — survived the Apr 7
             # bulk-stamp). No extra filter needed here.
             typeform_contacts = load_marketing_contacts(window_start, window_end)
-            tr_contacts = pd.DataFrame()
-            try:
-                memberships = load_list_memberships(cfg.THERARAY_HUBSPOT_LIST_ID)
-                if not memberships.empty:
-                    mt = pd.to_datetime(memberships["membership_timestamp"],
-                                          utc=True, errors="coerce")
-                    ws = pd.Timestamp(year=window_start.year,
-                                       month=window_start.month,
-                                       day=window_start.day, tz="UTC")
-                    we = pd.Timestamp(year=window_end.year,
-                                       month=window_end.month,
-                                       day=window_end.day, tz="UTC") + pd.Timedelta(days=1)
-                    in_win = memberships[(mt >= ws) & (mt < we)]
-                    ids_in = in_win["contact_id"].tolist()
-                    if ids_in:
-                        tr_contacts = load_contacts_by_ids(ids_in)
-                        if not tr_contacts.empty:
-                            tr_contacts = tr_contacts[
-                                ~tr_contacts["email"].fillna("").str.lower()
-                                .isin(cfg.MARKETING_EXCLUDED_EMAILS)
-                            ].copy()
-                        if not tr_contacts.empty:
-                            tr_contacts["typeform_asset_download"] = "TheraRay FB Lead"
-                            cfg.ASSET_TO_GROUP["TheraRay FB Lead"] = "TheraRay"
-            except Exception:
-                pass
-            if not tr_contacts.empty:
-                if typeform_contacts.empty:
-                    all_contacts = tr_contacts
-                else:
-                    # TheraRay rows FIRST so dedup keeps the tagged
-                    # version (otherwise an existing-contact row with no
-                    # typeform asset wins and TheraRay routing breaks).
-                    all_contacts = pd.concat(
-                        [tr_contacts, typeform_contacts], ignore_index=True
-                    ).drop_duplicates(subset="hs_id", keep="first").reset_index(drop=True)
-                # Belt + suspenders: force the TheraRay tag onto any
-                # contact whose hs_id is in the list-membership window.
-                _tr_ids = set(tr_contacts["hs_id"].astype(str))
-                _mask = all_contacts["hs_id"].astype(str).isin(_tr_ids)
-                all_contacts.loc[_mask, "typeform_asset_download"] = "TheraRay FB Lead"
-            else:
-                all_contacts = typeform_contacts
+            # Merge list-based groups (TheraRay 6280, NLAP 7086) so their
+            # opt-ins get a leads/funnel row here too — same helper + lists as
+            # the top-of-render merge. Without NLAP, the Cost-per-Stage table
+            # was missing the NLAP row entirely.
+            all_contacts = typeform_contacts
+            for _lid, _label, _grp in [
+                (cfg.THERARAY_HUBSPOT_LIST_ID, "TheraRay FB Lead", "TheraRay"),
+                (cfg.NLAP_HUBSPOT_LIST_ID, "NLAP FB Lead", "NLAP"),
+            ]:
+                try:
+                    all_contacts = merge_list_group(
+                        all_contacts, list_id=_lid, asset_label=_label, group=_grp,
+                        start=window_start, end=window_end,
+                        load_memberships=load_list_memberships,
+                        load_contacts=load_contacts_by_ids,
+                        excluded_emails=cfg.MARKETING_EXCLUDED_EMAILS,
+                        asset_to_group=cfg.ASSET_TO_GROUP,
+                    )
+                except Exception:
+                    pass
 
             fb_win = load_fb_insights(window_start, window_end,
                                        time_increment_days=None)
