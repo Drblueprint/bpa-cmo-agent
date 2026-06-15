@@ -1143,3 +1143,35 @@ def test_per_contact_journey_protocol_mapping_scheduled():
     )
     by_id = {row["hs_id"]: row for _, row in result.iterrows()}
     assert by_id["1"]["fifteen_min_status"] == "Scheduled"
+
+
+def test_executive_kpis_counts_protocol_mapping_as_discovery():
+    """executive_kpis discovery funnel counts a Protocol Mapping Call (the
+    NLAP/TheraRay discovery format) as a 15-min discovery meeting."""
+    from dashboard.data.reconcile import executive_kpis
+    fb = pd.DataFrame(columns=["campaign_name", "group", "spend",
+                               "impressions", "clicks", "fb_leads"])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "NLAP FB Lead",
+         "lifecycle_stage": "marketingqualifiedlead", "fifteen_min_call_date": None,
+         "sdr_owner": "x", "bds": "y",
+         "typeform_submission_date": "2026-06-03T00:00:00Z",
+         "createdate": "2026-06-03T00:00:00Z"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1",
+         "activity_type": "Protocol Mapping Call", "outcome": "COMPLETE - QUALIFIED",
+         "start_time": "2026-06-05T10:00:00Z"},
+    ])
+    result = executive_kpis(
+        fb=fb, contacts=contacts, meetings=meetings,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount", "createdate", "closedate"]),
+        group_filter="All",
+        asset_to_group={"NLAP FB Lead": "NLAP"},
+        group_default_amount={},
+        stages_closed_won={"closedwon"},
+        sdr_payroll_monthly=None, sme_payroll_monthly=None,
+    )
+    assert result["discovery_booked"] == 1   # Protocol Mapping Call counts
+    assert result["discovery_held"] == 1     # COMPLETE outcome

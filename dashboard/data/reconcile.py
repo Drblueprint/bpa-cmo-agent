@@ -481,7 +481,11 @@ def executive_kpis(
         if meetings_filtered.empty:
             return meetings_filtered
         types = meetings_filtered["activity_type"].fillna("").astype(str).str.lower()
-        return meetings_filtered[types.str.contains(token, na=False)]
+        # "15 min" is the Discovery token — include Protocol Mapping Calls
+        # (the NLAP/TheraRay discovery format) via the shared matcher.
+        mask = discovery_mask(types) if token == "15 min" \
+            else types.str.contains(token, na=False)
+        return meetings_filtered[mask]
 
     fifteen = _meetings_of_type("15 min")
     strategy = _meetings_of_type("strategy")
@@ -1986,7 +1990,9 @@ def weekly_metrics(
                        completed_only: bool = False) -> int:
         if meetings.empty:
             return 0
-        mask = m_types.str.contains(token, na=False) & m_start.between(start, end)
+        _type_mask = discovery_mask(m_types) if token == "15 min" \
+            else m_types.str.contains(token, na=False)
+        mask = _type_mask & m_start.between(start, end)
         if completed_only:
             mask = mask & m_outcomes.str.startswith("COMPLETE")
         return int(mask.sum())
@@ -2001,8 +2007,10 @@ def weekly_metrics(
         )
         if not group_contact_ids:
             return 0
+        _type_mask = discovery_mask(m_types) if token == "15 min" \
+            else m_types.str.contains(token, na=False)
         mask = (
-            m_types.str.contains(token, na=False)
+            _type_mask
             & m_start.between(start, end)
             & meetings["contact_id"].astype(str).isin(group_contact_ids)
         )

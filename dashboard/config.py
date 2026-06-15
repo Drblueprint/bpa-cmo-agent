@@ -546,14 +546,18 @@ def is_existing_customer(lifecycle_stage: str | None,
     """True when a contact is already a BPA customer.
 
     Primary signal: HubSpot lifecycle_stage == "customer".
-    Backup signal: contract_tier is populated (any value) — catches
-    customers whose lifecycle wasn't promoted to "customer" but who have
-    a contract recorded against them.
+    Backup signal: contract_tier is populated with a PAID tier — catches
+    customers whose lifecycle wasn't promoted to "customer" but who have a
+    contract recorded against them. EXCEPTION: "FOUNDATIONAL - C" is the
+    TheraRay/NLAP opt-in label (a lead, NOT a paid customer), so it must not
+    trigger the customer exclusion — otherwise those leads (and their
+    discovery / Protocol Mapping calls) disappear from lead + BDS reporting.
     """
     if lifecycle_stage and str(lifecycle_stage).strip().lower() == "customer":
         return True
     if contract_tier and str(contract_tier).strip():
-        return True
+        if "FOUNDATIONAL" not in str(contract_tier).strip().upper():
+            return True
     return False
 
 CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
