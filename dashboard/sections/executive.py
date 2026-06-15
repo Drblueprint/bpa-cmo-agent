@@ -20,6 +20,7 @@ from dashboard.data.hubspot_loader import (
     load_list_memberships,
 )
 from dashboard.data.reconcile import (
+    discovery_mask,
     executive_kpis,
     executive_sdr_rollup,
     executive_sme_rollup,
@@ -620,7 +621,7 @@ def render_executive(start: date, end: date) -> None:
         # Most recent 15-min meeting per contact (any outcome)
         if not meetings.empty:
             types_m = meetings["activity_type"].fillna("").astype(str).str.lower()
-            fifteen = meetings[types_m.str.contains("15 min", na=False)].copy()
+            fifteen = meetings[discovery_mask(types_m)].copy()
             if not fifteen.empty:
                 fifteen = fifteen.sort_values(
                     "start_time", ascending=False, na_position="last"
@@ -861,7 +862,7 @@ def render_executive(start: date, end: date) -> None:
         meetings_x["scheduled_ct"] = cfg.format_ct_series(meetings_x["start_time"])
 
         types = meetings_x["activity_type"].fillna("").astype(str).str.lower()
-        fifteen_detail = meetings_x[types.str.contains("15 min", na=False)].copy()
+        fifteen_detail = meetings_x[discovery_mask(types)].copy()
         strategy_detail = meetings_x[types.str.contains("strategy", na=False)].copy()
 
         # One row per contact — keep only the most recent meeting per contact

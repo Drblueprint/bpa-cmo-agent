@@ -34,6 +34,22 @@ def _safe_div(num: float, den: float) -> float | None:
     return num / den
 
 
+# Meeting activity_type substrings (lowercased) that count as a Discovery
+# (15-min) call. NLAP / TheraRay (DTI) leads do their discovery as a
+# "Protocol Mapping Call" instead of a standard "15 min call", so both count.
+DISCOVERY_MEETING_SUBSTRINGS = ("15 min", "protocol mapping")
+
+
+def discovery_mask(types: "pd.Series") -> "pd.Series":
+    """Boolean mask over an ALREADY-LOWERCASED activity_type Series: which
+    meetings are Discovery (15-min) calls (incl. Protocol Mapping Calls)."""
+    out = None
+    for sub in DISCOVERY_MEETING_SUBSTRINGS:
+        m = types.str.contains(sub, regex=False, na=False)
+        out = m if out is None else (out | m)
+    return out
+
+
 def drop_dead_meetings(meetings: pd.DataFrame) -> pd.DataFrame:
     """Remove canceled and rescheduled meetings from a meetings frame.
 
@@ -101,7 +117,7 @@ def group_marketing_metrics(
         strategy_contact_ids: set[str] = set()
     else:
         types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        fifteen_meetings = meetings[types.str.contains("15 min", na=False)]
+        fifteen_meetings = meetings[discovery_mask(types)]
         strategy_meetings = meetings[types.str.contains("strategy", na=False)]
         booked_contact_ids = set(
             str(cid) for cid in fifteen_meetings["contact_id"].dropna().unique()
@@ -365,7 +381,7 @@ def per_contact_journey(
     else:
         types = meetings["activity_type"].fillna("").astype(str).str.lower()
         # Match "15 min call", "PT 15 Min Call", and any other "...15 min..." variant
-        fifteen = meetings[types.str.contains("15 min", na=False)]
+        fifteen = meetings[discovery_mask(types)]
         # Match "Strategy Call" and any "...strategy..." variant
         strategy = meetings[types.str.contains("strategy", na=False)]
         fifteen_by_contact = {
@@ -614,7 +630,7 @@ def executive_sdr_rollup(
 
     types = meetings["activity_type"].fillna("").astype(str).str.lower() \
         if not meetings.empty else pd.Series(dtype=str)
-    fifteen = meetings[types.str.contains("15 min", na=False)] if not meetings.empty else meetings
+    fifteen = meetings[discovery_mask(types)] if not meetings.empty else meetings
 
     # Per-contact stage flags
     booked_contact_ids = set(fifteen["contact_id"].astype(str)) if not fifteen.empty else set()
@@ -759,7 +775,7 @@ def executive_bds_rollup(
 
     if not meetings.empty:
         types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        fifteen = meetings[types.str.contains("15 min", na=False)]
+        fifteen = meetings[discovery_mask(types)]
         strategy = meetings[types.str.contains("strategy", na=False)]
 
         held_disco_ids: set[str] = set()
@@ -791,7 +807,7 @@ def executive_bds_rollup(
     rescheduled_ids: set = set()
     if meetings_all is not None and not meetings_all.empty:
         types_a = meetings_all["activity_type"].fillna("").astype(str).str.lower()
-        fifteen_a = meetings_all[types_a.str.contains("15 min", na=False)]
+        fifteen_a = meetings_all[discovery_mask(types_a)]
         scheduled_ids = set(fifteen_a["contact_id"].astype(str)) \
             if not fifteen_a.empty else set()
         if not fifteen_a.empty:
@@ -974,7 +990,7 @@ def sdr_call_activity(
     fifteen_meetings = pd.DataFrame()
     if not meetings.empty:
         types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        fifteen_meetings = meetings[types.str.contains("15 min", na=False)].copy()
+        fifteen_meetings = meetings[discovery_mask(types)].copy()
         if not fifteen_meetings.empty:
             # Prefer an explicit created_at_utc if present; else parse start_time
             if "created_at_utc" not in fifteen_meetings.columns:
@@ -1114,7 +1130,7 @@ def sales_sdr_rollup(
     sdr_appts: dict[str, int] = {}
     if not meetings.empty and not contacts.empty:
         types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        fifteen = meetings[types.str.contains("15 min", na=False)]
+        fifteen = meetings[discovery_mask(types)]
         if not fifteen.empty and "sdr_owner" in contacts.columns:
             owner_map = dict(zip(
                 contacts["hs_id"].astype(str),
@@ -1198,7 +1214,7 @@ def sales_bds_rollup(
 
     if not meetings.empty:
         types = meetings["activity_type"].fillna("").astype(str).str.lower()
-        fifteen = meetings[types.str.contains("15 min", na=False)]
+        fifteen = meetings[discovery_mask(types)]
         strategy = meetings[types.str.contains("strategy", na=False)]
 
         held_15_ids: set = set()
@@ -1221,7 +1237,7 @@ def sales_bds_rollup(
     rescheduled_ids: set = set()
     if meetings_all is not None and not meetings_all.empty:
         types_a = meetings_all["activity_type"].fillna("").astype(str).str.lower()
-        fifteen_a = meetings_all[types_a.str.contains("15 min", na=False)]
+        fifteen_a = meetings_all[discovery_mask(types_a)]
         booked_15_ids = set(fifteen_a["contact_id"].astype(str)) \
             if not fifteen_a.empty else set()
         if not fifteen_a.empty:
@@ -1488,7 +1504,7 @@ def asset_performance_rollup(
         if not c.empty:
             if not meetings.empty:
                 types = meetings["activity_type"].fillna("").astype(str).str.lower()
-                booked_15 = set(meetings.loc[types.str.contains("15 min", na=False),
+                booked_15 = set(meetings.loc[discovery_mask(types),
                                              "contact_id"].astype(str))
                 booked_strat = set(meetings.loc[types.str.contains("strategy", na=False),
                                                 "contact_id"].astype(str))
@@ -2447,7 +2463,7 @@ def group_funnel_costs(
     if not meetings_ytd.empty:
         types = meetings_ytd["activity_type"].fillna("").astype(str).str.lower()
         f15_booked_cids = set(
-            meetings_ytd.loc[types.str.contains("15 min", na=False),
+            meetings_ytd.loc[discovery_mask(types),
                               "contact_id"].astype(str).unique()
         )
         strat_booked_cids = set(

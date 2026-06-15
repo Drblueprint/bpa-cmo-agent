@@ -19,6 +19,7 @@ from dashboard.data.reconcile import (
     asset_performance_rollup,
     build_closed_deals_table,
     compute_speed_to_lead,
+    discovery_mask,
     drop_dead_meetings,
     sales_bds_rollup,
     sales_sdr_rollup,
@@ -271,7 +272,7 @@ def render_sales(start: date, end: date) -> None:
         f["_mkt"] = f["_cid"].map(_mkt_asset_map).fillna("") != ""
         t = f["activity_type"].fillna("").astype(str).str.lower()
         o = f["outcome"].fillna("").astype(str).str.upper()
-        f15 = t.str.contains("15 min", na=False)
+        f15 = discovery_mask(t)
         strat_held = t.str.contains("strategy", na=False) & o.str.startswith("COMPLETE")
         return (int((f15 & f["_mkt"]).sum()), int(f15.sum()),
                 int((strat_held & f["_mkt"]).sum()), int(strat_held.sum()))
@@ -643,7 +644,7 @@ def render_sales(start: date, end: date) -> None:
     _f15_when: dict = {}
     if not meetings_full.empty:
         _types = meetings_full["activity_type"].fillna("").astype(str).str.lower()
-        _fm = meetings_full[_types.str.contains("15 min", na=False)].copy()
+        _fm = meetings_full[discovery_mask(_types)].copy()
         if not _fm.empty:
             _fm = _fm.sort_values("start_time", ascending=False, na_position="last") \
                 .drop_duplicates(subset="contact_id", keep="first")
@@ -659,7 +660,7 @@ def render_sales(start: date, end: date) -> None:
     _f15w_when: dict = {}
     if not meetings_win_all.empty:
         _typesw = meetings_win_all["activity_type"].fillna("").astype(str).str.lower()
-        _fmw = meetings_win_all[_typesw.str.contains("15 min", na=False)].copy()
+        _fmw = meetings_win_all[discovery_mask(_typesw)].copy()
         if not _fmw.empty:
             _fmw = _fmw.sort_values("start_time", ascending=False, na_position="last") \
                 .drop_duplicates(subset="contact_id", keep="first")

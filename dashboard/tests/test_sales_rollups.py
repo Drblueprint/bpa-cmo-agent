@@ -542,3 +542,25 @@ def test_bds_rollup_disco_funnel_with_meetings_all():
     assert row["rescheduled"] == 1
     assert row["shows"] == 1            # held from cleaned frame only
     assert row["show_rate"] == 1 / 3    # held / total scheduled
+
+
+def test_sales_bds_rollup_counts_protocol_mapping_call():
+    """A contact whose only meeting is a COMPLETE Protocol Mapping Call counts
+    as appointments=1 and shows=1 (NLAP/TheraRay discovery)."""
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "bds": "44815718"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "c1",
+         "activity_type": "Protocol Mapping Call", "outcome": "COMPLETE",
+         "start_time": "2026-05-20T15:00:00Z"},
+    ])
+    out = sales_bds_rollup(
+        contacts=contacts, meetings=meetings,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        stages_15min_dq=set(),
+    )
+    by_bds = out.set_index("bds_id")
+    assert by_bds.loc["44815718", "appointments"] == 1
+    assert by_bds.loc["44815718", "shows"] == 1

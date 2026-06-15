@@ -1099,3 +1099,47 @@ def test_closed_deals_referral_fallback():
     assert ref["group"] == "(unmapped)"
     assert ast["source"] == "Top 10 typeform"  # asset beats referral
     assert bool(ast["is_marketing"]) is True
+
+
+def test_discovery_mask_matches_protocol_mapping_and_15min():
+    """discovery_mask matches 15-min + Protocol Mapping; not strategy/coaching/blank.
+
+    The contract is an ALREADY-LOWERCASED Series (call sites lower it first), so
+    "PROTOCOL MAPPING CALL" is fed through the same .str.lower() the call sites use.
+    """
+    from dashboard.data.reconcile import discovery_mask
+
+    raw = pd.Series([
+        "15 min call",
+        "Protocol Mapping Call",
+        "PROTOCOL MAPPING CALL",
+        "Strategy Call",
+        "Coaching Call",
+        "",
+        None,
+    ])
+    types = raw.fillna("").astype(str).str.lower()
+    mask = discovery_mask(types)
+    assert mask.tolist() == [True, True, True, False, False, False, False]
+
+
+def test_per_contact_journey_protocol_mapping_scheduled():
+    """A SCHEDULED Protocol Mapping Call counts as a 15-min booking (not blank)."""
+    from dashboard.data.reconcile import per_contact_journey
+
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "fifteen_min_call_date": None, "lifecycle_stage": "lead"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1",
+         "activity_type": "Protocol Mapping Call",
+         "outcome": "SCHEDULED", "start_time": ""},
+    ])
+    result = per_contact_journey(
+        contacts, meetings,
+        pd.DataFrame(columns=["contact_id", "deal_id"]),
+        pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        stages_closed_won=set(),
+    )
+    by_id = {row["hs_id"]: row for _, row in result.iterrows()}
+    assert by_id["1"]["fifteen_min_status"] == "Scheduled"
