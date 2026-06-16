@@ -707,7 +707,7 @@ def render_executive(start: date, end: date) -> None:
     with col_bds:
         st.subheader("BDS Performance")
         st.caption("BDS holds the 15-min and books the Strategy call. Tracks: "
-                   "discovery held → strategy set → strategy held (meetings "
+                   "discovery show → strategy set → strategy held (meetings "
                    "whose start time is in this window - matches BDS Call "
                    "Detail below). Disco Scheduled counts every 15-min "
                    "booked; Canceled / Rescheduled show the bookings that "
@@ -733,7 +733,7 @@ def render_executive(start: date, end: date) -> None:
                 "discovery_scheduled": "Disco Scheduled",
                 "canceled": "Canceled",
                 "rescheduled": "Rescheduled",
-                "discovery_held": "Discovery Held",
+                "discovery_held": "Discovery Show",
                 "strategy_booked": "Strategy Booked",
                 "set_rate": "Set %",
                 "strategy_held": "Strategy Held",

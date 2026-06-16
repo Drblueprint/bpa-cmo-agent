@@ -770,6 +770,9 @@ def render_sales(start: date, end: date) -> None:
         f"**Pick Up** = call answered. **Contact Made** = answered + "
         f"≥{cfg.AIRCALL_CONNECT_DURATION_SEC}s (real conversation, filters "
         "voicemail). **Booking %** = Appts Booked / Contacts Made. "
+        "**Sales Influenced** = closed-won deals (closedate in window) whose "
+        "contact's sdr_owner = this SDR — influence, not exclusive credit, so "
+        "one deal also credits its BDS and SME. "
         "**Team Total** row (bold) = sum across reps; rates recomputed from "
         "the totals."
     )
@@ -788,10 +791,22 @@ def render_sales(start: date, end: date) -> None:
         st.info("No SDR activity in this window.")
     else:
         display = sdr.copy()
+        # Sales Influenced: closed-won deals (in window) whose contact's
+        # sdr_owner = this SDR. rep_sales_rollup keys on the HubSpot sdr_owner
+        # id; SDR rows key on AirCall user_id → map via AIRCALL_TO_SDR_OWNER to
+        # the same owner id, then look up. (Double-counts across reps by design:
+        # a deal credits its SDR, its BDS, and its SME.)
+        _sdr_inf = rep_sales_rollup(_win_closed, by="sdr_owner")
+        _sdr_inf_map = dict(zip(_sdr_inf["rep_id"].astype(str), _sdr_inf["sales"])) \
+            if not _sdr_inf.empty else {}
+        display["sales_influenced"] = display["user_id"].map(
+            lambda uid: int(_sdr_inf_map.get(
+                str(cfg.AIRCALL_TO_SDR_OWNER.get(str(uid), "")), 0))
+        )
         display = team_total_row(
             display,
             sum_cols=["dials", "pick_ups", "contacts_made", "talk_time_min",
-                      "appointments_booked"],
+                      "appointments_booked", "sales_influenced"],
             rate_cols={"booking_rate": ("appointments_booked", "contacts_made")},
             label_col="user_name",
         )
@@ -803,7 +818,7 @@ def render_sales(start: date, end: date) -> None:
         )
         display = display[[
             "user_name", "dials", "pick_ups", "contacts_made", "talk_time_min",
-            "appointments_booked", "booking_rate",
+            "appointments_booked", "booking_rate", "sales_influenced",
             "median_speed_to_lead_min",
         ]].rename(columns={
             "user_name": "SDR",
@@ -813,6 +828,7 @@ def render_sales(start: date, end: date) -> None:
             "talk_time_min": "Talk Time (min)",
             "appointments_booked": "Appts Booked",
             "booking_rate": "Booking %",
+            "sales_influenced": "Sales Influenced",
             "median_speed_to_lead_min": "Median Speed",
         })
         st.dataframe(
@@ -917,10 +933,13 @@ def render_sales(start: date, end: date) -> None:
         "**start_time falls in this window**: **Disco Scheduled** = every "
         "15-min booked (including ones later canceled/rescheduled) · "
         "**Canceled** / **Rescheduled** = bookings that died (a rescheduled "
-        "lead's new meeting counts again when it lands) · **Disco Held** = "
-        "completed Discovery calls. Conversion math uses held calls only: "
-        "**Held %** = Held / Scheduled · **Booking %** = SME Booked / Held · "
-        "**DQ %** = Disqualified / Held. **Team Total** row (bold) = sum "
+        "lead's new meeting counts again when it lands) · **Discovery Show** = "
+        "completed Discovery calls. Conversion math uses shown calls only: "
+        "**Show %** = Discovery Show / Scheduled · **Booking %** = SME Booked / "
+        "Discovery Show · **DQ %** = Disqualified / Discovery Show. "
+        "**Sales Influenced** = closed-won deals (closedate in window) whose "
+        "contact's bds = this BDS — influence, not exclusive credit, so one "
+        "deal also credits its SDR and SME. **Team Total** row (bold) = sum "
         "across reps; rates recomputed from the totals. `(unassigned)` reps "
         "are excluded."
     )
@@ -936,6 +955,15 @@ def render_sales(start: date, end: date) -> None:
         st.info("No BDS activity in this window.")
     else:
         display = bds.copy()
+        # Sales Influenced: closed-won deals (in window) whose contact's bds =
+        # this BDS. rep_sales_rollup keys on the HubSpot bds id; BDS rows key on
+        # bds_id directly. (Double-counts across reps by design — a deal credits
+        # its SDR, its BDS, and its SME.)
+        _bds_inf = rep_sales_rollup(_win_closed, by="bds")
+        _bds_inf_map = dict(zip(_bds_inf["rep_id"].astype(str), _bds_inf["sales"])) \
+            if not _bds_inf.empty else {}
+        display["sales_influenced"] = display["bds_id"].astype(str).map(
+            _bds_inf_map).fillna(0).astype(int)
         # Drop SME-only owners (e.g. Dr. Eric Smith) — they are closers, not BDS.
         display = display[
             ~display["bds_id"].astype(str).isin(cfg.BDS_EXCLUDED_OWNERS)
@@ -945,7 +973,7 @@ def render_sales(start: date, end: date) -> None:
         display = team_total_row(
             display,
             sum_cols=["appointments", "canceled", "rescheduled", "shows",
-                      "sme_booked", "disqualified"],
+                      "sme_booked", "disqualified", "sales_influenced"],
             rate_cols={"show_rate": ("shows", "appointments"),
                        "booking_rate": ("sme_booked", "shows"),
                        "dq_rate": ("disqualified", "shows")},
@@ -959,12 +987,13 @@ def render_sales(start: date, end: date) -> None:
             "appointments": "Disco Scheduled",
             "canceled": "Canceled",
             "rescheduled": "Rescheduled",
-            "shows": "Disco Held",
+            "shows": "Discovery Show",
             "sme_booked": "SME Booked",
             "disqualified": "Disqualified",
-            "show_rate": "Held %",
+            "show_rate": "Show %",
             "booking_rate": "Booking %",
             "dq_rate": "DQ %",
+            "sales_influenced": "Sales Influenced",
         })
         st.dataframe(
             _style_perf_table(display, owner_cols=["BDS"], total_label_col="BDS"),
