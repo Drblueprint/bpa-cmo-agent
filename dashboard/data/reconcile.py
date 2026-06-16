@@ -1323,10 +1323,10 @@ def sales_sme_rollup(
     - appointments: contacts in this SME group with a Strategy meeting booked.
     - scheduled: contacts with ANY in-window Strategy booked (incl. dead);
       falls back to the cleaned booked set when meetings_all is None.
-    - no_show: scheduled Strategy meetings with a NO_SHOW outcome.
-    - canceled_bpa / canceled_prospect: cancels with a recorded source.
+    - no_show: contacts with a scheduled Strategy in a NO_SHOW outcome.
+    - canceled_bpa / canceled_prospect: contacts whose cancel has a recorded source.
     - canceled: ALL cancels (drives cancel_rate; includes generic CANCELED).
-    - rescheduled: scheduled Strategy meetings rescheduled.
+    - rescheduled: contacts with a scheduled Strategy rescheduled.
     - showed: Strategy meetings with COMPLETE outcome.
     - deals_closed: contacts with a deal in stages_closed_won.
     - first_closes: closed-won contacts with exactly 1 Strategy meeting at-or-
