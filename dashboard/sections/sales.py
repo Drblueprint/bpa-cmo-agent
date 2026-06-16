@@ -1086,11 +1086,13 @@ def render_sales(start: date, end: date) -> None:
         "meetings are excluded. **Sales** = closed-won deals (deal.amount) "
         "whose closedate (or stage-entry date for DIY/90-Day) is in window, "
         "by the SME on the deal. **Revenue** = sum of deal.amount. "
-        "**Close %** = Sales / Showed · **DQ %** = disqualified / showed. "
+        "**Close %** = Sales / Showed. "
         "Close % can exceed 100% when a rep closes deals from shows held in a "
         "prior window (Sales and Showed are different in-window sets). "
         "**Team Total** row (bold) = sum across reps; rates recomputed from "
-        "the totals. `(unassigned)` reps are excluded."
+        "the totals. `(unassigned)` reps are excluded. "
+        "Cancel % counts every cancellation; the BPA / Prospect columns show "
+        "those with a recorded source."
     )
     # Filter deals to those actually CLOSED in window so the rollup doesn't
     # count old closes that merely got hs_lastmodifieddate touched (which is
@@ -1122,6 +1124,7 @@ def render_sales(start: date, end: date) -> None:
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         stages_closed_won=cfg.STAGES_CLOSED_WON,
         stages_strategy_dq=cfg.STAGES_STRATEGY_DQ,
+        meetings_all=meetings_win_all,
     )
     if sme.empty:
         st.info("No SME activity in this window.")
@@ -1150,29 +1153,37 @@ def render_sales(start: date, end: date) -> None:
         ]
         display = team_total_row(
             display,
-            sum_cols=["appointments", "showed", "disqualified", "sales", "revenue"],
-            rate_cols={"show_rate": ("showed", "appointments"),
-                       "close_rate": ("sales", "showed"),
-                       "dq_rate": ("disqualified", "showed")},
+            sum_cols=["scheduled", "no_show", "canceled_bpa", "canceled_prospect",
+                      "rescheduled", "showed", "canceled", "sales", "revenue"],
+            rate_cols={"show_rate": ("showed", "scheduled"),
+                       "no_show_rate": ("no_show", "scheduled"),
+                       "cancel_rate": ("canceled", "scheduled"),
+                       "close_rate": ("sales", "showed")},
             label_col="sme_id",
         )
         display["show_rate"] = display["show_rate"].map(_fmt_pct)
+        display["no_show_rate"] = display["no_show_rate"].map(_fmt_pct)
+        display["cancel_rate"] = display["cancel_rate"].map(_fmt_pct)
         display["close_rate"] = display["close_rate"].map(_fmt_pct)
-        display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
         display["revenue"] = display["revenue"].map(_fmt_money)
         display = display[[
-            "sme_id", "appointments", "showed", "disqualified",
-            "sales", "revenue", "show_rate", "close_rate", "dq_rate",
+            "sme_id", "scheduled", "no_show", "canceled_bpa", "canceled_prospect",
+            "rescheduled", "showed", "show_rate", "no_show_rate", "cancel_rate",
+            "sales", "revenue", "close_rate",
         ]].rename(columns={
             "sme_id": "SME",
-            "appointments": "Appointments",
+            "scheduled": "Strategy Scheduled",
+            "no_show": "No-Show",
+            "canceled_bpa": "Cancel (BPA)",
+            "canceled_prospect": "Cancel (Prospect)",
+            "rescheduled": "Rescheduled",
             "showed": "Showed",
-            "disqualified": "DQ",
+            "show_rate": "Show %",
+            "no_show_rate": "No-Show %",
+            "cancel_rate": "Cancel %",
             "sales": "Sales",
             "revenue": "Revenue",
-            "show_rate": "Show %",
             "close_rate": "Close %",
-            "dq_rate": "DQ %",
         })
         st.dataframe(
             _style_perf_table(display, owner_cols=["SME"], total_label_col="SME"),
