@@ -761,6 +761,37 @@ def render_sales(start: date, end: date) -> None:
     except Exception:
         _win_label = f"**Window: {start} – {end}**"
 
+    # Per-deal closed table for the window, built from the YTD closed-won pull
+    # (deals_ytd) using the SAME closedate/stage-entry/createdate window logic as
+    # deals_for_sme. Sales/Revenue attribute by the deal's rep field (sme /
+    # sdr_owner / bds), independent of the marketing-lead set — fixes the SME
+    # "0 sales" bug where closers who opted in before the window never counted.
+    # Built ONCE here (before the SDR/BDS sections that consume it) so it is
+    # always assigned regardless of which sections render — otherwise referencing
+    # it in SDR/BDS while it is only assigned later (SME) raises UnboundLocalError.
+    _wc_cols = ["hs_id", "sme", "bds", "sdr_owner", "deal_amount"]
+    if not deals_ytd.empty:
+        _y_no_close = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
+        _y_cdt = pd.to_datetime(deals_ytd.get("closedate"), utc=True, errors="coerce").dt.date
+        _y_sed = (pd.to_datetime(deals_ytd["stage_entry_date"], utc=True, errors="coerce").dt.date
+                  if "stage_entry_date" in deals_ytd.columns
+                  else pd.Series([None] * len(deals_ytd), index=deals_ytd.index, dtype=object))
+        _y_cre = pd.to_datetime(deals_ytd.get("createdate"), utc=True, errors="coerce").dt.date
+        _y_m_close = _y_cdt.between(start, end)
+        _y_no_close_mask = deals_ytd["dealstage"].isin(_y_no_close) & _y_cdt.isna()
+        _y_m_stage = _y_no_close_mask & _y_sed.between(start, end)
+        _y_m_create = _y_no_close_mask & _y_sed.isna() & _y_cre.between(start, end)
+        _ytd_win_mask = _y_m_close | _y_m_stage | _y_m_create
+        _win_closed = build_closed_deals_table(
+            deals_ytd[_ytd_win_mask], contact_deals_ytd, contacts_ytd,
+            asset_to_group=cfg.ASSET_TO_GROUP,
+            group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+            source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+            stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        )
+    else:
+        _win_closed = pd.DataFrame(columns=_wc_cols)
+
     # ----- Section: SDR Performance (Wave 1 + Wave 2) -----
     st.subheader("SDR Performance")
     st.caption(
@@ -1056,6 +1087,8 @@ def render_sales(start: date, end: date) -> None:
         "whose closedate (or stage-entry date for DIY/90-Day) is in window, "
         "by the SME on the deal. **Revenue** = sum of deal.amount. "
         "**Close %** = Sales / Showed · **DQ %** = disqualified / showed. "
+        "Close % can exceed 100% when a rep closes deals from shows held in a "
+        "prior window (Sales and Showed are different in-window sets). "
         "**Team Total** row (bold) = sum across reps; rates recomputed from "
         "the totals. `(unassigned)` reps are excluded."
     )
@@ -1077,33 +1110,8 @@ def render_sales(start: date, end: date) -> None:
     else:
         deals_for_sme = deals
 
-    # Per-deal closed table for the window, built from the YTD closed-won pull
-    # (deals_ytd) using the SAME closedate/stage-entry/createdate window logic as
-    # deals_for_sme. Sales/Revenue attribute by the deal's rep field (sme /
-    # sdr_owner / bds), independent of the marketing-lead set — fixes the SME
-    # "0 sales" bug where closers who opted in before the window never counted.
-    _wc_cols = ["hs_id", "sme", "bds", "sdr_owner", "deal_amount"]
-    if not deals_ytd.empty:
-        _y_no_close = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
-        _y_cdt = pd.to_datetime(deals_ytd.get("closedate"), utc=True, errors="coerce").dt.date
-        _y_sed = (pd.to_datetime(deals_ytd["stage_entry_date"], utc=True, errors="coerce").dt.date
-                  if "stage_entry_date" in deals_ytd.columns
-                  else pd.Series([None] * len(deals_ytd), index=deals_ytd.index, dtype=object))
-        _y_cre = pd.to_datetime(deals_ytd.get("createdate"), utc=True, errors="coerce").dt.date
-        _y_m_close = _y_cdt.between(start, end)
-        _y_no_close_mask = deals_ytd["dealstage"].isin(_y_no_close) & _y_cdt.isna()
-        _y_m_stage = _y_no_close_mask & _y_sed.between(start, end)
-        _y_m_create = _y_no_close_mask & _y_sed.isna() & _y_cre.between(start, end)
-        _ytd_win_mask = _y_m_close | _y_m_stage | _y_m_create
-        _win_closed = build_closed_deals_table(
-            deals_ytd[_ytd_win_mask], contact_deals_ytd, contacts_ytd,
-            asset_to_group=cfg.ASSET_TO_GROUP,
-            group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
-            source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
-            stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
-        )
-    else:
-        _win_closed = pd.DataFrame(columns=_wc_cols)
+    # _win_closed (window closed-deals table) is built once near the top of
+    # render_sales, before the SDR/BDS sections, so it is available here too.
 
     sme = sales_sme_rollup(
         contacts=marketing_active,
@@ -1131,6 +1139,15 @@ def render_sales(start: date, end: date) -> None:
         display["revenue"] = display["sme_id"].astype(str).map(_rev_map).fillna(0.0)
         display["sme_id"] = display["sme_id"].map(cfg.resolve_owner)
         display = display[display["sme_id"] != "(unassigned)"].reset_index(drop=True)
+        # Recompute per-rep Close % from the new Sales (closed deals by SME) and
+        # Showed (in-window shows) so it cannot go stale against the rollup's old
+        # deals_closed/showed (which could show Sales=3 next to Close%=0%). None
+        # when showed==0 so _fmt_pct renders "—". The TEAM TOTAL row recomputes
+        # Close % from summed sales/showed via team_total_row's rate_cols below.
+        display["close_rate"] = [
+            (s / sh) if sh else None
+            for s, sh in zip(display["sales"], display["showed"])
+        ]
         display = team_total_row(
             display,
             sum_cols=["appointments", "showed", "disqualified", "sales", "revenue"],

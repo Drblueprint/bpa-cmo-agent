@@ -583,7 +583,7 @@ def render_executive(start: date, end: date) -> None:
             "leads_worked": "Leads Worked",
             "discovery_booked": "Discovery Booked",
             "schedule_rate": "Schedule %",
-            "discovery_held": "Discovery Held",
+            "discovery_held": "Discovery Show",
             "show_rate": "Show %",
         })
         st.dataframe(sdr_display, use_container_width=True, hide_index=True)
