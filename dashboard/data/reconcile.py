@@ -1189,7 +1189,8 @@ def sales_bds_rollup(
     prospect, and book the Strategy when qualified.
 
     Columns: bds_id, appointments, canceled, rescheduled, shows, sme_booked,
-             disqualified, show_rate, booking_rate, dq_rate.
+             disqualified, show_rate, booking_rate, dq_rate, no_show,
+             no_show_rate.
 
     `meetings` should be the CLEANED frame (canceled/rescheduled removed) -
     it drives shows and all conversion math. `meetings_all`, when given, is
@@ -1212,7 +1213,7 @@ def sales_bds_rollup(
     """
     cols = ["bds_id", "appointments", "canceled", "rescheduled", "shows",
             "sme_booked", "disqualified", "show_rate", "booking_rate",
-            "dq_rate"]
+            "dq_rate", "no_show", "no_show_rate"]
     if contacts.empty:
         return pd.DataFrame(columns=cols)
 
@@ -1239,6 +1240,7 @@ def sales_bds_rollup(
     # Funnel-entry sets from the all-outcomes frame (when provided).
     canceled_ids: set = set()
     rescheduled_ids: set = set()
+    no_show_ids: set = set()
     if meetings_all is not None and not meetings_all.empty:
         types_a = meetings_all["activity_type"].fillna("").astype(str).str.lower()
         fifteen_a = meetings_all[discovery_mask(types_a)]
@@ -1251,6 +1253,10 @@ def sales_bds_rollup(
             )
             rescheduled_ids = set(
                 fifteen_a.loc[out_a.str.startswith("RESCHEDULED"), "contact_id"].astype(str)
+            )
+            norm_a = out_a.str.replace("-", " ", regex=False).str.replace("_", " ", regex=False)
+            no_show_ids = set(
+                fifteen_a.loc[norm_a.str.startswith("NO SHOW"), "contact_id"].astype(str)
             )
     else:
         booked_15_ids = clean_15_ids
@@ -1266,6 +1272,7 @@ def sales_bds_rollup(
         shows = len(ids & held_15_ids)
         sme_booked = len(ids & held_15_ids & booked_strat_ids)
         dq = len(ids & held_15_ids & dq_contact_ids)
+        no_show = len(ids & no_show_ids)
         rows.append({
             "bds_id": str(bds_id) if pd.notna(bds_id) else "",
             "appointments": appts,
@@ -1277,6 +1284,8 @@ def sales_bds_rollup(
             "show_rate": _safe_div(shows, appts),
             "booking_rate": _safe_div(sme_booked, shows),
             "dq_rate": _safe_div(dq, shows),
+            "no_show": no_show,
+            "no_show_rate": _safe_div(no_show, appts),
         })
     return pd.DataFrame(rows, columns=cols).sort_values(
         "appointments", ascending=False

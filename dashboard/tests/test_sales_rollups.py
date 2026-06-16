@@ -687,6 +687,57 @@ def test_sme_rollup_backward_compat_without_meetings_all():
     assert row["rescheduled"] == 0
 
 
+def test_bds_rollup_no_show_from_meetings_all():
+    """meetings_all drives a no_show column on discovery; no_show_rate =
+    no_show / appointments."""
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "bds": "b1"},   # held
+        {"hs_id": "2", "bds": "b1"},   # no-show
+        {"hs_id": "3", "bds": "b1"},   # canceled
+    ])
+    meetings_clean = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-06-02T00:00:00Z"},
+    ])
+    meetings_all = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETE - QUALIFIED", "start_time": "2026-06-02T00:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "NO_SHOW", "start_time": "2026-06-03T00:00:00Z"},
+        {"meeting_id": "m3", "contact_id": "3", "activity_type": "15 min call",
+         "outcome": "CANCELED", "start_time": "2026-06-04T00:00:00Z"},
+    ])
+    r = sales_bds_rollup(
+        contacts=contacts, meetings=meetings_clean,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage"]),
+        stages_15min_dq=set(), meetings_all=meetings_all,
+    )
+    row = r.iloc[0]
+    assert row["appointments"] == 3
+    assert row["no_show"] == 1
+    assert row["no_show_rate"] == 1 / 3
+
+
+def test_bds_rollup_no_show_backward_compat():
+    """Without meetings_all: no_show == 0 (no all-outcomes frame to read)."""
+    contacts = pd.DataFrame([{"hs_id": "c1", "bds": "44815718"}])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "c1", "activity_type": "15 min call",
+         "outcome": "COMPLETE", "start_time": "2026-05-20T15:00:00Z"},
+    ])
+    out = sales_bds_rollup(
+        contacts=contacts, meetings=meetings,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        stages_15min_dq=set(),
+    )
+    row = out.iloc[0]
+    assert row["appointments"] == 1
+    assert row["no_show"] == 0
+    assert row["no_show_rate"] == 0.0     # 0 no-shows / 1 appointment
+
+
 def test_rep_sales_rollup():
     from dashboard.data.reconcile import rep_sales_rollup
     # closed-deals-table shape (build_closed_deals_table output subset)
