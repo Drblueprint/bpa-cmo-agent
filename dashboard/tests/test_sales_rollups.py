@@ -566,6 +566,127 @@ def test_sales_bds_rollup_counts_protocol_mapping_call():
     assert by_bds.loc["44815718", "shows"] == 1
 
 
+def test_sme_rollup_outcome_funnel_with_meetings_all():
+    """meetings_all drives the strategy outcome funnel: scheduled counts dead
+    meetings; no_show / canceled_bpa / canceled_prospect / rescheduled attribute
+    to the right rep; canceled = total cancels; cancel_rate uses the total;
+    show_rate = showed / scheduled."""
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "sme": "S1", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "c2", "sme": "S1", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "c3", "sme": "S1", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "c4", "sme": "S1", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "c5", "sme": "S1", "typeform_asset_download": "Top 10 typeform"},
+    ])
+    # cleaned frame: only the held strategy survives
+    meetings_clean = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "c1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE", "start_time": "2026-06-02T00:00:00Z"},
+    ])
+    # all-outcomes frame: one of each outcome
+    meetings_all = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "c1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE", "start_time": "2026-06-02T00:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "c2", "activity_type": "Strategy Call",
+         "outcome": "NO_SHOW", "start_time": "2026-06-03T00:00:00Z"},
+        {"meeting_id": "m3", "contact_id": "c3", "activity_type": "Strategy Call",
+         "outcome": "CANCELLED - BY BPA", "start_time": "2026-06-04T00:00:00Z"},
+        {"meeting_id": "m4", "contact_id": "c4", "activity_type": "Strategy Call",
+         "outcome": "CANCELLED - BY PROSPECT", "start_time": "2026-06-05T00:00:00Z"},
+        {"meeting_id": "m5", "contact_id": "c5", "activity_type": "Strategy Call",
+         "outcome": "RESCHEDULED - HAS BOFU", "start_time": "2026-06-06T00:00:00Z"},
+    ])
+    out = sales_sme_rollup(
+        contacts=contacts, meetings=meetings_clean,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+        stages_strategy_dq=set(),
+        meetings_all=meetings_all,
+    )
+    row = out.iloc[0]
+    assert row["scheduled"] == 5            # all 5 incl. dead meetings
+    assert row["no_show"] == 1
+    assert row["canceled_bpa"] == 1
+    assert row["canceled_prospect"] == 1
+    assert row["canceled"] == 2            # total cancels (bpa + prospect)
+    assert row["rescheduled"] == 1
+    assert row["showed"] == 1
+    assert row["no_show_rate"] == 1 / 5
+    assert row["cancel_rate"] == 2 / 5
+    assert row["reschedule_rate"] == 1 / 5
+    assert row["show_rate"] == 1 / 5      # showed / scheduled
+
+
+def test_sme_rollup_generic_cancel_in_total_only():
+    """A generic CANCELED (no BPA/Prospect) counts in canceled/cancel_rate but
+    not in the two split columns."""
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "sme": "S1", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "c2", "sme": "S1", "typeform_asset_download": "Top 10 typeform"},
+    ])
+    meetings_clean = pd.DataFrame(columns=[
+        "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
+    ])
+    meetings_all = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "c1", "activity_type": "Strategy Call",
+         "outcome": "CANCELED", "start_time": "2026-06-03T00:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "c2", "activity_type": "Strategy Call",
+         "outcome": "CANCELLED - BY BPA", "start_time": "2026-06-04T00:00:00Z"},
+    ])
+    out = sales_sme_rollup(
+        contacts=contacts, meetings=meetings_clean,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+        stages_strategy_dq=set(),
+        meetings_all=meetings_all,
+    )
+    row = out.iloc[0]
+    assert row["scheduled"] == 2
+    assert row["canceled"] == 2            # both cancels in total
+    assert row["canceled_bpa"] == 1        # only the BPA one
+    assert row["canceled_prospect"] == 0   # generic CANCELED not in split
+    assert row["cancel_rate"] == 2 / 2
+
+
+def test_sme_rollup_backward_compat_without_meetings_all():
+    """Without meetings_all: scheduled == appointments, show_rate unchanged,
+    new count columns all 0."""
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "sme": "77643349", "typeform_asset_download": "Top 10 typeform"},
+        {"hs_id": "c2", "sme": "77643349", "typeform_asset_download": "Top 10 typeform"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "c1", "activity_type": "Strategy Call",
+         "outcome": "COMPLETE", "start_time": "2026-05-20T15:00:00Z"},
+        {"meeting_id": "m2", "contact_id": "c2", "activity_type": "Strategy Call",
+         "outcome": "SCHEDULED", "start_time": "2026-05-21T15:00:00Z"},
+    ])
+    out = sales_sme_rollup(
+        contacts=contacts, meetings=meetings,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 47928.0},
+        stages_closed_won={"closedwon"},
+        stages_strategy_dq=set(),
+    )
+    row = out.iloc[0]
+    assert row["scheduled"] == row["appointments"] == 2
+    assert row["showed"] == 1
+    assert row["show_rate"] == 1 / 2       # unchanged: showed / appointments
+    assert row["no_show"] == 0
+    assert row["canceled"] == 0
+    assert row["canceled_bpa"] == 0
+    assert row["canceled_prospect"] == 0
+    assert row["rescheduled"] == 0
+
+
 def test_rep_sales_rollup():
     from dashboard.data.reconcile import rep_sales_rollup
     # closed-deals-table shape (build_closed_deals_table output subset)

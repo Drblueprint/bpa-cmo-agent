@@ -1293,6 +1293,7 @@ def sales_sme_rollup(
     group_default_amount: dict,
     stages_closed_won,
     stages_strategy_dq: set,
+    meetings_all: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Per-SME rollup with appointments + DQ + first/FU close split.
 
@@ -1300,9 +1301,23 @@ def sales_sme_rollup(
 
     Columns: sme_id, appointments, showed, deals_closed, first_closes,
              fu_closes, disqualified, show_rate, close_rate,
-             first_close_rate, fu_close_rate, dq_rate, revenue.
+             first_close_rate, fu_close_rate, dq_rate, revenue, scheduled,
+             no_show, canceled_bpa, canceled_prospect, canceled, rescheduled,
+             no_show_rate, cancel_rate, reschedule_rate.
+
+    `meetings_all`, when given, is the same window WITHOUT the cleaning
+    (canceled/rescheduled removed) and drives the strategy outcome funnel
+    columns so dead bookings stay visible. When None, scheduled falls back to
+    the cleaned booked set, so show_rate (= showed / scheduled) is unchanged
+    for existing callers.
 
     - appointments: contacts in this SME group with a Strategy meeting booked.
+    - scheduled: contacts with ANY in-window Strategy booked (incl. dead);
+      falls back to the cleaned booked set when meetings_all is None.
+    - no_show: scheduled Strategy meetings with a NO_SHOW outcome.
+    - canceled_bpa / canceled_prospect: cancels with a recorded source.
+    - canceled: ALL cancels (drives cancel_rate; includes generic CANCELED).
+    - rescheduled: scheduled Strategy meetings rescheduled.
     - showed: Strategy meetings with COMPLETE outcome.
     - deals_closed: contacts with a deal in stages_closed_won.
     - first_closes: closed-won contacts with exactly 1 Strategy meeting at-or-
@@ -1311,18 +1326,22 @@ def sales_sme_rollup(
       the closedate (a closing/follow-up call happened after the first
       Strategy).
     - disqualified: contacts with a deal in stages_strategy_dq.
-    - show_rate: showed / appointments.
+    - show_rate: showed / scheduled (= showed / appointments when meetings_all
+      is None).
     - close_rate: deals_closed / showed.
     - first_close_rate: first_closes / showed.
     - fu_close_rate: fu_closes / showed.
     - dq_rate: disqualified / showed.
+    - no_show_rate / cancel_rate / reschedule_rate: that count / scheduled.
     - revenue: sum of effective deal amounts (Option C — deal.amount with
       group_default_amount fallback).
     """
     cols = ["sme_id", "appointments", "showed", "deals_closed",
             "first_closes", "fu_closes", "disqualified",
             "show_rate", "close_rate", "first_close_rate", "fu_close_rate",
-            "dq_rate", "revenue"]
+            "dq_rate", "revenue", "scheduled", "no_show", "canceled_bpa",
+            "canceled_prospect", "canceled", "rescheduled", "no_show_rate",
+            "cancel_rate", "reschedule_rate"]
     if contacts.empty:
         return pd.DataFrame(columns=cols)
 
@@ -1343,6 +1362,32 @@ def sales_sme_rollup(
     else:
         booked_strat_ids = set()
         held_strat_ids = set()
+
+    # Strategy outcome-funnel sets from the all-outcomes frame (when provided).
+    # Mirrors the BDS all-outcomes block. Falls back to the cleaned booked set
+    # so existing callers (no meetings_all) get scheduled == appointments and
+    # an unchanged show_rate.
+    sched_strat_ids: set = set()
+    no_show_ids: set = set()
+    canceled_ids: set = set()          # ALL cancels -> drives cancel_rate
+    canceled_bpa_ids: set = set()
+    canceled_prospect_ids: set = set()
+    rescheduled_ids: set = set()
+    if meetings_all is not None and not meetings_all.empty:
+        types_a = meetings_all["activity_type"].fillna("").astype(str).str.lower()
+        strat_a = meetings_all[types_a.str.contains("strategy", na=False)]
+        if not strat_a.empty:
+            sched_strat_ids = set(strat_a["contact_id"].astype(str))
+            out_a = strat_a["outcome"].fillna("").astype(str).str.upper().str.strip()
+            norm = out_a.str.replace("-", " ", regex=False).str.replace("_", " ", regex=False)
+            no_show_ids = set(strat_a.loc[norm.str.startswith("NO SHOW"), "contact_id"].astype(str))
+            is_cancel = out_a.str.startswith("CANCEL")
+            canceled_ids = set(strat_a.loc[is_cancel, "contact_id"].astype(str))
+            canceled_bpa_ids = set(strat_a.loc[is_cancel & out_a.str.contains("BPA"), "contact_id"].astype(str))
+            canceled_prospect_ids = set(strat_a.loc[is_cancel & out_a.str.contains("PROSPECT"), "contact_id"].astype(str))
+            rescheduled_ids = set(strat_a.loc[out_a.str.startswith("RESCHEDULED"), "contact_id"].astype(str))
+    else:
+        sched_strat_ids = booked_strat_ids   # cleaned booked = best available fallback
 
     # Closed-won + revenue (Option C)
     won_set = set(stages_closed_won)
@@ -1436,7 +1481,13 @@ def sales_sme_rollup(
     for sme_id, grp in contacts.groupby("sme", dropna=False):
         cids = set(grp["hs_id"].astype(str))
         appts = len(cids & booked_strat_ids)
+        sched = len(cids & sched_strat_ids)
         showed = len(cids & held_strat_ids)
+        no_show = len(cids & no_show_ids)
+        c_bpa = len(cids & canceled_bpa_ids)
+        c_pro = len(cids & canceled_prospect_ids)
+        c_all = len(cids & canceled_ids)
+        resched = len(cids & rescheduled_ids)
         closed = len(cids & won_contact_ids)
         first_c = len(cids & first_close_contact_ids)
         fu_c = len(cids & fu_close_contact_ids)
@@ -1450,12 +1501,21 @@ def sales_sme_rollup(
             "first_closes": first_c,
             "fu_closes": fu_c,
             "disqualified": dq,
-            "show_rate": _safe_div(showed, appts),
+            "show_rate": _safe_div(showed, sched),
             "close_rate": _safe_div(closed, showed),
             "first_close_rate": _safe_div(first_c, showed),
             "fu_close_rate": _safe_div(fu_c, showed),
             "dq_rate": _safe_div(dq, showed),
             "revenue": rev,
+            "scheduled": sched,
+            "no_show": no_show,
+            "canceled_bpa": c_bpa,
+            "canceled_prospect": c_pro,
+            "canceled": c_all,
+            "rescheduled": resched,
+            "no_show_rate": _safe_div(no_show, sched),
+            "cancel_rate": _safe_div(c_all, sched),
+            "reschedule_rate": _safe_div(resched, sched),
         })
     return pd.DataFrame(rows, columns=cols).sort_values(
         "revenue", ascending=False
