@@ -1003,25 +1003,33 @@ def render_sales(start: date, end: date) -> None:
         display = display[display["bds_id"] != "(unassigned)"].reset_index(drop=True)
         display = team_total_row(
             display,
-            sum_cols=["appointments", "canceled", "rescheduled", "shows",
+            sum_cols=["appointments", "no_show", "canceled", "rescheduled", "shows",
                       "sme_booked", "disqualified", "sales_influenced"],
             rate_cols={"show_rate": ("shows", "appointments"),
+                       "no_show_rate": ("no_show", "appointments"),
                        "booking_rate": ("sme_booked", "shows"),
                        "dq_rate": ("disqualified", "shows")},
             label_col="bds_id",
         )
         display["show_rate"] = display["show_rate"].map(_fmt_pct)
+        display["no_show_rate"] = display["no_show_rate"].map(_fmt_pct)
         display["booking_rate"] = display["booking_rate"].map(_fmt_pct)
         display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
-        display = display.rename(columns={
+        display = display[[
+            "bds_id", "appointments", "no_show", "canceled", "rescheduled",
+            "shows", "sme_booked", "disqualified", "show_rate", "no_show_rate",
+            "booking_rate", "dq_rate", "sales_influenced",
+        ]].rename(columns={
             "bds_id": "BDS",
             "appointments": "Disco Scheduled",
+            "no_show": "No-Show",
             "canceled": "Canceled",
             "rescheduled": "Rescheduled",
             "shows": "Discovery Show",
             "sme_booked": "SME Booked",
             "disqualified": "Disqualified",
             "show_rate": "Show %",
+            "no_show_rate": "No-Show %",
             "booking_rate": "Booking %",
             "dq_rate": "DQ %",
             "sales_influenced": "Sales Influenced",
