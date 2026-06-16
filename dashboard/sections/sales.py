@@ -21,6 +21,7 @@ from dashboard.data.reconcile import (
     compute_speed_to_lead,
     discovery_mask,
     drop_dead_meetings,
+    rep_sales_rollup,
     sales_bds_rollup,
     sales_sdr_rollup,
     sales_sme_rollup,
@@ -1022,11 +1023,10 @@ def render_sales(start: date, end: date) -> None:
     st.caption(
         f"{_win_label}. Strategy meetings whose **start_time falls in this "
         "window**, grouped by the SME assigned. Canceled and rescheduled "
-        "meetings are excluded. Deals closed = won deals "
-        "whose closedate (or stage-entry date for DIY/90-Day) is in window. "
-        "**First Close** = closed on the first Strategy call · **FU Close** "
-        "= closed after a follow-up call. **Close %** = total closed / "
-        "showed · **DQ %** = disqualified / showed. "
+        "meetings are excluded. **Sales** = closed-won deals (deal.amount) "
+        "whose closedate (or stage-entry date for DIY/90-Day) is in window, "
+        "by the SME on the deal. **Revenue** = sum of deal.amount. "
+        "**Close %** = Sales / Showed · **DQ %** = disqualified / showed. "
         "**Team Total** row (bold) = sum across reps; rates recomputed from "
         "the totals. `(unassigned)` reps are excluded."
     )
@@ -1047,6 +1047,35 @@ def render_sales(start: date, end: date) -> None:
         deals_for_sme = deals[_m_close | _m_stage | _m_create]
     else:
         deals_for_sme = deals
+
+    # Per-deal closed table for the window, built from the YTD closed-won pull
+    # (deals_ytd) using the SAME closedate/stage-entry/createdate window logic as
+    # deals_for_sme. Sales/Revenue attribute by the deal's rep field (sme /
+    # sdr_owner / bds), independent of the marketing-lead set — fixes the SME
+    # "0 sales" bug where closers who opted in before the window never counted.
+    _wc_cols = ["hs_id", "sme", "bds", "sdr_owner", "deal_amount"]
+    if not deals_ytd.empty:
+        _y_no_close = set(cfg.STAGES_CLOSED_WON_NO_CLOSEDATE)
+        _y_cdt = pd.to_datetime(deals_ytd.get("closedate"), utc=True, errors="coerce").dt.date
+        _y_sed = (pd.to_datetime(deals_ytd["stage_entry_date"], utc=True, errors="coerce").dt.date
+                  if "stage_entry_date" in deals_ytd.columns
+                  else pd.Series([None] * len(deals_ytd), index=deals_ytd.index, dtype=object))
+        _y_cre = pd.to_datetime(deals_ytd.get("createdate"), utc=True, errors="coerce").dt.date
+        _y_m_close = _y_cdt.between(start, end)
+        _y_no_close_mask = deals_ytd["dealstage"].isin(_y_no_close) & _y_cdt.isna()
+        _y_m_stage = _y_no_close_mask & _y_sed.between(start, end)
+        _y_m_create = _y_no_close_mask & _y_sed.isna() & _y_cre.between(start, end)
+        _ytd_win_mask = _y_m_close | _y_m_stage | _y_m_create
+        _win_closed = build_closed_deals_table(
+            deals_ytd[_ytd_win_mask], contact_deals_ytd, contacts_ytd,
+            asset_to_group=cfg.ASSET_TO_GROUP,
+            group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+            source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+            stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        )
+    else:
+        _win_closed = pd.DataFrame(columns=_wc_cols)
+
     sme = sales_sme_rollup(
         contacts=marketing_active,
         meetings=meetings,
@@ -1060,45 +1089,44 @@ def render_sales(start: date, end: date) -> None:
     if sme.empty:
         st.info("No SME activity in this window.")
     else:
+        # Keep the meeting funnel (appointments/showed/DQ) from sales_sme_rollup;
+        # source Sales (count) + Revenue from the closed-deals table grouped by
+        # the deal's SME (the closer), not the marketing-lead intersection.
         display = sme.copy()
+        _sme_sales = rep_sales_rollup(_win_closed, by="sme")
+        _sales_map = dict(zip(_sme_sales["rep_id"].astype(str), _sme_sales["sales"])) \
+            if not _sme_sales.empty else {}
+        _rev_map = dict(zip(_sme_sales["rep_id"].astype(str), _sme_sales["revenue"])) \
+            if not _sme_sales.empty else {}
+        display["sales"] = display["sme_id"].astype(str).map(_sales_map).fillna(0).astype(int)
+        display["revenue"] = display["sme_id"].astype(str).map(_rev_map).fillna(0.0)
         display["sme_id"] = display["sme_id"].map(cfg.resolve_owner)
         display = display[display["sme_id"] != "(unassigned)"].reset_index(drop=True)
         display = team_total_row(
             display,
-            sum_cols=["appointments", "showed", "deals_closed", "first_closes",
-                      "fu_closes", "disqualified", "revenue"],
+            sum_cols=["appointments", "showed", "disqualified", "sales", "revenue"],
             rate_cols={"show_rate": ("showed", "appointments"),
-                       "close_rate": ("deals_closed", "showed"),
-                       "first_close_rate": ("first_closes", "showed"),
-                       "fu_close_rate": ("fu_closes", "showed"),
+                       "close_rate": ("sales", "showed"),
                        "dq_rate": ("disqualified", "showed")},
             label_col="sme_id",
         )
         display["show_rate"] = display["show_rate"].map(_fmt_pct)
         display["close_rate"] = display["close_rate"].map(_fmt_pct)
-        display["first_close_rate"] = display["first_close_rate"].map(_fmt_pct)
-        display["fu_close_rate"] = display["fu_close_rate"].map(_fmt_pct)
         display["dq_rate"] = display["dq_rate"].map(_fmt_pct)
         display["revenue"] = display["revenue"].map(_fmt_money)
         display = display[[
-            "sme_id", "appointments", "showed", "deals_closed",
-            "first_closes", "fu_closes", "disqualified",
-            "show_rate", "close_rate", "first_close_rate", "fu_close_rate",
-            "dq_rate", "revenue",
+            "sme_id", "appointments", "showed", "disqualified",
+            "sales", "revenue", "show_rate", "close_rate", "dq_rate",
         ]].rename(columns={
             "sme_id": "SME",
             "appointments": "Appointments",
             "showed": "Showed",
-            "deals_closed": "Closed",
-            "first_closes": "First Close",
-            "fu_closes": "FU Close",
             "disqualified": "DQ",
+            "sales": "Sales",
+            "revenue": "Revenue",
             "show_rate": "Show %",
             "close_rate": "Close %",
-            "first_close_rate": "First %",
-            "fu_close_rate": "FU %",
             "dq_rate": "DQ %",
-            "revenue": "Revenue",
         })
         st.dataframe(
             _style_perf_table(display, owner_cols=["SME"], total_label_col="SME"),
