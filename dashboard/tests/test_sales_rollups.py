@@ -564,3 +564,25 @@ def test_sales_bds_rollup_counts_protocol_mapping_call():
     by_bds = out.set_index("bds_id")
     assert by_bds.loc["44815718", "appointments"] == 1
     assert by_bds.loc["44815718", "shows"] == 1
+
+
+def test_rep_sales_rollup():
+    from dashboard.data.reconcile import rep_sales_rollup
+    # closed-deals-table shape (build_closed_deals_table output subset)
+    cdt = pd.DataFrame([
+        {"hs_id": "1", "sme": "S1", "bds": "B1", "sdr_owner": "D1", "deal_amount": 47928.0},
+        {"hs_id": "2", "sme": "S1", "bds": "B2", "sdr_owner": "D1", "deal_amount": 5991.0},
+        {"hs_id": "3", "sme": "S2", "bds": "B1", "sdr_owner": "",   "deal_amount": 40000.0},
+    ])
+    by_sme = rep_sales_rollup(cdt, by="sme")
+    r = {x["rep_id"]: x for _, x in by_sme.iterrows()}
+    assert r["S1"]["sales"] == 2 and r["S1"]["revenue"] == 47928.0 + 5991.0
+    assert r["S2"]["sales"] == 1 and r["S2"]["revenue"] == 40000.0
+    by_sdr = rep_sales_rollup(cdt, by="sdr_owner")
+    rs = {x["rep_id"]: x for _, x in by_sdr.iterrows()}
+    assert rs["D1"]["sales"] == 2
+    # blank rep id is dropped (no "" row)
+    assert "" not in rs
+    # empty table -> empty frame with the right columns
+    empty = rep_sales_rollup(pd.DataFrame(columns=["sme", "deal_amount"]), by="sme")
+    assert list(empty.columns) == ["rep_id", "sales", "revenue"] and empty.empty

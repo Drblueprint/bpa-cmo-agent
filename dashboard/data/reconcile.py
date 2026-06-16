@@ -1462,6 +1462,32 @@ def sales_sme_rollup(
     ).reset_index(drop=True)
 
 
+def rep_sales_rollup(closed_deals_table: pd.DataFrame, *, by: str) -> pd.DataFrame:
+    """Sales count + revenue per rep, from the closed-deals table.
+
+    `by` is the rep column to group on: "sme" (the closer), "sdr_owner"
+    (the lead's SDR — 'sales influenced'), or "bds". Revenue = sum of
+    deal_amount (HubSpot deal.amount). Blank/NaN rep ids are dropped.
+    Columns: rep_id, sales, revenue. Sorted by sales desc.
+    """
+    cols = ["rep_id", "sales", "revenue"]
+    if closed_deals_table is None or closed_deals_table.empty or by not in closed_deals_table.columns:
+        return pd.DataFrame(columns=cols)
+    t = closed_deals_table.copy()
+    t["_rep"] = t[by].fillna("").astype(str).str.strip()
+    t = t[t["_rep"] != ""]
+    if t.empty:
+        return pd.DataFrame(columns=cols)
+    t["_amt"] = pd.to_numeric(t["deal_amount"], errors="coerce").fillna(0.0)
+    g = t.groupby("_rep")
+    out = pd.DataFrame({
+        "rep_id": list(g.groups.keys()),
+        "sales": g.size().values,
+        "revenue": g["_amt"].sum().values,
+    })
+    return out.sort_values("sales", ascending=False).reset_index(drop=True)
+
+
 def asset_performance_rollup(
     contacts: pd.DataFrame,
     meetings: pd.DataFrame,
