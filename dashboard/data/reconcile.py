@@ -2118,6 +2118,26 @@ def weekly_metrics(
             mask = mask & m_outcomes.str.startswith("COMPLETE")
         return int(mask.sum())
 
+    def _meetings_count_groups(groups: set[str], start: date, end: date,
+                               *, completed_only: bool = False) -> int:
+        """Discovery (15-min / protocol-mapping) meetings booked in window for
+        contacts whose group is in `groups`. Used for the combined DTI funnel."""
+        if meetings.empty or contacts.empty:
+            return 0
+        group_contact_ids = set(
+            contacts.loc[contacts["group"].isin(groups), "hs_id"].astype(str)
+        )
+        if not group_contact_ids:
+            return 0
+        mask = (
+            discovery_mask(m_types)
+            & m_start.between(start, end)
+            & meetings["contact_id"].astype(str).isin(group_contact_ids)
+        )
+        if completed_only:
+            mask = mask & m_outcomes.str.startswith("COMPLETE")
+        return int(mask.sum())
+
     def _deals_won_in_week(start: date, end: date,
                            stages_override: set[str] | None = None) -> int:
         if deals.empty:
@@ -2217,6 +2237,13 @@ def weekly_metrics(
                 weekly_values.append(_fb_leads("TheraRay", ws, we))
             elif metric_id == "theraray_15min_scheduled":
                 weekly_values.append(_meetings_count_group("15 min", "TheraRay", ws, we))
+            elif metric_id == "dti_15min_scheduled":
+                weekly_values.append(
+                    _meetings_count_groups({"TheraRay", "NLAP"}, ws, we))
+            elif metric_id == "dti_discovery_completed":
+                weekly_values.append(
+                    _meetings_count_groups({"TheraRay", "NLAP"}, ws, we,
+                                           completed_only=True))
             elif metric_id == "emx_ad_spend":
                 weekly_values.append(_fb_sum("EMX", "spend", ws, we))
             elif metric_id == "emx_leads":
