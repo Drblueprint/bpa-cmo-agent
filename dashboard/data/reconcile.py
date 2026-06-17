@@ -1924,9 +1924,9 @@ from datetime import date, datetime, timedelta, timezone  # noqa: E402
 
 # Metric label registry — keep aligned with config.METRICS_GOALS keys.
 _METRIC_LABELS: dict[str, str] = {
-    "chiro_ad_spend": "Chiro - Ad Spend (incl. EMX)",
-    "chiro_link_clicks": "Chiro - Link Clicks (incl. EMX)",
-    "chiro_cpc": "Chiro - Cost-Per-Click (incl. EMX)",
+    "chiro_ad_spend": "Chiro - Ad Spend (incl. EMX + DTI)",
+    "chiro_link_clicks": "Chiro - Link Clicks (incl. EMX + DTI)",
+    "chiro_cpc": "Chiro - Cost-Per-Click (incl. EMX + DTI)",
     "chiro_lead_magnet_optins": "Chiro - Lead Magnet Opt-Ins (incl. EMX)",
     "chiro_new_leads": "Chiro - New Leads (incl. EMX)",
     "theraray_submissions": "DTI (TheraRay Leads)",
@@ -2209,17 +2209,29 @@ def weekly_metrics(
                 weekly_values.append(
                     _fb_sum("Chiro", "spend", ws, we)
                     + _fb_sum("EMX", "spend", ws, we)
+                    + _fb_sum("TheraRay", "spend", ws, we)
+                    + _fb_sum("NLAP", "spend", ws, we)
                 )
             elif metric_id == "chiro_link_clicks":
                 weekly_values.append(
                     _fb_clicks("Chiro", ws, we)
                     + _fb_clicks("EMX", ws, we)
+                    + _fb_clicks("TheraRay", ws, we)
+                    + _fb_clicks("NLAP", ws, we)
                 )
             elif metric_id == "chiro_cpc":
-                spend = (_fb_sum("Chiro", "spend", ws, we)
-                         + _fb_sum("EMX", "spend", ws, we))
-                clicks = (_fb_clicks("Chiro", ws, we)
-                          + _fb_clicks("EMX", ws, we))
+                spend = (
+                    _fb_sum("Chiro", "spend", ws, we)
+                    + _fb_sum("EMX", "spend", ws, we)
+                    + _fb_sum("TheraRay", "spend", ws, we)
+                    + _fb_sum("NLAP", "spend", ws, we)
+                )
+                clicks = (
+                    _fb_clicks("Chiro", ws, we)
+                    + _fb_clicks("EMX", ws, we)
+                    + _fb_clicks("TheraRay", ws, we)
+                    + _fb_clicks("NLAP", ws, we)
+                )
                 weekly_values.append(spend / clicks if clicks else 0.0)
             elif metric_id == "chiro_lead_magnet_optins":
                 weekly_values.append(

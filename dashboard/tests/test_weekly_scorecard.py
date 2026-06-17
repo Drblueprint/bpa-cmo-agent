@@ -48,9 +48,9 @@ def _contacts(rows):
 WEEK = (date(2026, 6, 8), date(2026, 6, 14))
 
 
-def _run(contacts, *, meetings=None, bofu=None):
+def _run(contacts, *, meetings=None, bofu=None, fb=None):
     return weekly_metrics(
-        fb=pd.DataFrame(),
+        fb=fb if fb is not None else pd.DataFrame(),
         contacts=contacts,
         meetings=meetings if meetings is not None else pd.DataFrame(
             columns=["meeting_id", "contact_id", "activity_type", "outcome", "start_time"]),
@@ -128,3 +128,17 @@ def test_bofu_direct_excludes_webinar_registrants():
     r = _run(contacts, bofu=bofu)
     assert r.loc["bofu_submissions_total", "w0"] == 3
     assert r.loc["bofu_submissions_direct", "w0"] == 1
+
+
+def test_chiro_ad_spend_clicks_include_all_paid_groups():
+    fb = pd.DataFrame([
+        {"group": "Chiro", "spend": 100.0, "inline_link_clicks": 10, "fb_leads": 5, "date_start": "2026-06-09"},
+        {"group": "EMX", "spend": 50.0, "inline_link_clicks": 5, "fb_leads": 2, "date_start": "2026-06-10"},
+        {"group": "TheraRay", "spend": 40.0, "inline_link_clicks": 4, "fb_leads": 1, "date_start": "2026-06-11"},
+        {"group": "NLAP", "spend": 10.0, "inline_link_clicks": 1, "fb_leads": 1, "date_start": "2026-06-12"},
+        {"group": "PT Recovery", "spend": 999.0, "inline_link_clicks": 99, "fb_leads": 9, "date_start": "2026-06-09"},
+    ])
+    r = _run(_contacts([]), fb=fb)
+    assert r.loc["chiro_ad_spend", "w0"] == 200.0     # Chiro+EMX+TheraRay+NLAP; PT excluded
+    assert r.loc["chiro_link_clicks", "w0"] == 20      # 10+5+4+1
+    assert abs(r.loc["chiro_cpc", "w0"] - 10.0) < 1e-9  # 200/20
