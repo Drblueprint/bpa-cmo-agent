@@ -2244,6 +2244,12 @@ def weekly_metrics(
                 weekly_values.append(
                     _meetings_count_groups({"TheraRay", "NLAP"}, ws, we,
                                            completed_only=True))
+            elif metric_id == "theraray_submissions":
+                weekly_values.append(
+                    _contacts_in_group_with_submit("TheraRay", ws, we))
+            elif metric_id == "nlap_submissions":
+                weekly_values.append(
+                    _contacts_in_group_with_submit("NLAP", ws, we))
             elif metric_id == "emx_ad_spend":
                 weekly_values.append(_fb_sum("EMX", "spend", ws, we))
             elif metric_id == "emx_leads":

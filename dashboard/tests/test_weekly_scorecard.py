@@ -90,3 +90,21 @@ def test_dti_calls_combine_theraray_and_nlap_only():
     r = _run(contacts, meetings=meetings)
     assert r.loc["dti_15min_scheduled", "w0"] == 2     # TR + NL 15-min; Chiro excluded; intro excluded
     assert r.loc["dti_discovery_completed", "w0"] == 1  # only TR held (COMPLETE*)
+
+
+def test_theraray_nlap_submissions_by_group_and_date():
+    contacts = _contacts([
+        {"hs_id": "1", "typeform_asset_download": "TR",
+         "typeform_submission_date": "2026-06-09T10:00:00Z", "email": "a@x.com"},
+        {"hs_id": "2", "typeform_asset_download": "NL",
+         "typeform_submission_date": "2026-06-10T10:00:00Z", "email": "b@x.com"},
+        # NLAP contact submitted OUTSIDE the week -> not counted.
+        {"hs_id": "3", "typeform_asset_download": "NL",
+         "typeform_submission_date": "2026-05-01T10:00:00Z", "email": "c@x.com"},
+        # Chiro contact -> not a DTI submission.
+        {"hs_id": "4", "typeform_asset_download": "CH",
+         "typeform_submission_date": "2026-06-09T10:00:00Z", "email": "d@x.com"},
+    ])
+    r = _run(contacts)
+    assert r.loc["theraray_submissions", "w0"] == 1
+    assert r.loc["nlap_submissions", "w0"] == 1
