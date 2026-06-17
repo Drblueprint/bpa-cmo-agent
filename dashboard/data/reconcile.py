@@ -2015,6 +2015,7 @@ def weekly_metrics(
 
     if not contacts.empty:
         contacts["_submit_date"] = _to_date_series("typeform_submission_date")
+        contacts["_created"] = _to_date_series("created")
         contacts["_webinar_reg"] = _to_date_series("webinar_registration_date")
         contacts["_webinar_done"] = _to_date_series("webinar_completed_date")
         contacts["_pt_webinar_reg"] = _to_date_series("pt_webinar_registration_date")
@@ -2063,6 +2064,20 @@ def weekly_metrics(
             lambda d: d is not None and isinstance(d, date) and start <= d <= end
         )
         mask = (contacts["group"] == group) & in_window
+        return int(mask.sum())
+
+    def _contacts_in_group_new(group: str, start: date, end: date) -> int:
+        """Net-new leads: group contacts whose typeform submission AND HubSpot
+        createdate both fall in the week window."""
+        if contacts.empty:
+            return 0
+
+        def _in(col: str):
+            return contacts[col].apply(
+                lambda d: d is not None and isinstance(d, date) and start <= d <= end
+            )
+
+        mask = (contacts["group"] == group) & _in("_submit_date") & _in("_created")
         return int(mask.sum())
 
     def _contacts_property_in_window(prop_col: str, start: date, end: date) -> int:
@@ -2235,13 +2250,13 @@ def weekly_metrics(
                 weekly_values.append(spend / clicks if clicks else 0.0)
             elif metric_id == "chiro_lead_magnet_optins":
                 weekly_values.append(
-                    _fb_leads("Chiro", ws, we)
-                    + _fb_leads("EMX", ws, we)
+                    _contacts_in_group_with_submit("Chiro", ws, we)
+                    + _contacts_in_group_with_submit("EMX", ws, we)
                 )
             elif metric_id == "chiro_new_leads":
                 weekly_values.append(
-                    _contacts_in_group_with_submit("Chiro", ws, we)
-                    + _contacts_in_group_with_submit("EMX", ws, we)
+                    _contacts_in_group_new("Chiro", ws, we)
+                    + _contacts_in_group_new("EMX", ws, we)
                 )
             elif metric_id == "pt_ad_spend":
                 weekly_values.append(_fb_sum("PT Recovery", "spend", ws, we))

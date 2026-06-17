@@ -31,9 +31,9 @@ from dashboard.data.reconcile import weekly_metrics
 # Contacts fixture MUST carry all 5 date columns weekly_metrics parses, or it
 # raises on the non-empty path. None is fine where unused.
 _CONTACT_DATE_COLS = [
-    "typeform_submission_date", "webinar_registration_date",
-    "webinar_completed_date", "pt_webinar_registration_date",
-    "pt_webinar_completed_date",
+    "typeform_submission_date", "created",
+    "webinar_registration_date", "webinar_completed_date",
+    "pt_webinar_registration_date", "pt_webinar_completed_date",
 ]
 
 
@@ -59,7 +59,7 @@ def _run(contacts, *, meetings=None, bofu=None, fb=None):
         bofu_submissions=bofu if bofu is not None else pd.DataFrame(
             columns=["form_id", "submission_id", "submitted_at", "email"]),
         week_ranges=[WEEK],
-        asset_to_group={"TR": "TheraRay", "NL": "NLAP", "CH": "Chiro"},
+        asset_to_group={"TR": "TheraRay", "NL": "NLAP", "CH": "Chiro", "EM": "EMX"},
         stages_closed_won=set(),
         new_customer_stages=set(),
         goals={},
@@ -142,3 +142,23 @@ def test_chiro_ad_spend_clicks_include_all_paid_groups():
     assert r.loc["chiro_ad_spend", "w0"] == 200.0     # Chiro+EMX+TheraRay+NLAP; PT excluded
     assert r.loc["chiro_link_clicks", "w0"] == 20      # 10+5+4+1
     assert abs(r.loc["chiro_cpc", "w0"] - 10.0) < 1e-9  # 200/20
+
+
+def test_optins_are_all_leads_new_leads_are_netnew():
+    contacts = _contacts([
+        # submitted in week, created earlier -> All Lead (opt-in) but NOT new
+        {"hs_id": "1", "typeform_asset_download": "CH",
+         "typeform_submission_date": "2026-06-09T10:00:00Z",
+         "created": "2026-01-01T00:00:00Z", "email": "a@x.com"},
+        # submitted + created in week -> opt-in AND new
+        {"hs_id": "2", "typeform_asset_download": "CH",
+         "typeform_submission_date": "2026-06-10T10:00:00Z",
+         "created": "2026-06-10T09:00:00Z", "email": "b@x.com"},
+        # EMX, submitted + created in week -> opt-in AND new
+        {"hs_id": "3", "typeform_asset_download": "EM",
+         "typeform_submission_date": "2026-06-11T10:00:00Z",
+         "created": "2026-06-11T09:00:00Z", "email": "c@x.com"},
+    ])
+    r = _run(contacts)
+    assert r.loc["chiro_lead_magnet_optins", "w0"] == 3   # all 3 submitted in week
+    assert r.loc["chiro_new_leads", "w0"] == 2            # only #2 and #3 are net-new
