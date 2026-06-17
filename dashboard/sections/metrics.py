@@ -289,6 +289,28 @@ def render_metrics() -> None:
     except Exception as e:
         st.warning(f"HubSpot contacts unavailable: {e}")
         contacts = pd.DataFrame()
+    # Merge TheraRay (6280) + NLAP (7086) list members into the weekly contacts
+    # frame so they are group-tagged (DTI submissions + DTI calls) and their
+    # meetings get fetched below. asset_to_group is a local copy so we register
+    # the list asset labels without mutating the module-level config dict.
+    from dashboard.data.groups import merge_list_group
+    from dashboard.data.hubspot_loader import load_list_memberships
+    asset_to_group = dict(cfg.ASSET_TO_GROUP)
+    for _lid, _label, _grp in [
+        (cfg.THERARAY_HUBSPOT_LIST_ID, "TheraRay (List)", "TheraRay"),
+        (cfg.NLAP_HUBSPOT_LIST_ID, "NLAP (List)", "NLAP"),
+    ]:
+        try:
+            contacts = merge_list_group(
+                contacts,
+                list_id=_lid, asset_label=_label, group=_grp,
+                start=overall_start, end=overall_end,
+                load_memberships=load_list_memberships,
+                load_contacts=load_contacts_by_ids,
+                asset_to_group=asset_to_group,
+            )
+        except Exception as e:
+            st.warning(f"{_grp} list merge failed: {e}")
     try:
         contact_deals = load_contact_deals(contacts["hs_id"].tolist()) \
             if not contacts.empty else pd.DataFrame(columns=["contact_id", "deal_id"])
@@ -342,7 +364,7 @@ def render_metrics() -> None:
         fb=fb, contacts=contacts, meetings=meetings,
         contact_deals=contact_deals, deals=deals, bofu_submissions=bofu,
         week_ranges=ranges,
-        asset_to_group=cfg.ASSET_TO_GROUP,
+        asset_to_group=asset_to_group,
         stages_closed_won=cfg.STAGES_CLOSED_WON,
         new_customer_stages=cfg.NEW_CUSTOMER_STAGES,
         goals=cfg.METRICS_GOALS,
