@@ -108,3 +108,25 @@ def test_theraray_nlap_submissions_by_group_and_date():
     r = _run(contacts)
     assert r.loc["theraray_submissions", "w0"] == 1
     assert r.loc["nlap_submissions", "w0"] == 1
+
+
+def test_bofu_direct_excludes_webinar_registrants():
+    contacts = _contacts([
+        # Registered for a webinar -> their BOFU is NOT direct.
+        {"hs_id": "1", "typeform_asset_download": "CH", "email": "webinar@x.com",
+         "webinar_registration_date": "2026-06-01T10:00:00Z"},
+        # Registered for PT webinar -> also NOT direct.
+        {"hs_id": "2", "typeform_asset_download": "CH", "email": "ptweb@x.com",
+         "pt_webinar_registration_date": "2026-06-02T10:00:00Z"},
+    ])
+    bofu = pd.DataFrame([
+        {"form_id": "f", "submission_id": "s1", "submitted_at": _ms("2026-06-10T12:00:00Z"),
+         "email": "webinar@x.com"},   # has webinar -> not direct
+        {"form_id": "f", "submission_id": "s2", "submitted_at": _ms("2026-06-10T12:00:00Z"),
+         "email": "ptweb@x.com"},     # has PT webinar -> not direct
+        {"form_id": "f", "submission_id": "s3", "submitted_at": _ms("2026-06-11T12:00:00Z"),
+         "email": "direct@x.com"},    # no webinar record -> DIRECT
+    ])
+    r = _run(contacts, bofu=bofu)
+    assert r.loc["bofu_submissions_total", "w0"] == 3
+    assert r.loc["bofu_submissions_direct", "w0"] == 1

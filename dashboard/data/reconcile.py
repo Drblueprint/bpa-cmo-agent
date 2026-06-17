@@ -2187,6 +2187,29 @@ def weekly_metrics(
         )
         return int(mask.sum())
 
+    def _bofu_direct_in_week(start: date, end: date) -> int:
+        """BOFU submissions in window whose email matches NO contact carrying a
+        webinar registration (the lead reached BOFU without the webinar funnel).
+        Unknown emails count as Direct (no webinar on record)."""
+        if bofu_submissions.empty:
+            return 0
+        in_week = bofu_submissions["submitted_at"].apply(
+            lambda x: _ts_ms_in_window(x, start, end)
+        )
+        if not bool(in_week.any()):
+            return 0
+        webinar_emails: set[str] = set()
+        if not contacts.empty and "email" in contacts.columns:
+            reg = contacts["_webinar_reg"].apply(lambda d: d is not None) \
+                | contacts["_pt_webinar_reg"].apply(lambda d: d is not None)
+            webinar_emails = set(
+                contacts.loc[reg, "email"].fillna("").astype(str).str.lower()
+            )
+            webinar_emails.discard("")
+        sub_emails = bofu_submissions.loc[in_week, "email"].fillna("").astype(str).str.lower()
+        direct = sub_emails.apply(lambda e: e == "" or e not in webinar_emails)
+        return int(direct.sum())
+
     # Build per-week values per metric
     metric_ids = list(_METRIC_LABELS.keys())
     rows = []
@@ -2262,6 +2285,8 @@ def weekly_metrics(
                 weekly_values.append(_contacts_property_in_window("_pt_webinar_reg", ws, we))
             elif metric_id == "pt_webinar_completions":
                 weekly_values.append(_contacts_property_in_window("_pt_webinar_done", ws, we))
+            elif metric_id == "bofu_submissions_direct":
+                weekly_values.append(_bofu_direct_in_week(ws, we))
             elif metric_id == "bofu_submissions_total":
                 weekly_values.append(_bofu_in_week(ws, we))
             elif metric_id == "fifteen_min_scheduled":
