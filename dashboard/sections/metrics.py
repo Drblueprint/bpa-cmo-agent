@@ -13,6 +13,7 @@ from dashboard.data.hubspot_loader import (
     load_deals_in_window,
     load_marketing_contacts,
     load_meetings_for_contacts,
+    load_meetings_in_window,
     load_contacts_by_ids,
 )
 from dashboard.data.hubspot_forms_loader import load_form_submissions
@@ -328,11 +329,7 @@ def render_metrics() -> None:
         st.warning(f"HubSpot deals unavailable: {e}")
         deals = pd.DataFrame()
     try:
-        meetings = load_meetings_for_contacts(contacts["hs_id"].tolist(),
-                                              data_floor_days_back=floor_days) \
-            if not contacts.empty else pd.DataFrame(columns=[
-                "meeting_id", "contact_id", "activity_type", "outcome", "start_time"
-            ])
+        meetings = load_meetings_in_window(overall_start, overall_end)
     except Exception as e:
         st.warning(f"HubSpot meetings unavailable: {e}")
         meetings = pd.DataFrame(columns=[
