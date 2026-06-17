@@ -409,6 +409,7 @@ AIRCALL_TO_SDR_OWNER: dict[str, str] = {
     "1605109": "79870794",  # Garrett
     "1523089": "44815718",  # Scott (BDS — included for completeness)
     "1630108": "568393136", # Haley
+    "1977979": "93727575",  # Kyle Naron
 }
 
 # AirCall users to EXCLUDE from SDR Call Activity (admins, always-closed seats, etc.).
