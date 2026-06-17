@@ -2090,6 +2090,18 @@ def weekly_metrics(
         )
         return int(mask.sum())
 
+    def _contacts_in_groups_property(groups: set[str], prop_col: str,
+                                     start: date, end: date) -> int:
+        """Count contacts whose group is in `groups` AND whose date property
+        falls in the week. Used for marketing-filtered webinar rows."""
+        if contacts.empty or prop_col not in contacts.columns:
+            return 0
+        in_window = contacts[prop_col].apply(
+            lambda d: d is not None and isinstance(d, date) and start <= d <= end
+        )
+        mask = contacts["group"].isin(groups) & in_window
+        return int(mask.sum())
+
     def _meetings_count(token: str, start: date, end: date, *,
                        completed_only: bool = False) -> int:
         if meetings.empty:
@@ -2294,9 +2306,11 @@ def weekly_metrics(
             elif metric_id == "emx_leads":
                 weekly_values.append(_contacts_in_group_with_submit("EMX", ws, we))
             elif metric_id == "webinar_registrations":
-                weekly_values.append(_contacts_property_in_window("_webinar_reg", ws, we))
+                weekly_values.append(
+                    _contacts_in_groups_property({"Chiro", "EMX"}, "_webinar_reg", ws, we))
             elif metric_id == "webinar_completions":
-                weekly_values.append(_contacts_property_in_window("_webinar_done", ws, we))
+                weekly_values.append(
+                    _contacts_in_groups_property({"Chiro", "EMX"}, "_webinar_done", ws, we))
             elif metric_id == "pt_webinar_registrations":
                 weekly_values.append(_contacts_property_in_window("_pt_webinar_reg", ws, we))
             elif metric_id == "pt_webinar_completions":

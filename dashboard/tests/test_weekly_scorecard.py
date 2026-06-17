@@ -162,3 +162,19 @@ def test_optins_are_all_leads_new_leads_are_netnew():
     r = _run(contacts)
     assert r.loc["chiro_lead_magnet_optins", "w0"] == 3   # all 3 submitted in week
     assert r.loc["chiro_new_leads", "w0"] == 2            # only #2 and #3 are net-new
+
+
+def test_webinar_rows_filter_to_chiro_emx():
+    contacts = _contacts([
+        {"hs_id": "1", "typeform_asset_download": "CH",
+         "webinar_registration_date": "2026-06-09T10:00:00Z",
+         "webinar_completed_date": "2026-06-10T10:00:00Z", "email": "a@x.com"},
+        {"hs_id": "2", "typeform_asset_download": "EM",
+         "webinar_registration_date": "2026-06-10T10:00:00Z", "email": "b@x.com"},
+        # TheraRay contact with a webinar date -> excluded from the generic rows
+        {"hs_id": "3", "typeform_asset_download": "TR",
+         "webinar_registration_date": "2026-06-11T10:00:00Z", "email": "c@x.com"},
+    ])
+    r = _run(contacts)
+    assert r.loc["webinar_registrations", "w0"] == 2   # Chiro + EMX only; TheraRay excluded
+    assert r.loc["webinar_completions", "w0"] == 1     # only #1 completed
