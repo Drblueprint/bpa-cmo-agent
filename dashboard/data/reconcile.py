@@ -1972,17 +1972,6 @@ def _date_in_window(dt_str, start: date, end: date) -> bool:
         return False
 
 
-def _ts_ms_in_window(ts_ms, start: date, end: date) -> bool:
-    """True if Unix-ms timestamp falls in [start, end] inclusive."""
-    if ts_ms is None or pd.isna(ts_ms):
-        return False
-    try:
-        d = datetime.fromtimestamp(int(ts_ms) / 1000, tz=timezone.utc).date()
-        return start <= d <= end
-    except Exception:
-        return False
-
-
 def weekly_metrics(
     *,
     fb: pd.DataFrame,
@@ -2183,7 +2172,7 @@ def weekly_metrics(
         if bofu_submissions.empty:
             return 0
         mask = bofu_submissions["submitted_at"].apply(
-            lambda x: _ts_ms_in_window(x, start, end)
+            lambda x: _date_in_window(x, start, end)
         )
         return int(mask.sum())
 
@@ -2194,7 +2183,7 @@ def weekly_metrics(
         if bofu_submissions.empty:
             return 0
         in_week = bofu_submissions["submitted_at"].apply(
-            lambda x: _ts_ms_in_window(x, start, end)
+            lambda x: _date_in_window(x, start, end)
         )
         if not bool(in_week.any()):
             return 0

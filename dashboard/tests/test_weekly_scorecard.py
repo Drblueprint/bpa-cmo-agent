@@ -45,10 +45,6 @@ def _contacts(rows):
     return df
 
 
-def _ms(iso):
-    return int(pd.Timestamp(iso).timestamp() * 1000)
-
-
 WEEK = (date(2026, 6, 8), date(2026, 6, 14))
 
 
@@ -119,12 +115,14 @@ def test_bofu_direct_excludes_webinar_registrants():
         {"hs_id": "2", "typeform_asset_download": "CH", "email": "ptweb@x.com",
          "pt_webinar_registration_date": "2026-06-02T10:00:00Z"},
     ])
+    # submitted_at is an ISO-8601 string, matching load_form_submissions output
+    # (regression guard: it used to be parsed as Unix-ms, so every BOFU was 0).
     bofu = pd.DataFrame([
-        {"form_id": "f", "submission_id": "s1", "submitted_at": _ms("2026-06-10T12:00:00Z"),
+        {"form_id": "f", "submission_id": "s1", "submitted_at": "2026-06-10T12:00:00Z",
          "email": "webinar@x.com"},   # has webinar -> not direct
-        {"form_id": "f", "submission_id": "s2", "submitted_at": _ms("2026-06-10T12:00:00Z"),
+        {"form_id": "f", "submission_id": "s2", "submitted_at": "2026-06-10T12:00:00Z",
          "email": "ptweb@x.com"},     # has PT webinar -> not direct
-        {"form_id": "f", "submission_id": "s3", "submitted_at": _ms("2026-06-11T12:00:00Z"),
+        {"form_id": "f", "submission_id": "s3", "submitted_at": "2026-06-11T12:00:00Z",
          "email": "direct@x.com"},    # no webinar record -> DIRECT
     ])
     r = _run(contacts, bofu=bofu)

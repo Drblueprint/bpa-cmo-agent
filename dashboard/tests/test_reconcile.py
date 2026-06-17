@@ -921,9 +921,10 @@ def test_weekly_metrics_basic_shape():
     contact_deals = pd.DataFrame(columns=["contact_id", "deal_id"])
     deals = pd.DataFrame(columns=["deal_id", "dealstage", "amount",
                                    "createdate", "closedate"])
+    # submitted_at is an ISO-8601 string, matching load_form_submissions output.
     bofu_subs = pd.DataFrame([
         {"form_id": "abc", "submission_id": "s1",
-         "submitted_at": int(pd.Timestamp("2026-05-14T00:00:00Z").timestamp() * 1000),
+         "submitted_at": "2026-05-14T00:00:00Z",
          "email": ""},
     ])
 
