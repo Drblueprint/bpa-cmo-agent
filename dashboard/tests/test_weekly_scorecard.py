@@ -178,3 +178,24 @@ def test_webinar_rows_filter_to_chiro_emx():
     r = _run(contacts)
     assert r.loc["webinar_registrations", "w0"] == 2   # Chiro + EMX only; TheraRay excluded
     assert r.loc["webinar_completions", "w0"] == 1     # only #1 completed
+
+
+def test_cold_outreach_call_rows_split_non_marketing():
+    # Contact "1" is a marketing lead (in the contacts frame); contact "999" is not.
+    contacts = _contacts([
+        {"hs_id": "1", "typeform_asset_download": "CH", "email": "a@x.com"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "1", "activity_type": "15 min call",
+         "outcome": "COMPLETED", "start_time": "2026-06-09T15:00:00Z"},   # marketing
+        {"meeting_id": "m2", "contact_id": "999", "activity_type": "15 min call",
+         "outcome": "COMPLETED", "start_time": "2026-06-10T15:00:00Z"},   # cold
+        {"meeting_id": "m3", "contact_id": "999", "activity_type": "Strategy Call",
+         "outcome": "SCHEDULED", "start_time": "2026-06-11T15:00:00Z"},   # cold, not completed
+    ])
+    r = _run(contacts, meetings=meetings)
+    assert r.loc["fifteen_min_scheduled", "w0"] == 2          # all calls counted
+    assert r.loc["fifteen_min_scheduled_cold", "w0"] == 1     # only contact 999
+    assert r.loc["fifteen_min_completed_cold", "w0"] == 1     # m2 completed
+    assert r.loc["strategy_calls_total_cold", "w0"] == 1      # m3
+    assert r.loc["strategy_calls_completed_cold", "w0"] == 0  # m3 not completed
