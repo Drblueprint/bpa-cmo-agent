@@ -1948,17 +1948,13 @@ _METRIC_LABELS: dict[str, str] = {
     "bofu_submissions_direct": "BOFU Submissions (Direct)",
     "bofu_submissions_total": "BOFU Submissions (Total)",
     "fifteen_min_scheduled": "15 Min Calls Scheduled",
-    "fifteen_min_scheduled_cold": "15 Min Scheduled (Cold Outreach)",
     "fifteen_min_completed": "15 Min Calls Completed",
-    "fifteen_min_completed_cold": "15 Min Completed (Cold Outreach)",
     "dti_15min_scheduled": "DTI 15 Min Call Scheduled",
     "dti_discovery_completed": "DTI Discovery Calls Completed",
     "pt_fifteen_min_scheduled": "PT 15 Min Calls Scheduled",
     "pt_fifteen_min_completed": "PT 15 Min Calls Completed",
     "strategy_calls_total": "Strategy Calls - Total",
-    "strategy_calls_total_cold": "Strategy Total (Cold Outreach)",
     "strategy_calls_completed": "Strategy Calls - Completed",
-    "strategy_calls_completed_cold": "Strategy Completed (Cold Outreach)",
     "new_total_customers": "NEW Total Customers",
 }
 
@@ -2024,9 +2020,6 @@ def weekly_metrics(
         contacts["_webinar_done"] = _to_date_series("webinar_completed_date")
         contacts["_pt_webinar_reg"] = _to_date_series("pt_webinar_registration_date")
         contacts["_pt_webinar_done"] = _to_date_series("pt_webinar_completed_date")
-
-    marketing_ids = set(contacts["hs_id"].astype(str)) \
-        if not contacts.empty and "hs_id" in contacts.columns else set()
 
     if not meetings.empty:
         m_types = meetings["activity_type"].fillna("").astype(str).str.lower()
@@ -2156,23 +2149,6 @@ def weekly_metrics(
             discovery_mask(m_types)
             & m_start.between(start, end)
             & meetings["contact_id"].astype(str).isin(group_contact_ids)
-        )
-        if completed_only:
-            mask = mask & m_outcomes.str.startswith("COMPLETE")
-        return int(mask.sum())
-
-    def _meetings_count_cold(token: str, start: date, end: date,
-                             *, completed_only: bool = False) -> int:
-        """Calls of `token` type in window whose contact is NOT a marketing
-        lead (not in the loaded contacts frame) - i.e. cold outreach."""
-        if meetings.empty:
-            return 0
-        _type_mask = discovery_mask(m_types) if token == "15 min" \
-            else m_types.str.contains(token, na=False)
-        mask = (
-            _type_mask
-            & m_start.between(start, end)
-            & ~meetings["contact_id"].astype(str).isin(marketing_ids)
         )
         if completed_only:
             mask = mask & m_outcomes.str.startswith("COMPLETE")
@@ -2345,24 +2321,16 @@ def weekly_metrics(
                 weekly_values.append(_bofu_in_week(ws, we))
             elif metric_id == "fifteen_min_scheduled":
                 weekly_values.append(_meetings_count("15 min", ws, we))
-            elif metric_id == "fifteen_min_scheduled_cold":
-                weekly_values.append(_meetings_count_cold("15 min", ws, we))
             elif metric_id == "fifteen_min_completed":
                 weekly_values.append(_meetings_count("15 min", ws, we, completed_only=True))
-            elif metric_id == "fifteen_min_completed_cold":
-                weekly_values.append(_meetings_count_cold("15 min", ws, we, completed_only=True))
             elif metric_id == "pt_fifteen_min_scheduled":
                 weekly_values.append(_meetings_count("pt 15 min", ws, we))
             elif metric_id == "pt_fifteen_min_completed":
                 weekly_values.append(_meetings_count("pt 15 min", ws, we, completed_only=True))
             elif metric_id == "strategy_calls_total":
                 weekly_values.append(_meetings_count("strategy", ws, we))
-            elif metric_id == "strategy_calls_total_cold":
-                weekly_values.append(_meetings_count_cold("strategy", ws, we))
             elif metric_id == "strategy_calls_completed":
                 weekly_values.append(_meetings_count("strategy", ws, we, completed_only=True))
-            elif metric_id == "strategy_calls_completed_cold":
-                weekly_values.append(_meetings_count_cold("strategy", ws, we, completed_only=True))
             elif metric_id == "new_total_customers":
                 stages = new_customer_stages if new_customer_stages else stages_closed_won
                 weekly_values.append(_deals_won_in_week(ws, we, stages_override=stages))

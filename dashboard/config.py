@@ -479,10 +479,6 @@ METRICS_GOALS: dict[str, float] = {
     "dti_15min_scheduled": 2,
     "dti_discovery_completed": 5,
     "bofu_submissions_direct": 0,
-    "fifteen_min_scheduled_cold": 0,
-    "fifteen_min_completed_cold": 0,
-    "strategy_calls_total_cold": 0,
-    "strategy_calls_completed_cold": 0,
 }
 
 # --- Closed-deal source overrides ---
