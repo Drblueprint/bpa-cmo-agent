@@ -40,6 +40,8 @@ All paths under `dashboard/`. The group label string is exactly `Practice Growth
 9. **`config.py` `METRICS_GOALS`** — add `"pgw_ad_spend": 0`, `"pgw_leads": 0` (keeps `set(_METRIC_LABELS) == set(METRICS_GOALS)`).
 10. **`config.py` `SME_COMMISSION_BY_GROUP`** — add `"Practice Growth Workshop": 1000.0` (event-based).
 
+**Spend-only visibility (explicit requirement).** The Executive "Breakdown by group" must show PGW with its ad spend even while leads = 0. This is already satisfied by `group_marketing_metrics` (reconcile.py): it enumerates groups as the UNION of `fb_by_group.keys()` (spend) + contact-lead groups + hyros, and the executive render maps every row with NO zero-lead suppression (that suppression lives only in the separate "Conversions by group" table). So once item 1 (the FB regex) tags the campaign's spend to group "Practice Growth Workshop", the breakdown row appears automatically: Spend = $X, Marketing Leads = 0, CPL = — (None → dash), 15-min Calls = 0. No extra code beyond registration — but a regression test locks it (see Testing).
+
 **Auto-covered, no change:** Lead Detail, Sales Asset Performance, group dropdowns (they read the `group` tag / `resolve` from the same maps). Daily VA summary has no EMX block (EMX folds into the Chiro spend line), so PGW needs none either.
 
 ## Components / data flow
@@ -59,6 +61,7 @@ FB spend → `match_group(campaign_name)` tags each FB row's `group` → `_fb_su
 - `match_group("DS | __Practice Growth Workshop Dallas__ Funnel Setup | CBO | USA | CA | Images June 2026 | C1") == "Practice Growth Workshop"`.
 - `ASSET_TO_GROUP["Practice Growth Workshop Dallas"] == "Practice Growth Workshop"`.
 - `weekly_metrics` with an FB fixture row `group="Practice Growth Workshop"` + a contact with that group/submit: `pgw_ad_spend` and `pgw_leads` populate, AND `chiro_ad_spend` / `chiro_lead_magnet_optins` include the PGW amounts (roll-in).
+- **Spend-only group row:** `group_marketing_metrics` with an FB fixture carrying spend for group "Practice Growth Workshop" and ZERO matching contacts emits a row with `spend > 0`, `marketing_leads == 0`, `cpl` None — proving the Executive breakdown shows a spend-only group.
 - `set(_METRIC_LABELS) == set(METRICS_GOALS)` still holds; no em dashes in the new/relabeled labels.
 
 ## Verification (live, before final push)
