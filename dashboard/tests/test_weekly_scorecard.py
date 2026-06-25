@@ -59,7 +59,8 @@ def _run(contacts, *, meetings=None, bofu=None, fb=None):
         bofu_submissions=bofu if bofu is not None else pd.DataFrame(
             columns=["form_id", "submission_id", "submitted_at", "email"]),
         week_ranges=[WEEK],
-        asset_to_group={"TR": "TheraRay", "NL": "NLAP", "CH": "Chiro", "EM": "EMX"},
+        asset_to_group={"TR": "TheraRay", "NL": "NLAP", "CH": "Chiro", "EM": "EMX",
+                        "PGW": "Practice Growth Workshop"},
         stages_closed_won=set(),
         new_customer_stages=set(),
         goals={},
@@ -178,3 +179,26 @@ def test_webinar_rows_filter_to_chiro_emx():
     r = _run(contacts)
     assert r.loc["webinar_registrations", "w0"] == 2   # Chiro + EMX only; TheraRay excluded
     assert r.loc["webinar_completions", "w0"] == 1     # only #1 completed
+
+
+def test_pgw_weekly_rows_and_chiro_rollin():
+    fb = pd.DataFrame([
+        {"group": "Practice Growth Workshop", "spend": 800.0, "inline_link_clicks": 12,
+         "fb_leads": 0, "date_start": "2026-06-09"},
+        {"group": "Chiro", "spend": 100.0, "inline_link_clicks": 4,
+         "fb_leads": 0, "date_start": "2026-06-09"},
+    ])
+    contacts = _contacts([
+        {"hs_id": "1", "typeform_asset_download": "PGW",
+         "typeform_submission_date": "2026-06-09T10:00:00Z",
+         "created": "2026-06-09T09:00:00Z", "email": "a@x.com"},
+    ])
+    r = _run(contacts, fb=fb)
+    # standalone PGW rows
+    assert r.loc["pgw_ad_spend", "w0"] == 800.0
+    assert r.loc["pgw_leads", "w0"] == 1
+    # rolled into the blended Chiro top-line
+    assert r.loc["chiro_ad_spend", "w0"] == 900.0          # Chiro 100 + PGW 800
+    assert r.loc["chiro_link_clicks", "w0"] == 16          # 4 + 12
+    assert r.loc["chiro_lead_magnet_optins", "w0"] == 1    # PGW submit rolls in
+    assert r.loc["chiro_new_leads", "w0"] == 1             # PGW submit+created -> net-new

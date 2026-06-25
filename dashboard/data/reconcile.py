@@ -1924,11 +1924,11 @@ from datetime import date, datetime, timedelta, timezone  # noqa: E402
 
 # Metric label registry — keep aligned with config.METRICS_GOALS keys.
 _METRIC_LABELS: dict[str, str] = {
-    "chiro_ad_spend": "Chiro - Ad Spend (incl. EMX + DTI)",
-    "chiro_link_clicks": "Chiro - Link Clicks (incl. EMX + DTI)",
-    "chiro_cpc": "Chiro - Cost-Per-Click (incl. EMX + DTI)",
-    "chiro_lead_magnet_optins": "Chiro - Lead Magnet Opt-Ins (incl. EMX)",
-    "chiro_new_leads": "Chiro - New Leads (incl. EMX)",
+    "chiro_ad_spend": "Chiro - Ad Spend (incl. EMX + DTI + Workshop)",
+    "chiro_link_clicks": "Chiro - Link Clicks (incl. EMX + DTI + Workshop)",
+    "chiro_cpc": "Chiro - Cost-Per-Click (incl. EMX + DTI + Workshop)",
+    "chiro_lead_magnet_optins": "Chiro - Lead Magnet Opt-Ins (incl. EMX + Workshop)",
+    "chiro_new_leads": "Chiro - New Leads (incl. EMX + Workshop)",
     "theraray_submissions": "DTI (TheraRay Leads)",
     "nlap_submissions": "DTI (NLAP Leads)",
     "pt_ad_spend": "PT - Ad Spend",
@@ -1941,6 +1941,8 @@ _METRIC_LABELS: dict[str, str] = {
     "theraray_15min_scheduled": "TheraRay - 15 Min Call Scheduled",
     "emx_ad_spend": "EMX - Ad Spend",
     "emx_leads": "EMX - Leads",
+    "pgw_ad_spend": "Practice Growth Workshop - Ad Spend",
+    "pgw_leads": "Practice Growth Workshop - Leads",
     "webinar_registrations": "Webinar Registrations",
     "webinar_completions": "Webinar Completions",
     "pt_webinar_registrations": "PT Webinar Registrations",
@@ -2238,6 +2240,7 @@ def weekly_metrics(
                     + _fb_sum("EMX", "spend", ws, we)
                     + _fb_sum("TheraRay", "spend", ws, we)
                     + _fb_sum("NLAP", "spend", ws, we)
+                    + _fb_sum("Practice Growth Workshop", "spend", ws, we)
                 )
             elif metric_id == "chiro_link_clicks":
                 weekly_values.append(
@@ -2245,30 +2248,31 @@ def weekly_metrics(
                     + _fb_clicks("EMX", ws, we)
                     + _fb_clicks("TheraRay", ws, we)
                     + _fb_clicks("NLAP", ws, we)
+                    + _fb_clicks("Practice Growth Workshop", ws, we)
                 )
             elif metric_id == "chiro_cpc":
-                spend = (
-                    _fb_sum("Chiro", "spend", ws, we)
-                    + _fb_sum("EMX", "spend", ws, we)
-                    + _fb_sum("TheraRay", "spend", ws, we)
-                    + _fb_sum("NLAP", "spend", ws, we)
-                )
-                clicks = (
-                    _fb_clicks("Chiro", ws, we)
-                    + _fb_clicks("EMX", ws, we)
-                    + _fb_clicks("TheraRay", ws, we)
-                    + _fb_clicks("NLAP", ws, we)
-                )
+                spend = (_fb_sum("Chiro", "spend", ws, we)
+                         + _fb_sum("EMX", "spend", ws, we)
+                         + _fb_sum("TheraRay", "spend", ws, we)
+                         + _fb_sum("NLAP", "spend", ws, we)
+                         + _fb_sum("Practice Growth Workshop", "spend", ws, we))
+                clicks = (_fb_clicks("Chiro", ws, we)
+                          + _fb_clicks("EMX", ws, we)
+                          + _fb_clicks("TheraRay", ws, we)
+                          + _fb_clicks("NLAP", ws, we)
+                          + _fb_clicks("Practice Growth Workshop", ws, we))
                 weekly_values.append(spend / clicks if clicks else 0.0)
             elif metric_id == "chiro_lead_magnet_optins":
                 weekly_values.append(
                     _contacts_in_group_with_submit("Chiro", ws, we)
                     + _contacts_in_group_with_submit("EMX", ws, we)
+                    + _contacts_in_group_with_submit("Practice Growth Workshop", ws, we)
                 )
             elif metric_id == "chiro_new_leads":
                 weekly_values.append(
                     _contacts_in_group_new("Chiro", ws, we)
                     + _contacts_in_group_new("EMX", ws, we)
+                    + _contacts_in_group_new("Practice Growth Workshop", ws, we)
                 )
             elif metric_id == "pt_ad_spend":
                 weekly_values.append(_fb_sum("PT Recovery", "spend", ws, we))
@@ -2305,6 +2309,10 @@ def weekly_metrics(
                 weekly_values.append(_fb_sum("EMX", "spend", ws, we))
             elif metric_id == "emx_leads":
                 weekly_values.append(_contacts_in_group_with_submit("EMX", ws, we))
+            elif metric_id == "pgw_ad_spend":
+                weekly_values.append(_fb_sum("Practice Growth Workshop", "spend", ws, we))
+            elif metric_id == "pgw_leads":
+                weekly_values.append(_contacts_in_group_with_submit("Practice Growth Workshop", ws, we))
             elif metric_id == "webinar_registrations":
                 weekly_values.append(
                     _contacts_in_groups_property({"Chiro", "EMX"}, "_webinar_reg", ws, we))

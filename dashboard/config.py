@@ -466,6 +466,8 @@ METRICS_GOALS: dict[str, float] = {
     "theraray_15min_scheduled": 2,
     "emx_ad_spend": 0,
     "emx_leads": 0,
+    "pgw_ad_spend": 0,
+    "pgw_leads": 0,
     "webinar_registrations": 12,
     "webinar_completions": 8,
     "pt_webinar_registrations": 0,
