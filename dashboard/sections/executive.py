@@ -335,7 +335,7 @@ def render_executive(start: date, end: date) -> None:
     try:
         groups_seen = list(group_metrics["group"]) if 'group_metrics' in locals() and not group_metrics.empty else []
         # Stable order, drop empty/None
-        preferred = ["Chiro", "EMX", "PT Recovery", "TheraRay", "NLAP"]
+        preferred = ["Chiro", "EMX", "Practice Growth Workshop", "PT Recovery", "TheraRay", "NLAP"]
         groups_to_show = [g for g in preferred if g in groups_seen] + \
                           [g for g in groups_seen if g not in preferred and g]
 

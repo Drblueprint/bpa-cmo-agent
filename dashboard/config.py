@@ -127,11 +127,12 @@ NEW_CUSTOMER_STAGES: set[str] = {"24094605", "1163151789", "1123458844"}
 # --- Campaign group regex patterns ---
 # Match against FB campaign names like "DS | __Chiro__ Mixed Funnel Setup | CBO | USA"
 CAMPAIGN_GROUPS: list[tuple[str, re.Pattern[str]]] = [
-    ("EMX",         re.compile(r"__EMX__|\bEMX\b", re.IGNORECASE)),
-    ("Chiro",       re.compile(r"__Chiro__", re.IGNORECASE)),
-    ("PT Recovery", re.compile(r"__PT__|__Recovery__", re.IGNORECASE)),
-    ("TheraRay",    re.compile(r"__Theraray__", re.IGNORECASE)),
-    ("NLAP",        re.compile(r"__NLAP__", re.IGNORECASE)),
+    ("EMX",                      re.compile(r"__EMX__|\bEMX\b", re.IGNORECASE)),
+    ("Practice Growth Workshop", re.compile(r"__Practice Growth Workshop", re.IGNORECASE)),
+    ("Chiro",                    re.compile(r"__Chiro__", re.IGNORECASE)),
+    ("PT Recovery",              re.compile(r"__PT__|__Recovery__", re.IGNORECASE)),
+    ("TheraRay",                 re.compile(r"__Theraray__", re.IGNORECASE)),
+    ("NLAP",                     re.compile(r"__NLAP__", re.IGNORECASE)),
 ]
 
 # EMX rolls up into Chiro totals in addition to being its own row
@@ -156,6 +157,7 @@ ASSET_TO_GROUP: dict[str, str] = {
     "The Informed Chiro typeform":    "Chiro",
     "EMX Forth Worth typeform":       "EMX",     # typo "Forth" matches HubSpot's stored value
     "EMX Kansas City 2026":           "EMX",     # year-suffixed variant
+    "Practice Growth Workshop Dallas": "Practice Growth Workshop",
 }
 
 # --- HubSpot owner ID -> human name mapping ---
