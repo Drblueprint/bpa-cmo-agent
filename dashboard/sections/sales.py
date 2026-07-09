@@ -1,10 +1,13 @@
 """SALES tab rendering."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from dashboard import config as cfg
 from dashboard.data.aircall_loader import load_aircall_calls
@@ -13,9 +16,11 @@ from dashboard.data.hubspot_loader import (
     load_deals_in_window,
     load_marketing_contacts,
     load_meetings_for_contacts,
+    load_meetings_in_window,
     load_closed_deals_ytd,
 )
 from dashboard.data.reconcile import (
+    _period_ranges,
     asset_performance_rollup,
     build_closed_deals_table,
     compute_speed_to_lead,
@@ -25,6 +30,7 @@ from dashboard.data.reconcile import (
     sales_bds_rollup,
     sales_sdr_rollup,
     sales_sme_rollup,
+    sales_trends,
     team_total_row,
     windowed_sales_money,
 )
@@ -1252,6 +1258,129 @@ def render_sales(start: date, end: date) -> None:
                     "Open": st.column_config.LinkColumn("Open", display_text="HubSpot ↗"),
                 },
             )
+
+    st.divider()
+
+    # ===================== Sales Trends =====================
+    st.subheader("Sales Trends")
+    st.caption("Trends over a range you choose here (independent of the view above). "
+               "Pick weekly or monthly buckets and optionally focus one rep.")
+    _t_today = date.today()
+    tc1, tc2, tc3 = st.columns([2, 1, 1])
+    with tc1:
+        _range = st.date_input(
+            "Trends date range",
+            value=(_t_today - timedelta(days=90), _t_today),
+            key="sales_trends_range",
+        )
+    with tc2:
+        gran = st.radio("Buckets", ["Weekly", "Monthly"], index=0,
+                        horizontal=True, key="sales_trends_gran")
+    # st.date_input with a tuple value returns a (start, end) tuple; mid-edit it
+    # can briefly return a single date -> treat as "not ready".
+    if isinstance(_range, (tuple, list)) and len(_range) == 2:
+        tr_start, tr_end = _range
+    else:
+        tr_start = tr_end = None
+    if tr_start is None or tr_end is None or tr_start > tr_end:
+        st.info("Pick a start and end date for the trends.")
+    else:
+        # Load frames for the trends range (own load; cached loaders)
+        try:
+            tr_contacts = load_marketing_contacts(tr_start, tr_end)
+        except Exception as e:
+            st.warning(f"Trends: contacts unavailable: {e}")
+            tr_contacts = pd.DataFrame()
+        tr_ids = tr_contacts["hs_id"].tolist() if not tr_contacts.empty else []
+        try:
+            tr_cd = load_contact_deals(tr_ids) if tr_ids else pd.DataFrame(columns=["contact_id", "deal_id"])
+        except Exception:
+            tr_cd = pd.DataFrame(columns=["contact_id", "deal_id"])
+        try:
+            tr_deals = load_deals_in_window(tr_start, tr_end, data_floor_days_back=floor_days)
+        except Exception:
+            tr_deals = pd.DataFrame()
+        try:
+            tr_meetings = load_meetings_in_window(tr_start, tr_end)
+        except Exception:
+            tr_meetings = pd.DataFrame(columns=["meeting_id", "contact_id", "activity_type", "outcome", "start_time"])
+        try:
+            tr_calls = load_aircall_calls(tr_start, tr_end)
+        except Exception:
+            tr_calls = pd.DataFrame(columns=["started_at_utc", "answered_at_utc", "duration",
+                                             "direction", "user_id", "phone_normalized"])
+        # Rep filter dropdown from sdr_owners present in the range
+        with tc3:
+            _owner_ids = sorted(
+                {str(x) for x in tr_contacts.get("sdr_owner", pd.Series(dtype=object)).dropna()
+                 if str(x)}) if not tr_contacts.empty else []
+            _labels = ["Team (all)"] + [cfg.resolve_owner(o) for o in _owner_ids]
+            _pick = st.selectbox("Rep", _labels, index=0, key="sales_trends_rep")
+        rep_owner = None
+        if _pick != "Team (all)":
+            rep_owner = next((o for o in _owner_ids if cfg.resolve_owner(o) == _pick), None)
+
+        ranges = _period_ranges(tr_start, tr_end, gran.lower())
+        if len(ranges) < 2:
+            st.info("Range is shorter than one bucket. Widen the range (or switch to Weekly) for a trend.")
+        trends = sales_trends(
+            contacts=tr_contacts, meetings=tr_meetings, deals=tr_deals,
+            contact_deals=tr_cd, calls=tr_calls, period_ranges=ranges,
+            rep_owner_id=rep_owner, stages_closed_won=cfg.STAGES_CLOSED_WON,
+            aircall_to_sdr_owner=cfg.AIRCALL_TO_SDR_OWNER,
+            connect_duration_sec=cfg.AIRCALL_CONNECT_DURATION_SEC,
+        )
+        _x = trends["period_label"]
+
+        # Chart 1: Funnel volume by stage
+        vol = trends.rename(columns={
+            "leads": "Leads", "disco_booked": "15-min Booked", "disco_held": "15-min Held",
+            "strat_booked": "Strategy Booked", "strat_held": "Strategy Held", "closed": "Closed-Won"})
+        vol_long = vol.melt(id_vars=["period_label"],
+                            value_vars=["Leads", "15-min Booked", "15-min Held",
+                                        "Strategy Booked", "Strategy Held", "Closed-Won"],
+                            var_name="Stage", value_name="Count")
+        fig1 = px.line(vol_long, x="period_label", y="Count", color="Stage", markers=True,
+                       title="Funnel volume by stage")
+        fig1.update_layout(xaxis_title="", legend_title="")
+        st.plotly_chart(fig1, use_container_width=True)
+
+        # Chart 2: Conversion rates
+        rates = trends.assign(
+            **{"Show %": trends["show_rate"] * 100,
+               "Booking %": trends["book_rate"] * 100,
+               "Close %": trends["close_rate"] * 100})
+        rates_long = rates.melt(id_vars=["period_label"],
+                                value_vars=["Show %", "Booking %", "Close %"],
+                                var_name="Rate", value_name="Percent")
+        fig2 = px.line(rates_long, x="period_label", y="Percent", color="Rate", markers=True,
+                       title="Conversion rates")
+        fig2.update_layout(xaxis_title="", legend_title="", yaxis_ticksuffix="%")
+        st.plotly_chart(fig2, use_container_width=True)
+
+        # Chart 3: SDR call activity (dials/connects left, connect % right)
+        fig3 = make_subplots(specs=[[{"secondary_y": True}]])
+        fig3.add_trace(go.Scatter(x=_x, y=trends["dials"], name="Dials", mode="lines+markers"), secondary_y=False)
+        fig3.add_trace(go.Scatter(x=_x, y=trends["connects"], name="Connects", mode="lines+markers"), secondary_y=False)
+        fig3.add_trace(go.Scatter(x=_x, y=trends["connect_rate"] * 100, name="Connect %",
+                                  mode="lines+markers", line=dict(dash="dot")), secondary_y=True)
+        fig3.update_layout(title="SDR call activity", xaxis_title="")
+        fig3.update_yaxes(title_text="Calls", secondary_y=False)
+        fig3.update_yaxes(title_text="Connect %", ticksuffix="%", secondary_y=True)
+        st.plotly_chart(fig3, use_container_width=True)
+
+        # Chart 4: Sales & revenue (count left, revenue right)
+        fig4 = make_subplots(specs=[[{"secondary_y": True}]])
+        fig4.add_trace(go.Scatter(x=_x, y=trends["closed"], name="Closed-Won", mode="lines+markers"), secondary_y=False)
+        fig4.add_trace(go.Scatter(x=_x, y=trends["revenue"], name="Revenue", mode="lines+markers",
+                                  line=dict(dash="dot")), secondary_y=True)
+        fig4.update_layout(title="Sales & revenue", xaxis_title="")
+        fig4.update_yaxes(title_text="Closed deals", secondary_y=False)
+        fig4.update_yaxes(title_text="Revenue ($)", secondary_y=True)
+        st.plotly_chart(fig4, use_container_width=True)
+
+        with st.expander("Show trend data"):
+            st.dataframe(trends, use_container_width=True, hide_index=True)
 
     st.divider()
 
