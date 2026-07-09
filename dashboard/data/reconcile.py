@@ -1996,6 +1996,130 @@ def _period_ranges(start: date, end: date, granularity: str) -> list[tuple[str, 
     return out
 
 
+def sales_trends(
+    *,
+    contacts: pd.DataFrame,
+    meetings: pd.DataFrame,
+    deals: pd.DataFrame,
+    contact_deals: pd.DataFrame,
+    calls: pd.DataFrame,
+    period_ranges: list[tuple[str, date, date]],
+    rep_owner_id: str | None,
+    stages_closed_won,
+    aircall_to_sdr_owner: dict[str, str],
+    connect_duration_sec: int,
+) -> pd.DataFrame:
+    """Per-bucket sales throughput time series (events counted by their own date).
+
+    Columns: period_label, period_start, leads, disco_booked, disco_held,
+    strat_booked, strat_held, closed, revenue, dials, connects, connect_rate,
+    show_rate, book_rate, close_rate. Rates are None when the denominator is 0.
+    rep_owner_id: restrict to that SDR's pipeline (contacts.sdr_owner) + their
+    AirCall dials; None = whole team.
+    """
+    cols = ["period_label", "period_start", "leads", "disco_booked", "disco_held",
+            "strat_booked", "strat_held", "closed", "revenue", "dials", "connects",
+            "connect_rate", "show_rate", "book_rate", "close_rate"]
+
+    # --- Contacts scope (rep filter) + date parsing ---
+    c = contacts.copy()
+    if rep_owner_id is not None and not c.empty:
+        c = c[c["sdr_owner"].astype(str) == str(rep_owner_id)]
+    c_ids = set(c["hs_id"].astype(str)) if not c.empty else set()
+    c_submit = (pd.to_datetime(c["typeform_submission_date"], utc=True, errors="coerce").dt.date
+                if not c.empty else pd.Series(dtype=object))
+
+    # --- Meetings scope to in-scope contacts + parse ---
+    if not meetings.empty:
+        m = meetings.copy()
+        if rep_owner_id is not None:
+            m = m[m["contact_id"].astype(str).isin(c_ids)]
+        m_types = m["activity_type"].fillna("").astype(str).str.lower()
+        m_out = m["outcome"].fillna("").astype(str).str.upper()
+        m_start = pd.to_datetime(m["start_time"], utc=True, errors="coerce").dt.date
+        m_disco = discovery_mask(m_types)
+        m_strat = m_types.str.contains("strategy", na=False)
+        m_held = m_out.str.startswith("COMPLETE")
+    else:
+        m = meetings
+        m_start = pd.Series(dtype=object)
+        m_disco = m_strat = m_held = pd.Series(dtype=bool)
+
+    # --- Deals scope (closed-won, rep filter via contact_deals) + close date ---
+    won = set(stages_closed_won)
+    if not deals.empty:
+        d = deals.copy()
+        d_close = pd.to_datetime(
+            d["closedate"].fillna(d.get("stage_entry_date")).fillna(d.get("createdate")),
+            utc=True, errors="coerce").dt.date
+        d_won = d["dealstage"].isin(won)
+        if rep_owner_id is not None:
+            rep_deal_ids = set(contact_deals[
+                contact_deals["contact_id"].astype(str).isin(c_ids)]["deal_id"]) \
+                if not contact_deals.empty else set()
+            d_won = d_won & d["deal_id"].isin(rep_deal_ids)
+    else:
+        d = deals
+        d_close = pd.Series(dtype=object)
+        d_won = pd.Series(dtype=bool)
+
+    # --- Calls scope (outbound; rep filter via aircall->owner) + start date ---
+    if not calls.empty:
+        cl = calls[calls["direction"] == "outbound"].copy()
+        if rep_owner_id is not None:
+            owned_users = {u for u, o in aircall_to_sdr_owner.items()
+                           if str(o) == str(rep_owner_id)}
+            cl = cl[cl["user_id"].astype(str).isin(owned_users)]
+        cl_start = cl["started_at_utc"].apply(
+            lambda x: datetime.fromtimestamp(int(x), tz=timezone.utc).date()
+            if pd.notna(x) else None)
+        cl_answered = cl["answered_at_utc"].notna() & (
+            cl["duration"].fillna(0).astype(float) >= connect_duration_sec)
+    else:
+        cl = calls
+        cl_start = pd.Series(dtype=object)
+        cl_answered = pd.Series(dtype=bool)
+
+    def _in(series, bs, be):
+        return series.apply(lambda x: x is not None and bs <= x <= be)
+
+    rows = []
+    for label, bs, be in period_ranges:
+        leads = int(_in(c_submit, bs, be).sum()) if not c.empty else 0
+        if not m.empty:
+            in_wk = _in(m_start, bs, be)
+            disco_booked = int((m_disco & in_wk).sum())
+            disco_held = int((m_disco & in_wk & m_held).sum())
+            strat_booked = int((m_strat & in_wk).sum())
+            strat_held = int((m_strat & in_wk & m_held).sum())
+        else:
+            disco_booked = disco_held = strat_booked = strat_held = 0
+        if not d.empty:
+            won_wk = d_won & _in(d_close, bs, be)
+            closed = int(won_wk.sum())
+            revenue = float(d.loc[won_wk, "amount"].fillna(0).astype(float).sum())
+        else:
+            closed, revenue = 0, 0.0
+        if not cl.empty:
+            call_wk = _in(cl_start, bs, be)
+            dials = int(call_wk.sum())
+            connects = int((call_wk & cl_answered).sum())
+        else:
+            dials = connects = 0
+        rows.append({
+            "period_label": label, "period_start": bs,
+            "leads": leads, "disco_booked": disco_booked, "disco_held": disco_held,
+            "strat_booked": strat_booked, "strat_held": strat_held,
+            "closed": closed, "revenue": revenue,
+            "dials": dials, "connects": connects,
+            "connect_rate": _safe_div(connects, dials),
+            "show_rate": _safe_div(disco_held, disco_booked),
+            "book_rate": _safe_div(strat_booked, disco_held),
+            "close_rate": _safe_div(closed, strat_held),
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
 def weekly_metrics(
     *,
     fb: pd.DataFrame,
