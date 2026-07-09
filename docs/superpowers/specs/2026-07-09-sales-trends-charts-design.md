@@ -12,14 +12,15 @@ Add a "Sales Trends" section to the SALES tab: line charts of the sales funnel a
 - **Granularity:** a Weekly / Monthly toggle the manager controls (radio in the section).
 - **Charts (all four):** Funnel volume by stage; Conversion rates; SDR call activity; Sales & revenue.
 - **Breakdown:** team total by default, with a rep dropdown that filters every chart to one person ("Team (all)" default).
-- **Period:** the active window (global date selector + the Sales-tab view radio). Trends bucket whatever window is active; a caption tells the manager to widen the range for longer trends.
+- **Period:** a **dedicated date-range picker inside the Sales Trends section**, independent of the global window / Sales-tab view. Default = last 90 days (≈ 13 weekly points). The manager sets any start/end here; the trends bucket THAT range.
 - **Chart library:** Plotly (already a dependency, `plotly>=5.24.1`, currently unused). `plotly.express` for the multi-line charts; `plotly.graph_objects` with a secondary y-axis for the two dual-axis charts.
 
 ## Placement & controls
 
 New `st.subheader("Sales Trends")` in `sections/sales.py` after SME Performance, before Asset Performance. At the top of the section:
+- **Date range** picker (dedicated to this section): a start + end `st.date_input` pair, defaulting to the last 90 days. Independent of the global date selector. This range is what the trends bucket + load over.
 - **Granularity** radio: Weekly (Mon-Sun) / Monthly (calendar month).
-- **Rep** selectbox: "Team (all)" + each owner present in the window (resolved via `cfg.resolve_owner`); selecting one filters all charts to that owner.
+- **Rep** selectbox: "Team (all)" + each owner present in the trends range (resolved via `cfg.resolve_owner`); selecting one filters all charts to that owner.
 
 ## The four charts
 
@@ -34,12 +35,13 @@ Each chart is followed by a `st.expander("Show data")` with the underlying tidy 
 
 - **Period-range builder** (pure): given the active `(start, end)` and granularity, return an ordered list of `(label, bucket_start, bucket_end)` — Weekly = Mon-Sun spanning the window; Monthly = calendar months. Generalizes the existing `_week_ranges` (which only counts back from today) to bucket an arbitrary window.
 - **`sales_trends(...)` (new pure function, reconcile.py):** inputs = the window's already-loaded frames (contacts, meetings, deals, contact_deals, aircall calls, fb), the period ranges, and an optional `rep_owner_id`. For each bucket it filters the frames to the bucket dates (and, when `rep_owner_id` is set, to that owner via `sdr_owner` for leads/dials, `bds` for discovery, `sme` for strategy/close) and computes the metric set by reusing the existing funnel/rollup logic (`executive_kpis`-style stage counts + rates, `sdr_call_activity` for dials/connects, deals for sales/revenue). Returns a tidy DataFrame: one row per (period), columns for each metric. Team = no rep filter.
-- **Load once, bucket in memory:** `render_sales` already loads the window's frames; `sales_trends` slices them per bucket — no extra API calls.
-- **Render** (`sales.py`): controls + build period ranges + call `sales_trends` + draw the 4 charts (Plotly) + data-table expanders.
+- **Own data load for the trends range:** because the section's date range is independent of (and usually wider than) the active window, it CANNOT reuse `render_sales`'s active-window frames — those wouldn't cover the trends range. The section loads its own frames for its date range via the SAME cached loaders (`load_marketing_contacts`, `load_meetings_in_window`, `load_closed_deals_in_window`, `load_contact_deals`, `load_aircall_calls`, `load_fb_insights`). Loaders are `@st.cache_data(ttl=900)`, so repeated views are cheap; a long first-load range is slower (esp. AirCall pagination) — acceptable, and monthly granularity is the sensible choice for long ranges.
+- **Load once per range, bucket in memory:** `sales_trends` slices the loaded trends-range frames per bucket — no per-bucket API calls.
+- **Render** (`sales.py`): the 3 controls + load trends-range frames + build period ranges + call `sales_trends` + draw the 4 charts (Plotly) + data-table expanders.
 
 ## Data flow
 
-active window -> period ranges (weekly/monthly) -> `sales_trends(frames, ranges, rep)` -> tidy time-series DataFrame -> 4 Plotly charts + tables. Metric definitions reuse the shipped rules (held = `COMPLETE*`, `discovery_mask`, attribution owners), so the trend numbers reconcile with the point-in-time tables above.
+trends date range -> load frames for that range (cached loaders) -> period ranges (weekly/monthly) -> `sales_trends(frames, ranges, rep)` -> tidy time-series DataFrame -> 4 Plotly charts + tables. Metric definitions reuse the shipped rules (held = `COMPLETE*`, `discovery_mask`, attribution owners), so the trend numbers reconcile with the point-in-time tables above (for an overlapping window).
 
 ## Error handling / edge cases
 
