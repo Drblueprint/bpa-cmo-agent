@@ -168,6 +168,8 @@ HS_OWNER_NAMES: dict[str, str] = {
     "89638769": "Peyton",
     "79870794": "Garrett",
     "93727575": "Kyle Naron",       # SDR (added 2026-06-17)
+    "95056529": "Jake Fex",         # SDR (added 2026-06-27)
+    "95056530": "Madison Workman",  # SDR (added 2026-06-27)
     "44815718": "Scott Warren",
     "176135509": "Scott Warren",   # HubSpot owner-ID variant (same person as 44815718)
     "77643349": "Dr. Eric Smith",
