@@ -2034,6 +2034,9 @@ def sales_trends(
         m = meetings.copy()
         if rep_owner_id is not None:
             m = m[m["contact_id"].astype(str).isin(c_ids)]
+        # Drop CANCELED / RESCHEDULED so "booked" counts match the shipped
+        # point-in-time funnel (sales.py / executive.py both drop dead meetings).
+        m = drop_dead_meetings(m)
         m_types = m["activity_type"].fillna("").astype(str).str.lower()
         m_out = m["outcome"].fillna("").astype(str).str.upper()
         m_start = pd.to_datetime(m["start_time"], utc=True, errors="coerce").dt.date
@@ -2081,7 +2084,10 @@ def sales_trends(
         cl_answered = pd.Series(dtype=bool)
 
     def _in(series, bs, be):
-        return series.apply(lambda x: x is not None and bs <= x <= be)
+        # pd.notna guards BOTH None and pd.NaT (a null .dt.date yields NaT, and
+        # `pd.NaT is not None` is True, so a plain None-check would crash the
+        # comparison on any row with a missing/unparseable date).
+        return series.apply(lambda x: bool(pd.notna(x)) and bs <= x <= be)
 
     rows = []
     for label, bs, be in period_ranges:

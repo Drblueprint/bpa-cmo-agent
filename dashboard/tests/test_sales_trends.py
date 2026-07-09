@@ -109,3 +109,60 @@ def test_sales_trends_rep_filter_isolates_owner():
         connect_duration_sec=10,
     ).set_index("period_start")
     assert df.loc[date(2026, 6, 1), "leads"] == 1  # only owner A's lead
+
+
+_ONE_WK = _period_ranges(date(2026, 6, 1), date(2026, 6, 7), "weekly")
+_NO_CALLS = pd.DataFrame(columns=["started_at_utc", "answered_at_utc", "duration",
+                                  "direction", "user_id", "phone_normalized"])
+
+
+def test_sales_trends_handles_null_dates_without_crashing():
+    # Null submission / start_time / close dates must be skipped, not crash
+    # (pd.NaT is not None, so a naive None-check would raise on comparison).
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_submission_date": None, "sdr_owner": "A"},
+        {"hs_id": "2", "typeform_submission_date": "2026-06-03T10:00:00Z", "sdr_owner": "A"},
+    ])
+    meetings = pd.DataFrame([
+        {"contact_id": "2", "activity_type": "15 min call", "outcome": "COMPLETED",
+         "start_time": None},
+        {"contact_id": "2", "activity_type": "15 min call", "outcome": "COMPLETED",
+         "start_time": "2026-06-04T15:00:00Z"},
+    ])
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "won", "amount": 1000.0,
+         "closedate": None, "stage_entry_date": None, "createdate": None},
+    ])
+    df = sales_trends(
+        contacts=contacts, meetings=meetings, deals=deals,
+        contact_deals=pd.DataFrame([{"contact_id": "2", "deal_id": "d1"}]),
+        calls=_NO_CALLS, period_ranges=_ONE_WK, rep_owner_id=None,
+        stages_closed_won={"won"}, aircall_to_sdr_owner={}, connect_duration_sec=10,
+    ).set_index("period_start")
+    assert df.loc[date(2026, 6, 1), "leads"] == 1        # null-submit contact skipped
+    assert df.loc[date(2026, 6, 1), "disco_booked"] == 1  # null-start meeting skipped
+    assert df.loc[date(2026, 6, 1), "closed"] == 0        # null-dated deal skipped
+
+
+def test_sales_trends_drops_canceled_and_rescheduled_bookings():
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_submission_date": "2026-06-02T10:00:00Z", "sdr_owner": "A"},
+    ])
+    meetings = pd.DataFrame([
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "CANCELED",
+         "start_time": "2026-06-03T15:00:00Z"},
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "RESCHEDULED",
+         "start_time": "2026-06-03T16:00:00Z"},
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "COMPLETED",
+         "start_time": "2026-06-04T15:00:00Z"},
+    ])
+    df = sales_trends(
+        contacts=contacts, meetings=meetings,
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount", "closedate",
+                                    "stage_entry_date", "createdate"]),
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        calls=_NO_CALLS, period_ranges=_ONE_WK, rep_owner_id=None,
+        stages_closed_won={"won"}, aircall_to_sdr_owner={}, connect_duration_sec=10,
+    ).set_index("period_start")
+    assert df.loc[date(2026, 6, 1), "disco_booked"] == 1  # dead meetings dropped
+    assert df.loc[date(2026, 6, 1), "disco_held"] == 1
