@@ -1974,6 +1974,28 @@ def _date_in_window(dt_str, start: date, end: date) -> bool:
         return False
 
 
+def _period_ranges(start: date, end: date, granularity: str) -> list[tuple[str, date, date]]:
+    """Ordered (label, bucket_start, bucket_end) buckets spanning [start, end].
+
+    granularity: "weekly" (Mon-Sun weeks) or "monthly" (calendar months).
+    Oldest first. A window shorter than one bucket yields a single bucket.
+    """
+    out: list[tuple[str, date, date]] = []
+    if granularity == "monthly":
+        cur = start.replace(day=1)
+        while cur <= end:
+            nxt = (cur.replace(year=cur.year + 1, month=1, day=1)
+                   if cur.month == 12 else cur.replace(month=cur.month + 1, day=1))
+            out.append((cur.strftime("%b %Y"), cur, nxt - timedelta(days=1)))
+            cur = nxt
+    else:  # weekly (default)
+        cur = start - timedelta(days=start.weekday())  # Monday of start's week
+        while cur <= end:
+            out.append((cur.strftime("%b %d"), cur, cur + timedelta(days=6)))
+            cur = cur + timedelta(days=7)
+    return out
+
+
 def weekly_metrics(
     *,
     fb: pd.DataFrame,
