@@ -3,6 +3,7 @@ FB is the source of truth for spend; Hyros is a secondary diagnostic for ad attr
 from __future__ import annotations
 
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -32,6 +33,36 @@ def _safe_div(num: float, den: float) -> float | None:
     if not den:
         return None
     return num / den
+
+
+_CT_TZ = ZoneInfo("America/Chicago")
+
+
+def business_minutes_between(start_epoch, end_epoch, *, work_start_hour: int = 9,
+                             work_end_hour: int = 17, tz=_CT_TZ):
+    """Minutes between two UTC epoch-second timestamps that fall within
+    work_start_hour..work_end_hour local time on Mon-Fri (weekends + after-hours
+    excluded; holidays not modeled). Returns None if either input is missing,
+    0.0 if end <= start. DST handled via zoneinfo (per-day local windows)."""
+    if start_epoch is None or end_epoch is None \
+            or pd.isna(start_epoch) or pd.isna(end_epoch):
+        return None
+    s = datetime.fromtimestamp(int(start_epoch), tz=timezone.utc).astimezone(tz)
+    e = datetime.fromtimestamp(int(end_epoch), tz=timezone.utc).astimezone(tz)
+    if e <= s:
+        return 0.0
+    total = 0.0
+    day = s.date()
+    while day <= e.date():
+        if day.weekday() < 5:  # Mon-Fri
+            ws = datetime(day.year, day.month, day.day, work_start_hour, tzinfo=tz)
+            we = datetime(day.year, day.month, day.day, work_end_hour, tzinfo=tz)
+            lo = max(s, ws)
+            hi = min(e, we)
+            if hi > lo:
+                total += (hi - lo).total_seconds() / 60.0
+        day = day + timedelta(days=1)
+    return total
 
 
 # Meeting activity_type substrings (lowercased) that count as a Discovery
