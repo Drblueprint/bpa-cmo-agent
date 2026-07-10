@@ -32,6 +32,7 @@ from dashboard.data.reconcile import (
     sales_sme_rollup,
     sales_trends,
     team_total_row,
+    time_to_close,
     windowed_sales_money,
 )
 
@@ -564,36 +565,34 @@ def render_sales(start: date, end: date) -> None:
     st.caption(
         "Only counts leads whose typeform submission falls inside the current "
         "window — measures how fast we contact **fresh** leads, not how long "
-        "ago some old leads first heard from us."
+        "ago some old leads first heard from us. All = raw clock time "
+        "(all hours and weekends included). Prime = business minutes only "
+        "(9-5 Mon-Fri Central)."
     )
     speed_df = compute_speed_to_lead(
         marketing, aircall_calls, lead_window_start=start
     )
     speeds = speed_df["speed_to_lead_minutes"].dropna()
+    speeds_prime = speed_df["speed_to_lead_minutes_prime"].dropna()
+    median_all = float(speeds.median()) if not speeds.empty else None
+    median_prime = float(speeds_prime.median()) if not speeds_prime.empty else None
+    pct_under_5 = float((speeds <= 5).mean()) if not speeds.empty else None
+    pct_under_60s = float((speeds <= 1).mean()) if not speeds.empty else None
 
-    if speeds.empty:
-        median_speed = None
-        pct_under_5 = None
-        pct_under_60s = None
-    else:
-        median_speed = float(speeds.median())
-        pct_under_5 = float((speeds <= 5).mean())
-        pct_under_60s = float((speeds <= 1).mean())
-
-    s1, s2, s3 = st.columns(3)
+    s1, s2, s3, s4 = st.columns(4)
     s1.metric(
-        "Median Speed to Lead",
-        f"{median_speed:.1f} min" if median_speed is not None else "—",
-        help="Median minutes from typeform submission to first outbound AirCall.")
+        "Median Speed to Lead (All)",
+        f"{median_all:.1f} min" if median_all is not None else "—",
+        help="Median minutes from typeform submission to first outbound AirCall, "
+             "all hours and weekends included.")
     s2.metric(
-        "% Under 5 min",
-        _fmt_pct(pct_under_5),
-        help="Share of leads whose first outbound call landed within 5 minutes "
-             "of opt-in. Hormozi's 80% target.")
-    s3.metric(
-        "% Under 60 sec",
-        _fmt_pct(pct_under_60s),
-        help="Share within 60 seconds. Hormozi's stretch goal (50%).")
+        "Median Speed to Lead (Prime)",
+        f"{median_prime:.1f} min" if median_prime is not None else "—",
+        help="Same, counting only 9-5 Mon-Fri Central business minutes.")
+    s3.metric("% Under 5 min", _fmt_pct(pct_under_5),
+              help="Share of leads first called within 5 minutes of opt-in (All).")
+    s4.metric("% Under 60 sec", _fmt_pct(pct_under_60s),
+              help="Share within 60 seconds (All).")
 
     st.divider()
 
@@ -1504,6 +1503,25 @@ def render_sales(start: date, end: date) -> None:
                         display_text="HubSpot ↗"),
                 },
             )
+
+    st.divider()
+    st.subheader("Time to Close")
+    st.caption("Median days to close for closed-won deals in this window. "
+               "All = from the HubSpot contact createdate. Prime = from the first "
+               "discovery-call booking. n = deals in each median.")
+    ttc = time_to_close(deals=deals, contacts=marketing, contact_deals=contact_deals,
+                        meetings=meetings, stages_closed_won=cfg.STAGES_CLOSED_WON)
+    ttc1, ttc2 = st.columns(2)
+    ttc1.metric(
+        "Median Time to Close (All)",
+        f"{ttc['median_days_all']:.0f} days" if ttc['median_days_all'] is not None else "—",
+        delta=f"n={ttc['n_all']}", delta_color="off",
+        help="Contact createdate to close date.")
+    ttc2.metric(
+        "Median Time to Close (Prime)",
+        f"{ttc['median_days_prime']:.0f} days" if ttc['median_days_prime'] is not None else "—",
+        delta=f"n={ttc['n_prime']}", delta_color="off",
+        help="First discovery-call booking to close date.")
 
     # ----- Section: Closed Deals YTD (existing) -----
     st.divider()
