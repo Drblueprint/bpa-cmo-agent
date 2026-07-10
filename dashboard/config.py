@@ -404,6 +404,8 @@ AIRCALL_USER_NAMES: dict[str, str] = {
     "1605109": "Garrett Hustedt",
     "1630108": "Haley Stewart",
     "1937276": "Callum Barton",
+    "1977979": "Kyle Naron",        # SDR (added 2026-07-10)
+    "1999397": "Jake Fex",          # SDR (added 2026-07-10)
 }
 
 # AirCall user_id → HubSpot SDR owner_id (so we can attribute calls to SDR rollups).
@@ -414,6 +416,7 @@ AIRCALL_TO_SDR_OWNER: dict[str, str] = {
     "1523089": "44815718",  # Scott (BDS — included for completeness)
     "1630108": "568393136", # Haley
     "1977979": "93727575",  # Kyle Naron
+    "1999397": "95056529",  # Jake Fex
 }
 
 # AirCall users to EXCLUDE from SDR Call Activity (admins, always-closed seats, etc.).
