@@ -310,7 +310,7 @@ def load_meetings_for_contacts(
     outcome values seen: "SCHEDULED", "RESCHEDULED", "COMPLETE - QUALIFIED",
         "COMPLETE - FUTURE", "COMPLETE - DISQUALIFIED", "COMPLETE - BAMFAM", "NO_SHOW", ...
     """
-    cols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time"]
+    cols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time", "booked_at"]
     if not contact_ids:
         return pd.DataFrame(columns=cols)
 
@@ -349,6 +349,7 @@ def load_meetings_for_contacts(
                 "properties": [
                     "hs_meeting_title", "hs_meeting_outcome",
                     "hs_activity_type", "hs_meeting_start_time",
+                    "hs_createdate",
                 ],
                 "inputs": [{"id": mid} for mid in batch],
             },
@@ -362,6 +363,7 @@ def load_meetings_for_contacts(
                 "activity_type": p.get("hs_activity_type") or "",
                 "outcome": (p.get("hs_meeting_outcome") or "").upper(),
                 "start_time": p.get("hs_meeting_start_time") or "",
+                "booked_at": p.get("hs_createdate") or "",
             }
 
     # 3. Flatten
@@ -390,6 +392,7 @@ def load_meetings_for_contacts(
                 "activity_type": m.get("activity_type", ""),
                 "outcome": m.get("outcome", ""),
                 "start_time": start_str,
+                "booked_at": m.get("booked_at", ""),
             })
     return pd.DataFrame(rows, columns=cols)
 
@@ -406,7 +409,7 @@ def load_meetings_in_window(start: date, end: date) -> pd.DataFrame:
     Multiple contacts on one meeting → multiple rows (first contact wins
     when None — defensive only).
     """
-    cols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time"]
+    cols = ["meeting_id", "contact_id", "activity_type", "outcome", "start_time", "booked_at"]
     token = st.secrets["HUBSPOT_TOKEN"]
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -422,7 +425,8 @@ def load_meetings_in_window(start: date, end: date) -> pd.DataFrame:
             ]
         }],
         "properties": ["hs_activity_type", "hs_meeting_outcome",
-                       "hs_meeting_start_time", "hs_meeting_title"],
+                       "hs_meeting_start_time", "hs_meeting_title",
+                       "hs_createdate"],
         "limit": 100,
     }
     meetings = []
@@ -443,6 +447,7 @@ def load_meetings_in_window(start: date, end: date) -> pd.DataFrame:
                 "outcome": p.get("hs_meeting_outcome") or "",
                 "start_time": p.get("hs_meeting_start_time"),
                 "title": p.get("hs_meeting_title") or "",
+                "booked_at": p.get("hs_createdate"),
             })
         after = (data.get("paging") or {}).get("next", {}).get("after")
         if not after or len(meetings) >= 20000:
@@ -490,6 +495,7 @@ def load_meetings_in_window(start: date, end: date) -> pd.DataFrame:
             "activity_type": m["activity_type"],
             "outcome": m["outcome"],
             "start_time": m["start_time"],
+            "booked_at": m.get("booked_at"),
         })
     return pd.DataFrame(rows, columns=cols)
 
