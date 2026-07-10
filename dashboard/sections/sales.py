@@ -1509,8 +1509,12 @@ def render_sales(start: date, end: date) -> None:
     st.caption("Median days to close for closed-won deals in this window. "
                "All = from the HubSpot contact createdate. Prime = from the first "
                "discovery-call booking. n = deals in each median.")
+    # Use meetings_full (dead-dropped, 180-day floor, NOT window-clipped) so a
+    # deal that closed in-window but booked its first discovery BEFORE the window
+    # still has its Prime anchor. The window-clipped `meetings` frame would drop
+    # that discovery and bias the Prime median toward in-window bookings.
     ttc = time_to_close(deals=deals, contacts=marketing, contact_deals=contact_deals,
-                        meetings=meetings, stages_closed_won=cfg.STAGES_CLOSED_WON)
+                        meetings=meetings_full, stages_closed_won=cfg.STAGES_CLOSED_WON)
     ttc1, ttc2 = st.columns(2)
     ttc1.metric(
         "Median Time to Close (All)",
