@@ -904,7 +904,7 @@ def compute_speed_to_lead(
     Returns DataFrame with columns: hs_id, speed_to_lead_minutes (NaN if no match).
     """
     if contacts.empty:
-        return pd.DataFrame(columns=["hs_id", "speed_to_lead_minutes"])
+        return pd.DataFrame(columns=["hs_id", "speed_to_lead_minutes", "speed_to_lead_minutes_prime"])
 
     contacts = contacts.copy()
     contacts["phone_norm"] = contacts.apply(
@@ -939,7 +939,7 @@ def compute_speed_to_lead(
             & (contacts["lead_in_ts"] >= cutoff_ts)
         ]
         if contacts.empty:
-            return pd.DataFrame(columns=["hs_id", "speed_to_lead_minutes"])
+            return pd.DataFrame(columns=["hs_id", "speed_to_lead_minutes", "speed_to_lead_minutes_prime"])
 
     outbound = calls[calls["direction"] == "outbound"] if not calls.empty else calls
 
@@ -949,7 +949,8 @@ def compute_speed_to_lead(
         lead_in_ts = contact["lead_in_ts"]
         if not phone or pd.isna(lead_in_ts):
             rows.append({"hs_id": contact["hs_id"],
-                         "speed_to_lead_minutes": float("nan")})
+                         "speed_to_lead_minutes": float("nan"),
+                         "speed_to_lead_minutes_prime": float("nan")})
             continue
         matched = outbound[
             (outbound["phone_normalized"] == phone)
@@ -957,12 +958,15 @@ def compute_speed_to_lead(
         ] if not outbound.empty else outbound
         if matched.empty:
             rows.append({"hs_id": contact["hs_id"],
-                         "speed_to_lead_minutes": float("nan")})
+                         "speed_to_lead_minutes": float("nan"),
+                         "speed_to_lead_minutes_prime": float("nan")})
             continue
         first_ts = matched["started_at_utc"].min()
         minutes = (first_ts - lead_in_ts) / 60.0
+        prime = business_minutes_between(lead_in_ts, first_ts)
         rows.append({"hs_id": contact["hs_id"],
-                     "speed_to_lead_minutes": float(minutes)})
+                     "speed_to_lead_minutes": float(minutes),
+                     "speed_to_lead_minutes_prime": (float(prime) if prime is not None else float("nan"))})
 
     return pd.DataFrame(rows)
 
@@ -984,7 +988,8 @@ def sdr_call_activity(
              conv_to_discovery_rate, median_speed_to_lead_min.
     """
     cols = ["user_id", "user_name", "dials", "connects", "connect_rate",
-            "talk_time_min", "conv_to_discovery_rate", "median_speed_to_lead_min"]
+            "talk_time_min", "conv_to_discovery_rate", "median_speed_to_lead_min",
+            "median_speed_to_lead_prime_min"]
 
     if calls.empty:
         return pd.DataFrame(columns=cols)
@@ -1007,6 +1012,8 @@ def sdr_call_activity(
     )
     speed_map = dict(zip(speed_df["hs_id"].astype(str),
                          speed_df["speed_to_lead_minutes"]))
+    speed_prime_map = dict(zip(speed_df["hs_id"].astype(str),
+                               speed_df["speed_to_lead_minutes_prime"]))
 
     # Phone -> list of contact_ids for joining
     contacts_x = contacts.copy()
@@ -1080,6 +1087,14 @@ def sdr_call_activity(
                     user_speeds.append(m)
         median_speed = float(pd.Series(user_speeds).median()) if user_speeds else None
 
+        user_speeds_prime = []
+        for phone in grp["phone_normalized"].unique():
+            for cid in phone_to_contacts.get(phone, []):
+                mp = speed_prime_map.get(cid)
+                if mp is not None and not pd.isna(mp):
+                    user_speeds_prime.append(mp)
+        median_speed_prime = float(pd.Series(user_speeds_prime).median()) if user_speeds_prime else None
+
         rows.append({
             "user_id": str(user_id),
             "user_name": aircall_user_names.get(str(user_id), f"(user {user_id})"),
@@ -1089,11 +1104,13 @@ def sdr_call_activity(
             "talk_time_min": talk_time_min,
             "conv_to_discovery_rate": conv_to_discovery_rate,
             "median_speed_to_lead_min": median_speed,
+            "median_speed_to_lead_prime_min": median_speed_prime,
         })
 
     # Build as object dtype first to preserve None vs NaN distinction for rate columns.
     df = pd.DataFrame(rows, columns=cols)
-    for rate_col in ("connect_rate", "conv_to_discovery_rate", "median_speed_to_lead_min"):
+    for rate_col in ("connect_rate", "conv_to_discovery_rate", "median_speed_to_lead_min",
+                     "median_speed_to_lead_prime_min"):
         if rate_col in df.columns:
             df[rate_col] = pd.array([r.get(rate_col) for r in rows], dtype=object)
     return df.sort_values("dials", ascending=False).reset_index(drop=True)
