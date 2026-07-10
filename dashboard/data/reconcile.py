@@ -1116,6 +1116,81 @@ def sdr_call_activity(
     return df.sort_values("dials", ascending=False).reset_index(drop=True)
 
 
+def time_to_close(*, deals: pd.DataFrame, contacts: pd.DataFrame,
+                  contact_deals: pd.DataFrame, meetings: pd.DataFrame,
+                  stages_closed_won) -> dict:
+    """Median days-to-close over closed-won deals.
+
+    ALL   = contact createdate -> close date.
+    PRIME = first discovery-meeting booked_at (hs_createdate) -> close date.
+    Returns {median_days_all, n_all, median_days_prime, n_prime}. Close date =
+    closedate -> stage_entry_date -> createdate. Negative deltas excluded.
+    """
+    out = {"median_days_all": None, "n_all": 0,
+           "median_days_prime": None, "n_prime": 0}
+    if deals.empty:
+        return out
+    won = set(stages_closed_won)
+    won_deals = deals[deals["dealstage"].isin(won)]
+    if won_deals.empty:
+        return out
+
+    # contact createdate + first discovery booked_at, keyed by contact id
+    created_map: dict[str, "pd.Timestamp"] = {}
+    if not contacts.empty:
+        cc = pd.to_datetime(contacts.get("created"), utc=True, errors="coerce")
+        created_map = dict(zip(contacts["hs_id"].astype(str), cc))
+
+    disco_booked_map: dict[str, "pd.Timestamp"] = {}
+    if not meetings.empty and "booked_at" in meetings.columns:
+        mt = meetings.copy()
+        types = mt["activity_type"].fillna("").astype(str).str.lower()
+        mt = mt[discovery_mask(types)]
+        if not mt.empty:
+            mt["_booked"] = pd.to_datetime(mt["booked_at"], utc=True, errors="coerce")
+            for cid, grp in mt.groupby(mt["contact_id"].astype(str)):
+                b = grp["_booked"].dropna()
+                if not b.empty:
+                    disco_booked_map[cid] = b.min()
+
+    # deal_id -> first associated contact id
+    deal_to_contact: dict[str, str] = {}
+    if not contact_deals.empty:
+        for _, r in contact_deals.iterrows():
+            did = r["deal_id"]
+            if did not in deal_to_contact:
+                deal_to_contact[did] = str(r["contact_id"])
+
+    days_all, days_prime = [], []
+    for _, d in won_deals.iterrows():
+        close = pd.to_datetime(
+            d.get("closedate") or d.get("stage_entry_date") or d.get("createdate"),
+            utc=True, errors="coerce")
+        if pd.isna(close):
+            continue
+        cid = deal_to_contact.get(d["deal_id"])
+        if cid is None:
+            continue
+        created = created_map.get(cid)
+        if created is not None and pd.notna(created):
+            delta = (close - created).days
+            if delta >= 0:
+                days_all.append(delta)
+        booked = disco_booked_map.get(cid)
+        if booked is not None and pd.notna(booked):
+            delta_p = (close - booked).days
+            if delta_p >= 0:
+                days_prime.append(delta_p)
+
+    if days_all:
+        out["median_days_all"] = float(pd.Series(days_all).median())
+        out["n_all"] = len(days_all)
+    if days_prime:
+        out["median_days_prime"] = float(pd.Series(days_prime).median())
+        out["n_prime"] = len(days_prime)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # SALES tab Wave 1 rollups — SDR / BDS / SME with appt-booked + DQ
 # ---------------------------------------------------------------------------

@@ -60,3 +60,37 @@ def test_compute_speed_to_lead_all_and_prime():
     df = compute_speed_to_lead(contacts, calls).set_index("hs_id")
     assert abs(df.loc["1", "speed_to_lead_minutes"] - 3960.0) < 1.0
     assert df.loc["1", "speed_to_lead_minutes_prime"] == 120.0
+
+
+from dashboard.data.reconcile import time_to_close
+
+
+def test_time_to_close_all_and_prime():
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "won", "closedate": "2026-06-30T00:00:00Z",
+         "stage_entry_date": None, "createdate": None},
+        {"deal_id": "d2", "dealstage": "won", "closedate": "2026-06-20T00:00:00Z",
+         "stage_entry_date": None, "createdate": None},
+        {"deal_id": "d3", "dealstage": "open", "closedate": "2026-06-10T00:00:00Z",
+         "stage_entry_date": None, "createdate": None},  # not won -> ignored
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "created": "2026-06-01T00:00:00Z"},   # d1: All = 29 days
+        {"hs_id": "2", "created": "2026-06-10T00:00:00Z"},   # d2: All = 10 days
+    ])
+    contact_deals = pd.DataFrame([
+        {"contact_id": "1", "deal_id": "d1"},
+        {"contact_id": "2", "deal_id": "d2"},
+    ])
+    meetings = pd.DataFrame([
+        # contact 1 first discovery booked 2026-06-15 -> Prime = 15 days to 06-30
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "COMPLETED",
+         "start_time": "2026-06-18T00:00:00Z", "booked_at": "2026-06-15T00:00:00Z"},
+        # contact 2 has NO discovery meeting -> excluded from Prime
+    ])
+    r = time_to_close(deals=deals, contacts=contacts, contact_deals=contact_deals,
+                      meetings=meetings, stages_closed_won={"won"})
+    assert r["n_all"] == 2
+    assert r["median_days_all"] == 19.5      # median(29, 10)
+    assert r["n_prime"] == 1
+    assert r["median_days_prime"] == 15.0     # only contact 1 has a discovery booking
