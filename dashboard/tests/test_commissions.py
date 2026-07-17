@@ -141,3 +141,24 @@ def test_closed_deals_table_exposes_stage_and_entry_dates():
     assert row["dealstage"] == "24094605"
     assert row["entered_primary1"] == "2026-06-15T00:00:00Z"
     assert row["entered_90day"] == "2026-05-01T00:00:00Z"
+
+
+from datetime import date
+from dashboard.data.reconcile import sdr_completions_by_owner
+
+
+def test_sdr_completions_by_owner_warm_cold_and_type():
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "sdr_owner": "S1", "typeform_asset_download": "Top 10 typeform"},  # warm
+        {"hs_id": "2", "sdr_owner": "S1", "typeform_asset_download": ""},                  # cold
+    ])
+    meetings = pd.DataFrame([
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "COMPLETED",
+         "start_time": "2026-06-03T15:00:00Z"},                          # warm disco held
+        {"contact_id": "2", "activity_type": "Strategy Call", "outcome": "COMPLETE - QUALIFIED",
+         "start_time": "2026-06-04T15:00:00Z"},                          # cold strat held
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "SCHEDULED",
+         "start_time": "2026-06-05T15:00:00Z"},                          # not held -> ignored
+    ])
+    out = sdr_completions_by_owner(meetings, contacts, date(2026, 6, 1), date(2026, 6, 30))
+    assert out["S1"] == {"disco_warm": 1, "disco_cold": 0, "strat_warm": 0, "strat_cold": 1}

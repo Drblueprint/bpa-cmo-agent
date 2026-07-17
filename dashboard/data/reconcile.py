@@ -3110,3 +3110,37 @@ def compute_close_commissions(
         "total": sdr_total + bds_total + sme_total + flat_total,
         "n_deals": n,
     }
+
+
+def sdr_completions_by_owner(meetings: pd.DataFrame, contacts: pd.DataFrame,
+                             start: date, end: date) -> dict[str, dict[str, int]]:
+    """Held 15-min + strategy completions in [start, end], grouped by the lead's
+    sdr_owner, split warm (contact has a typeform) vs cold. Held = outcome
+    COMPLETE*. Month = meeting start_time. Returns
+    {sdr_owner: {disco_warm, disco_cold, strat_warm, strat_cold}}."""
+    out: dict[str, dict[str, int]] = {}
+    if meetings.empty or contacts.empty:
+        return out
+    owner_map = dict(zip(contacts["hs_id"].astype(str),
+                         contacts["sdr_owner"].fillna("").astype(str)))
+    warm_map = dict(zip(
+        contacts["hs_id"].astype(str),
+        contacts["typeform_asset_download"].fillna("").astype(str).str.strip() != "",
+    ))
+    types = meetings["activity_type"].fillna("").astype(str).str.lower()
+    outc = meetings["outcome"].fillna("").astype(str).str.upper()
+    mstart = pd.to_datetime(meetings["start_time"], utc=True, errors="coerce").dt.date
+    cid = meetings["contact_id"].astype(str)
+    held = outc.str.startswith("COMPLETE")
+    in_win = mstart.apply(lambda d: bool(pd.notna(d)) and start <= d <= end)
+    sdr = cid.map(owner_map).fillna("")
+    warm = cid.map(warm_map).fillna(False)
+    base = held & in_win & (sdr != "")
+    for kind, kmask in (("disco", discovery_mask(types)),
+                        ("strat", types.str.contains("strategy", na=False))):
+        sub = base & kmask
+        for owner, w in zip(sdr[sub], warm[sub]):
+            rec = out.setdefault(owner, {"disco_warm": 0, "disco_cold": 0,
+                                         "strat_warm": 0, "strat_cold": 0})
+            rec[f"{kind}_{'warm' if w else 'cold'}"] += 1
+    return out
