@@ -97,3 +97,20 @@ def test_multi_deal_totals():
     out = _calc(table)
     assert out["n_deals"] == 2
     assert out["total"] == 2525.0 + 1325.0
+
+
+from dashboard.config import COMMISSION_RATES as CR
+
+
+def test_commission_rates_shape():
+    assert CR["sdr"]["disco_complete"] == {"warm": 20.0, "cold": 100.0}
+    assert CR["sdr"]["strategy_complete"] == {"warm": 100.0, "cold": 100.0}
+    assert CR["sdr"]["full_close"] == {"warm": 200.0, "cold": 400.0}
+    assert CR["sdr"]["ninety_day"] == {"warm": 50.0, "cold": 100.0}
+    assert CR["sdr"]["conversion_bonus"] == {"warm": 150.0, "cold": 300.0}
+    assert CR["bds"] == {"full_close": 300.0, "ninety_day": 50.0, "conversion_bonus": 250.0}
+    assert CR["sme"] == {"full_close": 2000.0, "ninety_day": 500.0, "conversion_bonus": 1500.0}
+    assert CR["gerri_per_close"] == 25.0
+    assert CR["stages"]["full"] == ("24094605", "closedwon")
+    assert CR["stages"]["ninety_day"] == "1123458844"
+    assert CR["stages"]["diy"] == "1163151789"

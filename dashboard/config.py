@@ -278,6 +278,29 @@ SME_CLOSE_COMMISSION: dict[str, float] = {
 # Flat per-close commission (Gerri).
 FLAT_CLOSE_COMMISSION: float = 25.0
 
+# --- COMMISSIONS tab payout matrix (Garrett/Callum review; 2026-07-10) ---
+# Separate from the CAC constants above so the executive CAC number is
+# undisturbed. SDR is warm/cold; BDS/SME/Gerri are flat. Full close = Primary-1;
+# a 90-day pays a base, and converting to Primary-1 pays the bonus (base+bonus =
+# full). DIY closes pay nothing to SDR/BDS/SME (Gerri still counts them).
+COMMISSION_RATES: dict = {
+    "sdr": {
+        "disco_complete":   {"warm": 20.0,  "cold": 100.0},
+        "strategy_complete": {"warm": 100.0, "cold": 100.0},
+        "full_close":       {"warm": 200.0, "cold": 400.0},
+        "ninety_day":       {"warm": 50.0,  "cold": 100.0},
+        "conversion_bonus": {"warm": 150.0, "cold": 300.0},
+    },
+    "bds": {"full_close": 300.0, "ninety_day": 50.0, "conversion_bonus": 250.0},
+    "sme": {"full_close": 2000.0, "ninety_day": 500.0, "conversion_bonus": 1500.0},
+    "gerri_per_close": 25.0,
+    "stages": {
+        "full": ("24094605", "closedwon"),
+        "ninety_day": "1123458844",
+        "diy": "1163151789",
+    },
+}
+
 # --- Stale-data floor (configurable per session) ---
 # Default = 90 days. UI selector allows 120 and 180 for longer-cycle reviews.
 from datetime import date as _date, timedelta as _timedelta
