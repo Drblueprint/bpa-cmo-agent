@@ -930,7 +930,8 @@ def load_closed_deals_in_window(
     from datetime import timezone as _timezone
 
     deal_cols = ["deal_id", "dealname", "amount", "dealstage", "pipeline",
-                 "createdate", "closedate", "stage_entry_date"]
+                 "createdate", "closedate", "stage_entry_date",
+                 "entered_primary1", "entered_90day"]
     start_ms = int(_datetime.combine(start, _datetime.min.time(),
                                        tzinfo=_timezone.utc).timestamp() * 1000)
     end_ms = int(_datetime.combine(end, _datetime.max.time(),
@@ -976,6 +977,8 @@ def load_closed_deals_in_window(
         "filterGroups": filter_groups,
         "properties": ["dealname", "amount", "dealstage", "pipeline",
                        "createdate", "closedate",
+                       "hs_v2_date_entered_24094605",   # Primary-1
+                       "hs_v2_date_entered_1123458844", # 90-Day
                        *stage_entry_props.values()],
         "limit": 100,
     }
@@ -1008,6 +1011,8 @@ def load_closed_deals_in_window(
                 "createdate": p.get("createdate"),
                 "closedate": p.get("closedate"),
                 "stage_entry_date": stage_entry,
+                "entered_primary1": p.get("hs_v2_date_entered_24094605"),
+                "entered_90day": p.get("hs_v2_date_entered_1123458844"),
             })
         after = (data.get("paging") or {}).get("next", {}).get("after")
         if not after or len(deal_rows) >= 10000:
