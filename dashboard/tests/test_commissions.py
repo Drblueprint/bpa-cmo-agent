@@ -162,3 +162,63 @@ def test_sdr_completions_by_owner_warm_cold_and_type():
     ])
     out = sdr_completions_by_owner(meetings, contacts, date(2026, 6, 1), date(2026, 6, 30))
     assert out["S1"] == {"disco_warm": 1, "disco_cold": 0, "strat_warm": 0, "strat_cold": 1}
+
+
+from dashboard.data.reconcile import compute_monthly_commissions
+from dashboard.config import COMMISSION_RATES as CR
+
+_JUN = (date(2026, 6, 1), date(2026, 6, 30))
+_MAY = (date(2026, 5, 1), date(2026, 5, 31))
+
+
+def _deal(did, stage, *, sdr="S1", bds="B1", sme="M1", warm=True,
+          entered_primary1=None, entered_90day=None, closedate=None):
+    return {
+        "hs_id": did, "sdr_owner": sdr, "bds": bds, "sme": sme,
+        "typeform": "Top 10 typeform" if warm else "",
+        "dealstage": stage, "entered_primary1": entered_primary1,
+        "entered_90day": entered_90day, "closedate": closedate, "deal_amount": 0.0,
+    }
+
+
+def test_commissions_direct_full_close_warm():
+    deals = pd.DataFrame([_deal("d1", "24094605", warm=True,
+                                entered_primary1="2026-06-10T00:00:00Z")])
+    res = compute_monthly_commissions(deals, {}, *_JUN, rates=CR)
+    sdr = res["sdr"].set_index("rep_id")
+    assert sdr.loc["S1", "full"] == 200.0 and sdr.loc["S1", "ninety"] == 0.0 and sdr.loc["S1", "conversion"] == 0.0
+    assert res["bds"].set_index("rep_id").loc["B1", "full"] == 300.0
+    assert res["sme"].set_index("rep_id").loc["M1", "full"] == 2000.0
+    assert res["gerri"]["count"] == 1 and res["gerri"]["total"] == 25.0
+
+
+def test_commissions_90day_then_conversion_split_across_months():
+    # Entered 90-day in May, converted to Primary-1 in June. Cold lead.
+    deal = _deal("d2", "24094605", warm=False,
+                 entered_90day="2026-05-20T00:00:00Z",
+                 entered_primary1="2026-06-12T00:00:00Z")
+    deals = pd.DataFrame([deal])
+    may = compute_monthly_commissions(deals, {}, *_MAY, rates=CR)["sdr"].set_index("rep_id")
+    jun = compute_monthly_commissions(deals, {}, *_JUN, rates=CR)["sdr"].set_index("rep_id")
+    assert may.loc["S1", "ninety"] == 100.0 and may.loc["S1", "conversion"] == 0.0 and may.loc["S1", "full"] == 0.0
+    assert jun.loc["S1", "conversion"] == 300.0 and jun.loc["S1", "full"] == 0.0 and jun.loc["S1", "ninety"] == 0.0
+    # BDS/SME conversion in June
+    assert compute_monthly_commissions(deals, {}, *_JUN, rates=CR)["bds"].set_index("rep_id").loc["B1", "conversion"] == 250.0
+    assert compute_monthly_commissions(deals, {}, *_JUN, rates=CR)["sme"].set_index("rep_id").loc["M1", "conversion"] == 1500.0
+
+
+def test_commissions_diy_pays_only_gerri():
+    deals = pd.DataFrame([_deal("d3", "1163151789", entered_primary1=None,
+                                closedate="2026-06-05T00:00:00Z")])
+    res = compute_monthly_commissions(deals, {}, *_JUN, rates=CR)
+    assert res["sdr"].empty or "S1" not in res["sdr"].set_index("rep_id").index
+    assert res["gerri"]["count"] == 1 and res["gerri"]["total"] == 25.0
+
+
+def test_commissions_sdr_call_completions():
+    comps = {"S1": {"disco_warm": 2, "disco_cold": 1, "strat_warm": 1, "strat_cold": 0}}
+    res = compute_monthly_commissions(pd.DataFrame(columns=["hs_id"]), comps, *_JUN, rates=CR)
+    sdr = res["sdr"].set_index("rep_id")
+    # disco: 2*20 + 1*100 = 140 ; strategy: 1*100 = 100
+    assert sdr.loc["S1", "disco"] == 140.0 and sdr.loc["S1", "strategy"] == 100.0
+    assert sdr.loc["S1", "total"] == 240.0

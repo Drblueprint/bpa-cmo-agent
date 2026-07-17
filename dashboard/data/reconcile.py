@@ -3144,3 +3144,97 @@ def sdr_completions_by_owner(meetings: pd.DataFrame, contacts: pd.DataFrame,
                                          "strat_warm": 0, "strat_cold": 0})
             rec[f"{kind}_{'warm' if w else 'cold'}"] += 1
     return out
+
+
+def compute_monthly_commissions(closed_deals: pd.DataFrame,
+                                sdr_completions: dict, start: date, end: date,
+                                *, rates: dict) -> dict:
+    """Per-rep commissions for the month [start, end].
+
+    closed_deals: build_closed_deals_table output (needs sdr_owner, bds, sme,
+      typeform, dealstage, entered_primary1, entered_90day, closedate).
+    sdr_completions: sdr_completions_by_owner(...) output for the SAME month.
+    Returns {"sdr": df, "bds": df, "sme": df, "gerri": {count, total}} where each
+    df has rep_id + component columns + total. No double-pay: a converted deal's
+    90-day base counts in its 90-day month, its bonus in its Primary-1 month.
+    """
+    full_stages = set(rates["stages"]["full"])
+    ninety_stage = rates["stages"]["ninety_day"]
+    diy_stage = rates["stages"]["diy"]
+
+    def _d(v):
+        ts = pd.to_datetime(v, utc=True, errors="coerce")
+        return ts.date() if pd.notna(ts) else None
+
+    def _in(d):
+        return d is not None and start <= d <= end
+
+    # accumulators: role -> rep -> {component: amount}
+    sdr: dict = {}
+    bds: dict = {}
+    sme: dict = {}
+    gerri_count = 0
+
+    def _add(acc, rep, comp, amt):
+        if not rep:
+            return
+        acc.setdefault(rep, {})
+        acc[rep][comp] = acc[rep].get(comp, 0.0) + amt
+
+    for _, r in closed_deals.iterrows():
+        stage = str(r.get("dealstage") or "")
+        warm = str(r.get("typeform") or "").strip() != ""
+        temp = "warm" if warm else "cold"
+        sdr_owner = str(r.get("sdr_owner") or "")
+        bds_owner = str(r.get("bds") or "")
+        sme_owner = str(r.get("sme") or "")
+        p1 = _d(r.get("entered_primary1"))
+        d90 = _d(r.get("entered_90day"))
+        close_d = _d(r.get("closedate"))
+        first_closed = d90 or p1 or close_d  # earliest closed-won signal for Gerri
+        if _in(first_closed):
+            gerri_count += 1
+        if stage == diy_stage:
+            continue  # Gerri only
+        # 90-day base counts in the 90-day month (whether or not it later converts)
+        if d90 is not None and _in(d90):
+            _add(sdr, sdr_owner, "ninety", rates["sdr"]["ninety_day"][temp])
+            _add(bds, bds_owner, "ninety", rates["bds"]["ninety_day"])
+            _add(sme, sme_owner, "ninety", rates["sme"]["ninety_day"])
+        if stage in full_stages:
+            full_month = p1 if p1 is not None else close_d
+            if _in(full_month):
+                if d90 is not None:  # converted -> bonus only
+                    _add(sdr, sdr_owner, "conversion", rates["sdr"]["conversion_bonus"][temp])
+                    _add(bds, bds_owner, "conversion", rates["bds"]["conversion_bonus"])
+                    _add(sme, sme_owner, "conversion", rates["sme"]["conversion_bonus"])
+                else:                # direct full close
+                    _add(sdr, sdr_owner, "full", rates["sdr"]["full_close"][temp])
+                    _add(bds, bds_owner, "full", rates["bds"]["full_close"])
+                    _add(sme, sme_owner, "full", rates["sme"]["full_close"])
+
+    # SDR call completions (this month) — from sdr_completions
+    for owner, c in (sdr_completions or {}).items():
+        disco = c.get("disco_warm", 0) * rates["sdr"]["disco_complete"]["warm"] \
+            + c.get("disco_cold", 0) * rates["sdr"]["disco_complete"]["cold"]
+        strat = c.get("strat_warm", 0) * rates["sdr"]["strategy_complete"]["warm"] \
+            + c.get("strat_cold", 0) * rates["sdr"]["strategy_complete"]["cold"]
+        _add(sdr, owner, "disco", disco)
+        _add(sdr, owner, "strategy", strat)
+
+    def _frame(acc, comps):
+        rows = []
+        for rep, d in acc.items():
+            row = {"rep_id": rep}
+            for comp in comps:
+                row[comp] = float(d.get(comp, 0.0))
+            row["total"] = float(sum(d.values()))
+            rows.append(row)
+        return pd.DataFrame(rows, columns=["rep_id"] + comps + ["total"])
+
+    return {
+        "sdr": _frame(sdr, ["disco", "strategy", "full", "ninety", "conversion"]),
+        "bds": _frame(bds, ["full", "ninety", "conversion"]),
+        "sme": _frame(sme, ["full", "ninety", "conversion"]),
+        "gerri": {"count": gerri_count, "total": gerri_count * rates["gerri_per_close"]},
+    }
