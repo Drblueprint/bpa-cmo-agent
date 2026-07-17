@@ -2655,7 +2655,8 @@ def build_closed_deals_table(
     """
     cols = ["hs_id", "contact_name", "email", "typeform", "group", "asset", "source",
             "tier", "send_contract", "is_marketing", "closedate", "deal_amount",
-            "sales_cycle_days", "sdr_owner", "bds", "sme"]
+            "sales_cycle_days", "sdr_owner", "bds", "sme",
+            "dealstage", "entered_primary1", "entered_90day"]
     if deals.empty or contact_deals.empty or contacts.empty:
         return pd.DataFrame(columns=cols)
 
@@ -2798,6 +2799,9 @@ def build_closed_deals_table(
             "sdr_owner": primary_contact.get("sdr_owner") or "",
             "bds": primary_contact.get("bds") or "",
             "sme": primary_contact.get("sme") or "",
+            "dealstage": deal.get("dealstage") or "",
+            "entered_primary1": deal.get("entered_primary1"),
+            "entered_90day": deal.get("entered_90day"),
         })
 
     df = pd.DataFrame(rows, columns=cols)

@@ -114,3 +114,30 @@ def test_commission_rates_shape():
     assert CR["stages"]["full"] == ("24094605", "closedwon")
     assert CR["stages"]["ninety_day"] == "1123458844"
     assert CR["stages"]["diy"] == "1163151789"
+
+
+import pandas as pd
+from dashboard.data.reconcile import build_closed_deals_table
+
+
+def test_closed_deals_table_exposes_stage_and_entry_dates():
+    deals = pd.DataFrame([{
+        "deal_id": "d1", "dealstage": "24094605", "amount": 5000.0,
+        "closedate": "2026-06-15T00:00:00Z", "stage_entry_date": None,
+        "createdate": "2026-01-01T00:00:00Z",
+        "entered_primary1": "2026-06-15T00:00:00Z", "entered_90day": "2026-05-01T00:00:00Z",
+    }])
+    contacts = pd.DataFrame([{
+        "hs_id": "c1", "name": "X", "email": "x@x.com",
+        "typeform_asset_download": "Top 10 typeform", "sdr_owner": "S", "bds": "B", "sme": "M",
+        "send_contract_options": "", "created": "2026-01-01T00:00:00Z",
+    }])
+    cd = pd.DataFrame([{"contact_id": "c1", "deal_id": "d1"}])
+    t = build_closed_deals_table(
+        deals, cd, contacts, asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={}, source_overrides=None, stage_source_fallback=None,
+    )
+    row = t.iloc[0]
+    assert row["dealstage"] == "24094605"
+    assert row["entered_primary1"] == "2026-06-15T00:00:00Z"
+    assert row["entered_90day"] == "2026-05-01T00:00:00Z"
