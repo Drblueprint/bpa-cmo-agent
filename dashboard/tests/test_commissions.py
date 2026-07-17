@@ -111,7 +111,7 @@ def test_commission_rates_shape():
     assert CR["bds"] == {"full_close": 300.0, "ninety_day": 50.0, "conversion_bonus": 250.0}
     assert CR["sme"] == {"full_close": 2000.0, "ninety_day": 500.0, "conversion_bonus": 1500.0}
     assert CR["gerri_per_close"] == 25.0
-    assert CR["stages"]["full"] == ("24094605", "closedwon")
+    assert CR["stages"]["full"] == ("24094605",)
     assert CR["stages"]["ninety_day"] == "1123458844"
     assert CR["stages"]["diy"] == "1163151789"
 

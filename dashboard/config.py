@@ -295,7 +295,9 @@ COMMISSION_RATES: dict = {
     "sme": {"full_close": 2000.0, "ninety_day": 500.0, "conversion_bonus": 1500.0},
     "gerri_per_close": 25.0,
     "stages": {
-        "full": ("24094605", "closedwon"),
+        # Full close = SALES-V2 Primary-1 only. Default-pipeline "closedwon" is
+        # NOT a real BPA signup (per Dr. Gumm / NEW_CUSTOMER_STAGES) -> no commission.
+        "full": ("24094605",),
         "ninety_day": "1123458844",
         "diy": "1163151789",
     },
