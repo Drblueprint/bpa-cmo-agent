@@ -1154,7 +1154,7 @@ from dashboard.data.paid_media import booked_calls_by_ad_id
 
 
 def _call(ad_id, email, state="QUALIFIED"):
-    return {"lead_email": email, "state": state,
+    return {"email": email, "state": state,
             "raw_first": {"sourceLinkAd": {"adSourceId": ad_id}}}
 
 
@@ -1165,13 +1165,13 @@ def test_booked_calls_by_ad_id_counts_distinct_leads():
 
 
 def test_booked_calls_by_ad_id_falls_back_to_last_source():
-    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+    calls = [{"email": "a@x.com", "state": "QUALIFIED",
               "raw_first": {}, "raw_last": {"sourceLinkAd": {"adSourceId": "999"}}}]
     assert booked_calls_by_ad_id(calls) == {"999": 1}
 
 
 def test_booked_calls_by_ad_id_skips_unattributed_calls():
-    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+    calls = [{"email": "a@x.com", "state": "QUALIFIED",
               "raw_first": {}, "raw_last": {}}]
     assert booked_calls_by_ad_id(calls) == {}
 
@@ -1196,7 +1196,7 @@ def booked_calls_by_ad_id(calls: list[dict]) -> dict[str, int]:
     """
     per_ad: dict[str, set[str]] = {}
     for c in calls:
-        email = (c.get("lead_email") or "").strip().lower()
+        email = (c.get("email") or "").strip().lower()
         if not email:
             continue
         ad_id = None
@@ -1509,7 +1509,7 @@ def test_mature_rate_counts_booked_by_email():
              _lead("b@x.com", "03-01", "NLAP"),
              _lead("c@x.com", "03-01", "NLAP"),
              _lead("d@x.com", "03-01", "NLAP")]
-    calls = [{"lead_email": "a@x.com"}, {"lead_email": "B@X.com"}]
+    calls = [{"email": "a@x.com"}, {"email": "B@X.com"}]
     out = mature_lead_to_call_rate(leads, calls, AS_OF, maturity_days=60)
     assert out["NLAP"]["leads"] == 4
     assert out["NLAP"]["booked"] == 2          # email match is case-insensitive
@@ -1520,7 +1520,7 @@ def test_mature_rate_separates_programs():
     leads = [_lead("a@x.com", "03-01", "NLAP"),
              _lead("b@x.com", "03-01", "EMX"),
              _lead("c@x.com", "03-01", "EMX")]
-    calls = [{"lead_email": "a@x.com"}]
+    calls = [{"email": "a@x.com"}]
     out = mature_lead_to_call_rate(leads, calls, AS_OF, maturity_days=60)
     assert out["NLAP"]["rate"] == 1.0
     assert out["EMX"]["rate"] == 0.0
@@ -1529,7 +1529,7 @@ def test_mature_rate_separates_programs():
 def test_mature_rate_dedupes_repeat_leads_by_email():
     leads = [_lead("a@x.com", "03-01", "NLAP"),
              _lead("a@x.com", "04-01", "NLAP")]
-    calls = [{"lead_email": "a@x.com"}]
+    calls = [{"email": "a@x.com"}]
     out = mature_lead_to_call_rate(leads, calls, AS_OF, maturity_days=60)
     assert out["NLAP"]["leads"] == 1
     assert out["NLAP"]["rate"] == 1.0
@@ -1602,8 +1602,8 @@ def mature_lead_to_call_rate(leads: list[dict], calls: list[dict],
     cutoff = _dt.datetime.combine(as_of, _dt.time.min,
                                   tzinfo=_dt.timezone.utc) - _dt.timedelta(days=maturity_days)
 
-    booked = {(c.get("lead_email") or "").strip().lower()
-              for c in calls if (c.get("lead_email") or "").strip()}
+    booked = {(c.get("email") or "").strip().lower()
+              for c in calls if (c.get("email") or "").strip()}
 
     per: dict[str, set[str]] = {}
     for lead in leads:
@@ -1658,6 +1658,224 @@ Run: `python -m pytest dashboard/tests/test_paid_media.py -v` then
 ```bash
 git add dashboard/data/paid_media.py dashboard/tests/test_paid_media.py
 git commit -m "feat(paid-media): cost per expected booked call (32-day lag fix)"
+```
+
+### AMENDED AGAIN 2026-08-05: per-program CPL targets are the primary flag
+
+Kurt supplied how he actually manages the account, which supersedes the blended
+baseline entirely:
+
+> "EMX leads are naturally going to be higher in CPL but cost per qualified call
+> they should be in the ballpark of the same." / "EMX leads we try to keep under
+> $300 CPL and NLAP we try to keep under $100 CPL."
+
+**Why the blended baseline was wrong.** A single account-wide baseline
+systematically flags every EMX ad as bad and every NLAP ad as good, because the
+programs have structurally different lead costs. Measured on the 14-day window,
+NLAP runs $66.25 CPL and EMX $273.16 - a 4.1x gap that is expected market
+difference, not performance difference. Both are UNDER their own targets
+(-34% and -9%). A blended baseline would have produced a cut list that was
+almost entirely EMX and almost entirely wrong.
+
+**Two lenses, each answering a different question.**
+
+- **Primary, per ad: CPL against its program's CPL target.** This is Kurt's own
+  management metric, it needs no lag correction because leads are instant, and it
+  works identically in all three windows.
+- **Secondary, per program: cost per expected qualified call.** This validates
+  whether a program's CPL target is set correctly. Preliminary measurement is
+  NLAP $700.41 versus EMX $478.03 per qualified call, which is the reverse of
+  what CPL implies and suggests NLAP lead quality is lower. Treat as unconfirmed
+  until computed on the mature cohort.
+
+**Two data-shape corrections that would have caused silent wrong answers.**
+
+1. **Hyros `/calls` records key the email as `email`, not `lead_email`.** Every
+   snippet in this plan has been corrected. Using `lead_email` returns `None` for
+   every record, so all per-ad and per-program call counts silently come out as
+   zero while the code appears to work. Verified against live data.
+2. **The `qualified` boolean is useless as a filter: it is `True` on all 257
+   calls**, including 27 `CANCELLED` and 22 `NO_SHOW`. A qualified call must be
+   selected by `state == "QUALIFIED"` (208 of 257). Filtering on the boolean
+   would count no-shows and cancellations as qualified calls.
+
+- [ ] **Step 11: Write the failing tests**
+
+```python
+from dashboard.data.paid_media import (
+    PROGRAM_CPL_TARGETS, flag_ads_vs_target, is_qualified_call,
+)
+
+T = {"NLAP": 100.0, "EMX": 300.0}
+
+
+def _ad(program, spend, leads, impressions=20000, ad_id="1"):
+    return {"ad_id": ad_id, "program": program, "spend": spend,
+            "trusted_leads": leads, "impressions": impressions}
+
+
+def test_default_targets_carry_kurts_numbers():
+    assert PROGRAM_CPL_TARGETS["NLAP"] == 100.0
+    assert PROGRAM_CPL_TARGETS["EMX"] == 300.0
+
+
+def test_is_qualified_call_uses_state_not_the_boolean():
+    # qualified is True on cancellations and no-shows, so it must be ignored.
+    assert is_qualified_call({"state": "QUALIFIED", "qualified": True}) is True
+    assert is_qualified_call({"state": "CANCELLED", "qualified": True}) is False
+    assert is_qualified_call({"state": "NO_SHOW", "qualified": True}) is False
+    assert is_qualified_call({}) is False
+
+
+def test_flag_over_target():
+    # NLAP $396.10 / 2 leads = $198.05 = 198% of the $100 target
+    out = flag_ads_vs_target([_ad("NLAP", 396.10, 2)], T)
+    assert out[0]["tier"] == "OVER_TARGET"
+    assert round(out[0]["pct_of_target"], 2) == 1.98
+
+
+def test_flag_watch_band_just_under_target():
+    # EMX $4365.40 / 16 = $272.84 = 91% of the $300 target
+    out = flag_ads_vs_target([_ad("EMX", 4365.40, 16)], T)
+    assert out[0]["tier"] == "WATCH"
+
+
+def test_flag_ok_comfortably_under_target():
+    # NLAP $620.42 / 18 = $34.47 = 34% of target
+    out = flag_ads_vs_target([_ad("NLAP", 620.42, 18)], T)
+    assert out[0]["tier"] == "OK"
+
+
+def test_flag_zero_leads_with_real_spend_is_cut_now():
+    # Leads are instantaneous (median 0.0h), so zero leads on real spend has
+    # no lag excuse and is a safe kill signal.
+    out = flag_ads_vs_target([_ad("EMX", 359.59, 0)], T)
+    assert out[0]["tier"] == "CUT_NOW"
+
+
+def test_flag_zero_leads_below_spend_floor_is_not_cut():
+    out = flag_ads_vs_target([_ad("EMX", 120.00, 0)], T, cut_now_spend=250.0)
+    assert out[0]["tier"] == "INSUFFICIENT_DATA"
+
+
+def test_flag_below_judgeability_floor():
+    out = flag_ads_vs_target([_ad("NLAP", 50.0, 0, impressions=400)], T)
+    assert out[0]["tier"] == "INSUFFICIENT_DATA"
+
+
+def test_flag_unknown_program_is_not_guessed():
+    out = flag_ads_vs_target([_ad("THERARAY", 500.0, 2)], T)
+    assert out[0]["tier"] == "NO_TARGET"
+    assert out[0]["pct_of_target"] is None
+
+
+def test_flag_low_lead_count_is_marked_thin():
+    # 2 leads is a weak basis for an OVER_TARGET verdict. The tier stands but
+    # the row must carry a thin-evidence marker so the report can say so.
+    out = flag_ads_vs_target([_ad("NLAP", 396.10, 2)], T, thin_leads=4)
+    assert out[0]["thin_evidence"] is True
+    out2 = flag_ads_vs_target([_ad("NLAP", 620.42, 18)], T, thin_leads=4)
+    assert out2[0]["thin_evidence"] is False
+```
+
+- [ ] **Step 12: Run to verify they fail, then implement**
+
+Run: `python -m pytest dashboard/tests/test_paid_media.py -k "target or qualified_call" -v`
+Expected: FAIL with `ImportError: cannot import name 'PROGRAM_CPL_TARGETS'`
+
+```python
+# Kurt's managed CPL targets per program, 2026-08-05. Defaults only: callers
+# pass their own dict so this stays injectable and testable.
+PROGRAM_CPL_TARGETS = {
+    "NLAP": 100.0,
+    "EMX": 300.0,
+}
+
+QUALIFIED_STATE = "QUALIFIED"
+
+
+def is_qualified_call(call: dict) -> bool:
+    """True only for calls that actually held.
+
+    Hyros sets the `qualified` boolean to True on cancellations and no-shows
+    alike, so it carries no signal. `state` is the real discriminator.
+    """
+    return (call or {}).get("state") == QUALIFIED_STATE
+
+
+def flag_ads_vs_target(rows: list[dict], targets: dict[str, float],
+                       min_impressions: float = 1000.0,
+                       min_spend: float = 100.0,
+                       cut_now_spend: float = 250.0,
+                       over: float = 1.0,
+                       watch: float = 0.8,
+                       thin_leads: int = 4) -> list[dict]:
+    """Tier each ad against its own program's CPL target.
+
+    Per-program rather than blended because lead costs differ structurally by
+    program: a blended baseline would flag an entire program rather than the
+    ads underperforming within it.
+
+    Returns new dicts; does not mutate input.
+    """
+    out = []
+    for r in rows:
+        spend = float(r.get("spend") or 0)
+        impressions = float(r.get("impressions") or 0)
+        leads = float(r.get("trusted_leads") or 0)
+        target = targets.get(r.get("program"))
+        cpl = _div(spend, leads)
+
+        row = dict(r)
+        row["cpl"] = cpl
+        row["target_cpl"] = target
+        row["pct_of_target"] = _div(cpl, target) if (cpl is not None and target) else None
+        row["thin_evidence"] = bool(leads and leads < thin_leads)
+
+        if leads == 0 and spend >= cut_now_spend and impressions >= min_impressions:
+            row["tier"] = "CUT_NOW"
+            row["reason"] = (f"${spend:,.2f} spent, zero leads. Leads land within "
+                             f"an hour of the click, so there is no lag excuse.")
+        elif impressions < min_impressions or spend < min_spend:
+            row["tier"] = "INSUFFICIENT_DATA"
+            row["reason"] = (f"{impressions:,.0f} impressions and ${spend:,.2f} "
+                             f"spend is below the {min_impressions:,.0f} / "
+                             f"${min_spend:,.2f} floor. Let it run.")
+        elif target is None:
+            row["tier"] = "NO_TARGET"
+            row["reason"] = (f"No CPL target on record for program "
+                             f"{r.get('program')!r}, so nothing to judge against.")
+        elif cpl is None:
+            row["tier"] = "INSUFFICIENT_DATA"
+            row["reason"] = f"${spend:,.2f} spent, no leads yet, below the cut floor."
+        else:
+            ratio = cpl / target
+            if ratio > over:
+                row["tier"] = "OVER_TARGET"
+                row["reason"] = (f"${cpl:,.2f} CPL is {ratio*100:.0f}% of the "
+                                 f"${target:,.0f} {r.get('program')} target.")
+            elif ratio > watch:
+                row["tier"] = "WATCH"
+                row["reason"] = (f"${cpl:,.2f} CPL is {ratio*100:.0f}% of the "
+                                 f"${target:,.0f} target, inside the watch band.")
+            else:
+                row["tier"] = "OK"
+                row["reason"] = (f"${cpl:,.2f} CPL is {ratio*100:.0f}% of the "
+                                 f"${target:,.0f} target.")
+        out.append(row)
+    return out
+```
+
+Note the branch order: `CUT_NOW` is tested **before** the judgeability floor,
+because an ad with real spend and zero leads is judgeable on spend alone and must
+not be excused as thin data. But it still requires `min_impressions`, so a
+low-delivery ad is not killed for failing to deliver.
+
+- [ ] **Step 13: Run the file, then the full suite, then commit**
+
+```bash
+git add dashboard/data/paid_media.py dashboard/tests/test_paid_media.py
+git commit -m "feat(paid-media): per-program CPL target flagging + qualified-call state fix"
 ```
 
 ---
