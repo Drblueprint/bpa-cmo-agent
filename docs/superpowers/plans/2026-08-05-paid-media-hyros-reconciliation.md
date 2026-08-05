@@ -492,6 +492,36 @@ FB `ad_id` exactly, and 10 of 12 `adSource.adSourceId` values match a FB
 `adset_id` with zero ad-level collisions. Document this table in the docstring so
 later tasks join on numeric IDs rather than fuzzy-matching names.
 
+- [ ] **Step 10: Pull a wide COHORT window for leads and calls**
+
+Required by the cost-per-expected-booked-call metric (see Task 7 amendment).
+Booked calls lag clicks by a median of 32 days, so a 14-day window cannot measure
+what fraction of leads eventually book. That rate has to come from an older
+cohort that has had time to settle.
+
+Add a fifth window and pull leads and calls for it:
+
+```python
+COHORT = (date(2026, 1, 1), date(2026, 8, 4))
+```
+
+Write `hyros_cohort_leads.json` and `hyros_cohort_calls.json` using the exact same
+pagination helper and the same `flatten()` logic as the windowed pulls. Same
+skip-if-exists and `--force` behavior.
+
+Two things to be careful about:
+
+- **This is a much larger pull** than the 14-day windows (expect on the order of
+  1,500 to 2,500 leads and a similar number of calls, so roughly 10 pages each at
+  `pageSize=250`). Keep the `time.sleep(0.3)` between pages. Print progress per
+  page so a stall is visible.
+- **Do not filter the cohort by date in the probe.** Pull the full range and let
+  the pure logic in Task 7 decide the maturity cutoff. The probe's job is I/O
+  only.
+
+Print the row counts and the earliest and latest `created` value in each file so
+the range actually retrieved can be confirmed against what was requested.
+
 ---
 
 ### Task 3: HubSpot probe, third lead count and booked calls
@@ -1425,9 +1455,235 @@ git add dashboard/data/paid_media.py dashboard/tests/test_paid_media.py
 git commit -m "feat(paid-media): baseline computation + four-tier cut list engine"
 ```
 
+### AMENDED 2026-08-05: primary metric is COST PER EXPECTED BOOKED CALL
+
+Kurt's ruling, after live data showed the originally approved metric is invalid.
+
+**Why the change.** Click-to-booked-call lag measured on 119 attributed calls:
+median **32 days**, only 37% inside 3 days, only **47% inside 14 days**, p75 194
+days. Cost per booked call in a 3, 7, or 14-day window therefore measures how
+fast an audience happens to book, not ad quality, and the original
+`CUT_NOW` rule ("zero booked calls") would kill healthy long-nurture ads.
+By contrast click-to-lead lag is median **0.0 hours, 90% inside one hour**, so
+lead-based metrics are valid in all three windows.
+
+**The good news: `tier_ads` and `compute_baselines` need no structural change.**
+Neither cares where the `booked_calls` value came from. Feed them *expected*
+calls instead of observed ones and every threshold, ratio, and tier boundary
+keeps working. Two new pure functions produce that input.
+
+**One rule improves as a side effect.** `CUT_NOW` fires on zero calls plus spend.
+With expected calls, any ad with leads has non-zero expected calls, so `CUT_NOW`
+now effectively fires on **zero leads** with $250+ spend. That is a valid kill
+signal precisely because leads are instantaneous, so there is no lag excuse.
+The rule that was dangerous on observed calls is sound on expected calls.
+
+- [ ] **Step 6: Write the failing tests for the two new functions**
+
+```python
+import datetime as dt
+
+from dashboard.data.paid_media import (
+    mature_lead_to_call_rate, expected_calls,
+)
+
+AS_OF = dt.date(2026, 8, 4)
+
+
+def _lead(email, click_day, campaign):
+    return {"email": email,
+            "raw_first": {"UTCClickDate": f"2026-{click_day}T12:00:00Z",
+                          "category": {"name": campaign}}}
+
+
+def test_mature_rate_excludes_immature_leads():
+    # 07-20 is 15 days before AS_OF, well inside the 60-day maturity cutoff,
+    # so this lead must be ignored entirely rather than counted as un-booked.
+    leads = [_lead("fresh@x.com", "07-20", "NLAP")]
+    out = mature_lead_to_call_rate(leads, [], AS_OF, maturity_days=60)
+    assert out == {}
+
+
+def test_mature_rate_counts_booked_by_email():
+    leads = [_lead("a@x.com", "03-01", "NLAP"),
+             _lead("b@x.com", "03-01", "NLAP"),
+             _lead("c@x.com", "03-01", "NLAP"),
+             _lead("d@x.com", "03-01", "NLAP")]
+    calls = [{"lead_email": "a@x.com"}, {"lead_email": "B@X.com"}]
+    out = mature_lead_to_call_rate(leads, calls, AS_OF, maturity_days=60)
+    assert out["NLAP"]["leads"] == 4
+    assert out["NLAP"]["booked"] == 2          # email match is case-insensitive
+    assert out["NLAP"]["rate"] == 0.5
+
+
+def test_mature_rate_separates_programs():
+    leads = [_lead("a@x.com", "03-01", "NLAP"),
+             _lead("b@x.com", "03-01", "EMX"),
+             _lead("c@x.com", "03-01", "EMX")]
+    calls = [{"lead_email": "a@x.com"}]
+    out = mature_lead_to_call_rate(leads, calls, AS_OF, maturity_days=60)
+    assert out["NLAP"]["rate"] == 1.0
+    assert out["EMX"]["rate"] == 0.0
+
+
+def test_mature_rate_dedupes_repeat_leads_by_email():
+    leads = [_lead("a@x.com", "03-01", "NLAP"),
+             _lead("a@x.com", "04-01", "NLAP")]
+    calls = [{"lead_email": "a@x.com"}]
+    out = mature_lead_to_call_rate(leads, calls, AS_OF, maturity_days=60)
+    assert out["NLAP"]["leads"] == 1
+    assert out["NLAP"]["rate"] == 1.0
+
+
+def test_mature_rate_applies_group_of_mapper():
+    leads = [_lead("a@x.com", "03-01", "DS | __NLAP__ Funnel Setup | CBO")]
+    out = mature_lead_to_call_rate(leads, [], AS_OF, maturity_days=60,
+                                   group_of=lambda name: "NLAP")
+    assert "NLAP" in out
+
+
+def test_expected_calls_multiplies_leads_by_rate():
+    assert expected_calls(10, 0.25) == 2.5
+
+
+def test_expected_calls_none_rate_returns_none():
+    assert expected_calls(10, None) is None
+
+
+def test_expected_calls_zero_rate_returns_zero_not_none():
+    # A program with a real, measured 0% booking rate is information, not
+    # missing data. It must produce 0 expected calls so the ad tiers as
+    # unprofitable rather than as unjudgeable.
+    assert expected_calls(10, 0.0) == 0.0
+```
+
+- [ ] **Step 7: Run to verify they fail**
+
+Run: `python -m pytest dashboard/tests/test_paid_media.py -k "mature or expected_calls" -v`
+Expected: FAIL with `ImportError: cannot import name 'mature_lead_to_call_rate'`
+
+- [ ] **Step 8: Implement**
+
+```python
+def _parse_dt(value):
+    """Parse a Hyros timestamp. Handles ISO with offset or Z, and the
+    'Wed Aug 05 04:01:36 UTC 2026' form. Returns a timezone-aware datetime
+    or None.
+    """
+    import datetime as _dt
+    if not value:
+        return None
+    s = str(value).strip()
+    try:
+        d = _dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=_dt.timezone.utc)
+    except ValueError:
+        pass
+    try:
+        return _dt.datetime.strptime(
+            s, "%a %b %d %H:%M:%S UTC %Y").replace(tzinfo=_dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+def mature_lead_to_call_rate(leads: list[dict], calls: list[dict],
+                             as_of, maturity_days: int = 60,
+                             group_of=None) -> dict[str, dict]:
+    """Per-program share of leads that eventually booked a call.
+
+    Only leads whose click is at least `maturity_days` before `as_of` are
+    counted, because booked calls lag clicks by a median of 32 days. Including
+    recent leads would understate every rate.
+
+    `group_of` optionally maps a campaign name to a program label; without it
+    the campaign name is the label. Counting is per distinct email.
+    """
+    import datetime as _dt
+    cutoff = _dt.datetime.combine(as_of, _dt.time.min,
+                                  tzinfo=_dt.timezone.utc) - _dt.timedelta(days=maturity_days)
+
+    booked = {(c.get("lead_email") or "").strip().lower()
+              for c in calls if (c.get("lead_email") or "").strip()}
+
+    per: dict[str, set[str]] = {}
+    for lead in leads:
+        src = lead.get("raw_first") or lead.get("raw_last") or {}
+        clicked = _parse_dt(src.get("UTCClickDate") or src.get("clickDate"))
+        if clicked is None or clicked > cutoff:
+            continue
+        campaign = (src.get("category") or {}).get("name")
+        if not campaign:
+            continue
+        label = group_of(campaign) if group_of else campaign
+        if not label:
+            continue
+        email = (lead.get("email") or "").strip().lower()
+        if not email:
+            continue
+        per.setdefault(label, set()).add(email)
+
+    out = {}
+    for label, emails in per.items():
+        n = len(emails)
+        b = len(emails & booked)
+        out[label] = {"leads": n, "booked": b, "rate": _div(b, n)}
+    return out
+
+
+def expected_calls(leads: float, rate: float | None) -> float | None:
+    """Leads multiplied by the program's mature booking rate.
+
+    Returns None only when the rate is unknown. A measured rate of 0.0 yields
+    0.0 expected calls, which is a real answer and not missing data.
+    """
+    if rate is None:
+        return None
+    return float(leads or 0) * float(rate)
+```
+
+- [ ] **Step 9: Update the `tier_ads` reason wording**
+
+`tier_ads` logic is unchanged, but its `reason` strings say "booked call" and
+will now be describing expected calls. Change every occurrence of
+`per booked call` to `per expected booked call` in the reason strings, and
+change `on {calls:.0f} calls of history` to
+`on {calls:.1f} expected calls`. Update the existing reason-text assertions in
+the Task 7 tests to match. Do not change any threshold or branch condition.
+
+- [ ] **Step 10: Run the full file, then the full suite, then commit**
+
+Run: `python -m pytest dashboard/tests/test_paid_media.py -v` then
+`python -m pytest dashboard/tests -q`. Both must be green.
+
+```bash
+git add dashboard/data/paid_media.py dashboard/tests/test_paid_media.py
+git commit -m "feat(paid-media): cost per expected booked call (32-day lag fix)"
+```
+
 ---
 
-### Task 8: Funnel tracking audit
+### Task 8: Funnel tracking audit - CANCELLED 2026-08-05 by Kurt
+
+**Do not execute this task.** Kurt narrowed scope: report the raw count
+differences between FB, Hyros, and HubSpot so the size of the gap is known, and
+leave the cause alone. No funnel page inspection, no pixel diagnosis, now or
+later.
+
+What survives, and where it moved:
+
+- **The count comparison stays**, delivered by Task 5's `reconcile_lead_counts`
+  and presented in Task 9's report section 2. That is the whole of the tracking
+  content now: gap size, not gap cause.
+- **The FB entity pull in Task 1 is still required**, for two reasons unrelated
+  to tracking. First, `effective_status` per ad is the only way to know which ads
+  are ACTIVE, and the flagging system only flags live ads. Insights rows do not
+  carry status. Second, `body` and `title` carry the running ad copy, which
+  grounds the copy and creative recommendations in Task 9 section 6. Only
+  `link_url` becomes dead, and it costs nothing to keep in the same request.
+
+Everything below this line is retained for record only and must not be run.
+
+### Task 8 (CANCELLED - original text follows, do not execute)
 
 **Files:**
 - Read: `fb_entities.json` from Task 1 (scratchpad)
@@ -1508,12 +1764,23 @@ Confirm all three against the full per-window `/sales` pulls rather than the two
 discovery samples. Report the count of sales records carrying any source block
 versus none, and the distribution of `usdPrice.price` values.
 
-**On the 1000x suspicion, do not assert it without checking the other side.**
-Task 3 must read the actual HubSpot `deal.amount` for at least two of the emails
-appearing in `/sales`. If HubSpot says 40000 and Hyros says 40.00, the unit
-mismatch is confirmed. If HubSpot also says 40, then the deal amounts themselves
-are placeholders and Hyros is faithfully reporting them. These lead to opposite
-recommendations, so the check is required before either is reported.
+**CANCELLED 2026-08-05 by Kurt. Do not investigate revenue at all.**
+
+The $40 versus $40,000 gap is **deliberate**: BPA reports a reduced sale value to
+Hyros because Hyros prices its subscription off tracked revenue, so sending true
+deal amounts would raise their monthly bill. It is not a unit bug and must not be
+reported as one.
+
+Consequences for this plan:
+- **Drop the entire revenue and ROAS thread.** No `deal.amount` cross-check in
+  Task 3. No revenue diagnosis in the report. Hyros revenue is a billing
+  artifact, not business truth.
+- The `/sales` per-window pull stays only because it is already built and costs
+  nothing to keep. Nothing in the report may be derived from it.
+- Kurt's restated scope: pull the Facebook Ads Manager report and build a system
+  that flags underperforming ads across the three time frames. The lead-level
+  cross-reference stays, because trusting cost per lead and cost per booked call
+  depends on it. Revenue does not enter the flagging system.
 
 Do not change any configuration in Hyros or HubSpot.
 
