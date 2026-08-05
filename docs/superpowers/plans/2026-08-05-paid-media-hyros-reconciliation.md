@@ -445,6 +445,53 @@ git add dashboard/probes/paid_media_hyros_probe.py
 git commit -m "feat(probe): Hyros leads probe retaining full source objects + endpoint discovery"
 ```
 
+### AMENDED 2026-08-05 after endpoint discovery returned results
+
+Discovery resolved the open question. `/calls` and `/sales` both return HTTP 200,
+and `/ads` does too. `/orders`, `/order`, `/call`, and `/campaigns` are 404.
+Add per-window pulls for the two that matter, because sampling them in discovery
+is not enough:
+
+- [ ] **Step 7: Pull `/calls` per window into `hyros_calls_<window>.json`**
+
+`/calls` records carry a FULL `firstSource` / `lastSource` block, identical in
+shape to a lead's. That means booked calls are attributable at ad level straight
+from Hyros, with no HubSpot derivation needed. Reuse the same pagination helper
+(`/calls` returns `nextPageId`, same as `/leads`). Flatten with the same
+`flatten()` source logic, keeping `raw_first` / `raw_last`, and additionally
+retain: `id`, `name` (the call type, e.g. "Protocol Mapping Call"), `state`,
+`qualified`, `creationDate`, `externalId` (this is the HubSpot engagement id),
+and `lead.email` lowercased.
+
+- [ ] **Step 8: Pull `/sales` per window into `hyros_sales_<window>.json`**
+
+`/sales` returns HTTP 200 with real non-zero dollar amounts, which **contradicts
+the design document's premise that Hyros receives no purchase events.** It
+receives them. Retain: `id`, `orderId`, `creationDate`, `usdPrice.price`,
+`product.name`, `product.tag`, `provider.integration.type`, `lead.email`
+lowercased, and whether a `firstSource` key is present at all.
+
+Note `/sales` has no `nextPageId` in its response keys, so do not assume the
+lead pagination scheme applies. Check the actual payload and report what you find.
+
+- [ ] **Step 9: Record the source-tier mapping in the module docstring**
+
+Verified against live data, the Hyros source hierarchy maps onto Facebook as:
+
+| Hyros field | Facebook equivalent |
+|---|---|
+| `firstSource.category.name` | campaign name |
+| `firstSource.name` | ad set name |
+| `firstSource.adSource.adSourceId` | **ad set id** |
+| `firstSource.sourceLinkAd.name` | ad name |
+| `firstSource.sourceLinkAd.adSourceId` | **ad id** |
+| `firstSource.adSource.adAccountId` | ad account id |
+
+Confirmed by ID join: 14 of 17 distinct `sourceLinkAd.adSourceId` values match a
+FB `ad_id` exactly, and 10 of 12 `adSource.adSourceId` values match a FB
+`adset_id` with zero ad-level collisions. Document this table in the docstring so
+later tasks join on numeric IDs rather than fuzzy-matching names.
+
 ---
 
 ### Task 3: HubSpot probe, third lead count and booked calls
@@ -1060,6 +1107,87 @@ git add dashboard/data/paid_media.py dashboard/tests/test_paid_media.py
 git commit -m "feat(paid-media): contact-level booked-call attribution join"
 ```
 
+### AMENDED 2026-08-05 after Hyros source structure was verified
+
+Two changes, both because live data proved better inputs exist than this task
+was designed around.
+
+**1. Join on FB ad IDs, not source-name strings.** The original design keys
+`booked_calls_by_source` on `first_source_name`, which live data shows is the
+**ad set** name, not the ad name. Keying on it would silently attribute every ad
+in a set to one bucket. Add a second function keyed on the verified numeric id:
+
+- [ ] **Step 6: Write the failing tests for `booked_calls_by_ad_id`**
+
+```python
+from dashboard.data.paid_media import booked_calls_by_ad_id
+
+
+def _call(ad_id, email, state="QUALIFIED"):
+    return {"lead_email": email, "state": state,
+            "raw_first": {"sourceLinkAd": {"adSourceId": ad_id}}}
+
+
+def test_booked_calls_by_ad_id_counts_distinct_leads():
+    calls = [_call("111", "a@x.com"), _call("111", "a@x.com"),
+             _call("111", "b@x.com"), _call("222", "c@x.com")]
+    assert booked_calls_by_ad_id(calls) == {"111": 2, "222": 1}
+
+
+def test_booked_calls_by_ad_id_falls_back_to_last_source():
+    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+              "raw_first": {}, "raw_last": {"sourceLinkAd": {"adSourceId": "999"}}}]
+    assert booked_calls_by_ad_id(calls) == {"999": 1}
+
+
+def test_booked_calls_by_ad_id_skips_unattributed_calls():
+    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+              "raw_first": {}, "raw_last": {}}]
+    assert booked_calls_by_ad_id(calls) == {}
+
+
+def test_booked_calls_by_ad_id_skips_calls_with_no_email():
+    calls = [_call("111", None)]
+    assert booked_calls_by_ad_id(calls) == {}
+```
+
+- [ ] **Step 7: Run the tests to verify they fail, then implement**
+
+Run: `python -m pytest dashboard/tests/test_paid_media.py -k by_ad_id -v`
+Expected: FAIL with `ImportError: cannot import name 'booked_calls_by_ad_id'`
+
+```python
+def booked_calls_by_ad_id(calls: list[dict]) -> dict[str, int]:
+    """Count distinct lead emails per FB ad id from Hyros /calls records.
+
+    Prefers firstSource, falls back to lastSource. Distinct-lead counting
+    matches the dashboard convention: one prospect booking three calls is one
+    booked call for cost purposes.
+    """
+    per_ad: dict[str, set[str]] = {}
+    for c in calls:
+        email = (c.get("lead_email") or "").strip().lower()
+        if not email:
+            continue
+        ad_id = None
+        for key in ("raw_first", "raw_last"):
+            sla = ((c.get(key) or {}).get("sourceLinkAd") or {})
+            if sla.get("adSourceId"):
+                ad_id = str(sla["adSourceId"])
+                break
+        if not ad_id:
+            continue
+        per_ad.setdefault(ad_id, set()).add(email)
+    return {k: len(v) for k, v in per_ad.items()}
+```
+
+Run again. Expected: 4 passed (25 cumulative for this file).
+
+**2. Keep `booked_calls_by_source` as written.** It is not dead code: it is the
+HubSpot-derived cross-check against Hyros' own call count. Two independent
+booked-call numbers that agree raise confidence; if they disagree, that is a
+finding for the report. Do not delete it.
+
 ---
 
 ### Task 7: Pure baseline computation and cut-list tiering
@@ -1353,15 +1481,41 @@ The most common cause of a stable percentage over-report is a `Lead` event on th
 
 Do not submit any funnel form to test this. Submitting creates a real lead in HubSpot and pollutes the data being analyzed.
 
-- [ ] **Step 4: Diagnose the Hyros $0.00 revenue column**
+- [ ] **Step 4: Confirm and document the Hyros $0.00 revenue cause (ANSWERED 2026-08-05)**
 
-Separate defect from the lead over-report. Check, in order:
+This step was written as an investigation. Task 2's discovery already answered it,
+so the job here is confirmation and impact, not diagnosis. The original three
+hypotheses are superseded by direct evidence:
 
-1. Did `hyros_endpoints.json` (Task 2) show an orders or sales endpoint returning 200 with an empty result set? Empty means Hyros is reachable but has no revenue data, pointing at missing event delivery rather than an API problem.
-2. Is the Hyros script present on the funnel pages at all (Step 2's `hyros_scripts` count)? Absent on the money pages means no purchase event can ever fire.
-3. Is revenue expected to arrive from HubSpot deals rather than a checkout? BPA closes on sales calls, not self-serve checkout, so Hyros would need deal values pushed in from HubSpot. If no integration is doing that, $0.00 is the expected consequence of an absent integration, not a broken pixel, and the fix is an integration decision rather than a tracking repair.
+**What is actually true.** `/sales` returns HTTP 200 with real non-zero dollar
+amounts. Hyros is receiving revenue events, contradicting the design document's
+premise that it receives none. The cause of the $0.00 TOTAL REVENUE column is
+narrower and more specific:
 
-Report which of these three it is. Do not change any configuration.
+1. **Sales records carry no ad attribution.** Every sampled `/sales` record has
+   no `firstSource` or `lastSource` key at all, unlike `/leads` and `/calls`
+   records which both carry a full source block. Revenue exists in Hyros but
+   cannot be tied to any ad, ad set, or campaign, so per-campaign revenue is
+   correctly reported as $0.00. The column is not broken; the attribution
+   linkage on sales is absent.
+2. **Sales arrive through the HubSpot integration**, not a checkout. Sampled
+   records show `provider.integration.type` of `HUBSPOT`.
+3. **The amounts look wrong by a factor of 1000.** Sampled records show
+   `usdPrice.price` of `40.0` alongside a `product.tag` of
+   `$hubspot-<name>-40000`. The tag encodes 40000 while the price reads 40.00.
+
+Confirm all three against the full per-window `/sales` pulls rather than the two
+discovery samples. Report the count of sales records carrying any source block
+versus none, and the distribution of `usdPrice.price` values.
+
+**On the 1000x suspicion, do not assert it without checking the other side.**
+Task 3 must read the actual HubSpot `deal.amount` for at least two of the emails
+appearing in `/sales`. If HubSpot says 40000 and Hyros says 40.00, the unit
+mismatch is confirmed. If HubSpot also says 40, then the deal amounts themselves
+are placeholders and Hyros is faithfully reporting them. These lead to opposite
+recommendations, so the check is required before either is reported.
+
+Do not change any configuration in Hyros or HubSpot.
 
 - [ ] **Step 5: No commit**
 
@@ -1422,7 +1576,31 @@ One spec item is deliberately handled in Task 9 rather than in code: **objective
 
 ## Open Risks
 
-1. **Hyros ad-level attribution may not exist.** If `firstSource.name` is a campaign name rather than an ad name, ad-level booked-call attribution collapses to campaign level and the ad-level cut list must be driven by FB leads with a stated caveat. Task 2 Step 5 reveals this. Do not fabricate ad-level precision that the data cannot support.
-2. **Hyros lead counts may not match the extension exactly.** The extension may apply an attribution model the API does not. If Task 2's gate misses by a small margin, report the delta rather than forcing a match.
+1. ~~**Hyros ad-level attribution may not exist.**~~ **RESOLVED 2026-08-05: it
+   exists and is better than hoped.** Hyros carries real Facebook numeric IDs.
+   `sourceLinkAd.adSourceId` matched a FB `ad_id` for 14 of 17 distinct values,
+   and `adSource.adSourceId` matched a FB `adset_id` for 10 of 12 with zero
+   ad-level collisions. Joins are on numeric IDs, not fuzzy names. The 3
+   non-matching ad ids are expected: Hyros attributes on click date, so a lead
+   can be credited to an ad that spent outside the window being pulled.
+2. **Hyros lead counts do NOT match the extension, and no filter reproduces it.**
+   **CONFIRMED 2026-08-05, unresolved by design.** For the checksum window the
+   extension shows 73 while the API returns: 90 leads total, 59 with any source,
+   57 with any Facebook source, and **55 distinct leads touching this FB ad
+   account** by first or last source. Summing first-plus-last credits per
+   campaign gives 109. Ruled out: pagination (verified real two-page round trip
+   with disjoint ids), timezone and day-shift, a 9-way lead-level filter matrix,
+   click-date attribution, and last-source versus first-source. 73 sits between
+   55 and 90 and is not reproducible under any attribution model tested.
+   **Consequence:** the report must present all counts side by side and state
+   that the Ads Manager extension figure cannot be reproduced from the Hyros
+   API. Do not silently adopt whichever number is most convenient, and do not
+   present 73 as validated. The defensible figure for distinct FB-attributed
+   leads is 55 for the checksum window.
+   **Definitional caution:** part of the FB-versus-Hyros gap is definitional
+   rather than error. FB counts pixel Lead events by event date; Hyros counts
+   distinct people by lead creation date with click attribution. The report must
+   say which part of the gap is definitional and which is genuine over-reporting
+   instead of attributing all of it to a tracking bug.
 3. **FB API v19.0 may be retired.** Task 1 Step 5 covers bumping the version.
 4. **Thresholds are provisional.** Kurt approved them as revisable after the first run. Every threshold is a named parameter with a default, so tuning is a call-site change and not a rewrite.
