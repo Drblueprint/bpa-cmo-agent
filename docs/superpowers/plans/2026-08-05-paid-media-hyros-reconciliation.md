@@ -1173,8 +1173,9 @@ def test_tier_every_row_gets_a_human_readable_reason():
              "booked_calls": 0, "trusted_leads": 0}]
     out = tier_ads(rows, BASE)
     assert out[0]["reason"]
-    assert "em dash" not in out[0]["reason"]
     assert "\u2014" not in out[0]["reason"]   # no em dashes in report prose
+    assert "$300.00" in out[0]["reason"]      # cites the actual spend
+    assert "zero booked calls" in out[0]["reason"]
 
 
 def test_tier_missing_baseline_degrades_to_insufficient_data():
