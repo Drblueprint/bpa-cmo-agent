@@ -103,3 +103,51 @@ def test_derive_metrics_all_ratio_keys_none_on_zero_denominators():
                 "cost_per_lp_view", "lp_view_to_lead",
                 "hook_rate", "hold_rate"):
         assert m[key] is None, f"{key} should be None on a zero denominator"
+
+
+from dashboard.data.paid_media import reconcile_lead_counts
+
+
+def test_reconcile_flags_fb_over_report_above_threshold():
+    r = reconcile_lead_counts(fb_leads=20, hyros_leads=11, hubspot_leads=11)
+    assert r["fb_vs_hyros_pct"] > 0.80
+    assert "FB_OVER_REPORT" in r["flags"]
+
+
+def test_reconcile_no_flag_when_sources_agree():
+    r = reconcile_lead_counts(fb_leads=11, hyros_leads=11, hubspot_leads=11)
+    assert r["flags"] == []
+    assert r["fb_vs_hyros_pct"] == 0.0
+
+
+def test_reconcile_small_variance_under_threshold_is_not_flagged():
+    r = reconcile_lead_counts(fb_leads=11, hyros_leads=10, hubspot_leads=10)
+    assert r["fb_vs_hyros_pct"] == 0.10
+    assert "FB_OVER_REPORT" not in r["flags"]
+
+
+def test_reconcile_flags_hyros_without_crm_record():
+    r = reconcile_lead_counts(fb_leads=10, hyros_leads=10, hubspot_leads=4)
+    assert "HYROS_WITHOUT_CRM" in r["flags"]
+
+
+def test_reconcile_flags_untracked_traffic_when_hubspot_leads():
+    r = reconcile_lead_counts(fb_leads=10, hyros_leads=4, hubspot_leads=10)
+    assert "HYROS_UNDERTRACKING" in r["flags"]
+
+
+def test_reconcile_trusted_count_prefers_two_source_agreement():
+    # Hyros and HubSpot agree at 11, FB says 20 -> trust 11
+    r = reconcile_lead_counts(fb_leads=20, hyros_leads=11, hubspot_leads=11)
+    assert r["trusted_count"] == 11
+
+
+def test_reconcile_trusted_count_falls_back_to_hyros_when_all_disagree():
+    r = reconcile_lead_counts(fb_leads=20, hyros_leads=11, hubspot_leads=6)
+    assert r["trusted_count"] == 11
+
+
+def test_reconcile_zero_hyros_does_not_divide_by_zero():
+    r = reconcile_lead_counts(fb_leads=5, hyros_leads=0, hubspot_leads=0)
+    assert r["fb_vs_hyros_pct"] is None
+    assert "HYROS_ZERO_WITH_FB_LEADS" in r["flags"]

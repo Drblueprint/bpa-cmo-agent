@@ -87,3 +87,56 @@ def derive_metrics(row: dict) -> dict:
         "hook_rate": _div(three_sec, impressions),
         "hold_rate": _div(thruplay, three_sec),
     }
+
+
+def reconcile_lead_counts(fb_leads: float, hyros_leads: float,
+                          hubspot_leads: float,
+                          over_report_pct: float = 0.20,
+                          agreement_pct: float = 0.10) -> dict:
+    """Compare the three lead counts for one campaign/adset/ad.
+
+    Hyros is the variance baseline because it is the attribution system of
+    record. `trusted_count` is whichever value two sources agree on within
+    `agreement_pct`, falling back to Hyros when all three disagree.
+    """
+    fb = float(fb_leads or 0)
+    hy = float(hyros_leads or 0)
+    hs = float(hubspot_leads or 0)
+
+    fb_vs_hy = _div(fb - hy, hy)
+    hy_vs_hs = _div(hy - hs, hs)
+
+    flags: list[str] = []
+    if fb_vs_hy is not None and fb_vs_hy > over_report_pct:
+        flags.append("FB_OVER_REPORT")
+    if hy_vs_hs is not None and hy_vs_hs > over_report_pct:
+        flags.append("HYROS_WITHOUT_CRM")
+    if hy_vs_hs is not None and hy_vs_hs < -over_report_pct:
+        flags.append("HYROS_UNDERTRACKING")
+    if hy == 0 and fb > 0:
+        flags.append("HYROS_ZERO_WITH_FB_LEADS")
+
+    def agree(a: float, b: float) -> bool:
+        if a == b:
+            return True
+        rel = _div(abs(a - b), max(a, b))
+        return rel is not None and rel <= agreement_pct
+
+    if agree(hy, hs):
+        trusted = min(hy, hs)
+    elif agree(fb, hy):
+        trusted = hy
+    elif agree(fb, hs):
+        trusted = hs
+    else:
+        trusted = hy
+
+    return {
+        "fb_leads": fb,
+        "hyros_leads": hy,
+        "hubspot_leads": hs,
+        "fb_vs_hyros_pct": fb_vs_hy,
+        "hyros_vs_hubspot_pct": hy_vs_hs,
+        "flags": flags,
+        "trusted_count": trusted,
+    }
