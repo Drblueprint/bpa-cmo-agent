@@ -197,7 +197,7 @@ def booked_calls_by_ad_id(calls: list[dict]) -> dict[str, int]:
     """
     per_ad: dict[str, set[str]] = {}
     for c in calls:
-        email = (c.get("lead_email") or "").strip().lower()
+        email = (c.get("email") or "").strip().lower()
         if not email:
             continue
         ad_id = None

@@ -215,7 +215,7 @@ from dashboard.data.paid_media import booked_calls_by_ad_id
 
 
 def _call(ad_id, email, state="QUALIFIED"):
-    return {"lead_email": email, "state": state,
+    return {"email": email, "state": state,
             "raw_first": {"sourceLinkAd": {"adSourceId": ad_id}}}
 
 
@@ -226,13 +226,13 @@ def test_booked_calls_by_ad_id_counts_distinct_leads():
 
 
 def test_booked_calls_by_ad_id_falls_back_to_last_source():
-    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+    calls = [{"email": "a@x.com", "state": "QUALIFIED",
               "raw_first": {}, "raw_last": {"sourceLinkAd": {"adSourceId": "999"}}}]
     assert booked_calls_by_ad_id(calls) == {"999": 1}
 
 
 def test_booked_calls_by_ad_id_skips_unattributed_calls():
-    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+    calls = [{"email": "a@x.com", "state": "QUALIFIED",
               "raw_first": {}, "raw_last": {}}]
     assert booked_calls_by_ad_id(calls) == {}
 
@@ -240,3 +240,29 @@ def test_booked_calls_by_ad_id_skips_unattributed_calls():
 def test_booked_calls_by_ad_id_skips_calls_with_no_email():
     calls = [_call("111", None)]
     assert booked_calls_by_ad_id(calls) == {}
+
+
+def test_booked_calls_by_ad_id_matches_real_hyros_call_shape():
+    """Pins the live /calls record shape. Hyros keys the email as `email`.
+
+    An earlier version read `lead_email`, which returns None for every real
+    record and silently produced zero booked calls for every ad while the
+    unit tests passed against fixtures that shared the same wrong key.
+    """
+    real_shape = {
+        "id": "cll-abc123",
+        "email": "doc@example.com",
+        "name": "Protocol Mapping Call",
+        "state": "QUALIFIED",
+        "qualified": True,
+        "creationDate": "Wed Aug 05 04:01:36 UTC 2026",
+        "externalId": "114215822451",
+        "first_source_category": "DS | __NLAP__ Funnel Setup | CBO",
+        "first_source_name": "Lookalike 1% Audiences | March 2026 Performers",
+        "last_source_category": None,
+        "last_source_name": None,
+        "raw_first": {"sourceLinkAd": {"name": "The NLAP Protocol | C1 - Copy",
+                                       "adSourceId": "52573926719465"}},
+        "raw_last": {},
+    }
+    assert booked_calls_by_ad_id([real_shape]) == {"52573926719465": 1}
