@@ -151,3 +151,92 @@ def test_reconcile_zero_hyros_does_not_divide_by_zero():
     r = reconcile_lead_counts(fb_leads=5, hyros_leads=0, hubspot_leads=0)
     assert r["fb_vs_hyros_pct"] is None
     assert "HYROS_ZERO_WITH_FB_LEADS" in r["flags"]
+
+
+from dashboard.data.paid_media import is_booked_call, booked_calls_by_source
+
+
+def test_is_booked_call_matches_15_min_and_strategy():
+    assert is_booked_call("15 min call") is True
+    assert is_booked_call("15-Min Discovery") is True
+    assert is_booked_call("Strategy Call") is True
+    assert is_booked_call("Protocol Mapping") is True
+
+
+def test_is_booked_call_rejects_device_intro_calls():
+    # Per Kurt's standing decision these are NOT discovery calls
+    assert is_booked_call("DTI Intro Call") is False
+    assert is_booked_call("TheraRay Intro Call") is False
+    assert is_booked_call("HydroWave Intro Call") is False
+    assert is_booked_call(None) is False
+    assert is_booked_call("") is False
+
+
+def test_booked_calls_by_source_counts_distinct_contacts():
+    hyros = [
+        {"email": "a@x.com", "first_source_name": "AD_A"},
+        {"email": "b@x.com", "first_source_name": "AD_A"},
+        {"email": "c@x.com", "first_source_name": "AD_B"},
+    ]
+    email_to_id = {"a@x.com": "1", "b@x.com": "2", "c@x.com": "3"}
+    meetings = [
+        {"contact_id": "1", "activity_type": "15 min call"},
+        {"contact_id": "1", "activity_type": "Strategy Call"},  # same contact
+        {"contact_id": "3", "activity_type": "15 min call"},
+    ]
+    got = booked_calls_by_source(hyros, email_to_id, meetings)
+    assert got == {"AD_A": 1, "AD_B": 1}   # contact 1 counted once, not twice
+
+
+def test_booked_calls_by_source_ignores_non_discovery_meetings():
+    hyros = [{"email": "a@x.com", "first_source_name": "AD_A"}]
+    meetings = [{"contact_id": "1", "activity_type": "DTI Intro Call"}]
+    got = booked_calls_by_source(hyros, {"a@x.com": "1"}, meetings)
+    assert got == {}
+
+
+def test_booked_calls_by_source_skips_unmatched_emails():
+    hyros = [{"email": "ghost@x.com", "first_source_name": "AD_A"}]
+    meetings = [{"contact_id": "1", "activity_type": "15 min call"}]
+    got = booked_calls_by_source(hyros, {}, meetings)
+    assert got == {}
+
+
+def test_booked_calls_by_source_honours_last_source_key():
+    hyros = [{"email": "a@x.com", "first_source_name": "AD_A",
+              "last_source_name": "AD_Z"}]
+    meetings = [{"contact_id": "1", "activity_type": "15 min call"}]
+    got = booked_calls_by_source(hyros, {"a@x.com": "1"}, meetings,
+                                 source_key="last_source_name")
+    assert got == {"AD_Z": 1}
+
+
+from dashboard.data.paid_media import booked_calls_by_ad_id
+
+
+def _call(ad_id, email, state="QUALIFIED"):
+    return {"lead_email": email, "state": state,
+            "raw_first": {"sourceLinkAd": {"adSourceId": ad_id}}}
+
+
+def test_booked_calls_by_ad_id_counts_distinct_leads():
+    calls = [_call("111", "a@x.com"), _call("111", "a@x.com"),
+             _call("111", "b@x.com"), _call("222", "c@x.com")]
+    assert booked_calls_by_ad_id(calls) == {"111": 2, "222": 1}
+
+
+def test_booked_calls_by_ad_id_falls_back_to_last_source():
+    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+              "raw_first": {}, "raw_last": {"sourceLinkAd": {"adSourceId": "999"}}}]
+    assert booked_calls_by_ad_id(calls) == {"999": 1}
+
+
+def test_booked_calls_by_ad_id_skips_unattributed_calls():
+    calls = [{"lead_email": "a@x.com", "state": "QUALIFIED",
+              "raw_first": {}, "raw_last": {}}]
+    assert booked_calls_by_ad_id(calls) == {}
+
+
+def test_booked_calls_by_ad_id_skips_calls_with_no_email():
+    calls = [_call("111", None)]
+    assert booked_calls_by_ad_id(calls) == {}

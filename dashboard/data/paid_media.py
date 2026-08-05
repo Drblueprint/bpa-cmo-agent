@@ -140,3 +140,73 @@ def reconcile_lead_counts(fb_leads: float, hyros_leads: float,
         "flags": flags,
         "trusted_count": trusted,
     }
+
+
+DISCOVERY_SUBSTRINGS = ("15 min", "15-min", "strategy", "protocol mapping")
+
+# Device/product intro calls are excluded per Kurt's standing decision: they
+# are not discovery calls and must not inflate the booked-call denominator.
+EXCLUDED_SUBSTRINGS = ("intro call",)
+
+
+def is_booked_call(activity_type) -> bool:
+    """True when a meeting activity_type counts as a booked discovery call."""
+    t = (activity_type or "").lower()
+    if not t:
+        return False
+    if any(x in t for x in EXCLUDED_SUBSTRINGS):
+        return False
+    return any(x in t for x in DISCOVERY_SUBSTRINGS)
+
+
+def booked_calls_by_source(hyros_rows: list[dict],
+                           email_to_id: dict[str, str],
+                           meetings: list[dict],
+                           source_key: str = "first_source_name",
+                           ) -> dict[str, int]:
+    """Count distinct contacts per Hyros source label who booked a call.
+
+    Contact-level counting, matching the dashboard convention: one prospect
+    with three meetings is one booked call.
+    """
+    booked_ids = {
+        str(m.get("contact_id")) for m in meetings
+        if is_booked_call(m.get("activity_type")) and m.get("contact_id")
+    }
+
+    per_source: dict[str, set[str]] = {}
+    for row in hyros_rows:
+        label = row.get(source_key)
+        email = (row.get("email") or "").strip().lower()
+        if not label or not email:
+            continue
+        cid = email_to_id.get(email)
+        if not cid or str(cid) not in booked_ids:
+            continue
+        per_source.setdefault(label, set()).add(str(cid))
+
+    return {k: len(v) for k, v in per_source.items()}
+
+
+def booked_calls_by_ad_id(calls: list[dict]) -> dict[str, int]:
+    """Count distinct lead emails per FB ad id from Hyros /calls records.
+
+    Prefers firstSource, falls back to lastSource. Distinct-lead counting
+    matches the dashboard convention: one prospect booking three calls is one
+    booked call for cost purposes.
+    """
+    per_ad: dict[str, set[str]] = {}
+    for c in calls:
+        email = (c.get("lead_email") or "").strip().lower()
+        if not email:
+            continue
+        ad_id = None
+        for key in ("raw_first", "raw_last"):
+            sla = ((c.get(key) or {}).get("sourceLinkAd") or {})
+            if sla.get("adSourceId"):
+                ad_id = str(sla["adSourceId"])
+                break
+        if not ad_id:
+            continue
+        per_ad.setdefault(ad_id, set()).add(email)
+    return {k: len(v) for k, v in per_ad.items()}
