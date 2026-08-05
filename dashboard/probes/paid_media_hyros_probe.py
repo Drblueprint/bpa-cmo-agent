@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, r"C:\Users\kxbox\OneDrive\Desktop\bpa-cmo-agent")
@@ -49,6 +49,14 @@ WINDOWS = {
     "w3": (date(2026, 8, 2), date(2026, 8, 4)),
     "checksum": (date(2026, 7, 21), date(2026, 8, 3)),
 }
+
+# Wide cohort window for the cost-per-expected-booked-call metric (Task 7).
+# Booked calls lag clicks by a median of 32 days, so none of the 14-day
+# windows above can measure what fraction of leads eventually book; that
+# rate needs an older cohort that has had time to settle. This window is
+# pulled in full and NOT date-filtered any further here: the maturity
+# cutoff is pure logic that belongs in Task 7, not in this probe.
+COHORT = (date(2026, 1, 1), date(2026, 8, 4))
 
 CANDIDATES = ["/calls", "/call", "/orders", "/order", "/sales",
               "/attribution", "/ads", "/campaigns"]
@@ -127,13 +135,14 @@ def _pull_all(path: str, start: date, end: date, page_size: int = 250) -> list[d
         if not isinstance(batch, list):
             batch = []
         rows.extend(batch)
+        page += 1
+        print(f"  {path} page {page}: +{len(batch)} rows (running total {len(rows)})")
         next_params = _next_page_params(payload, params)
         if next_params is None and len(batch) == params.get("pageSize"):
             print(f"  WARNING: {path} page returned exactly pageSize="
                   f"{params['pageSize']} rows with no pagination token. "
                   f"This may be silent truncation rather than a genuine "
                   f"last page. top_level_keys={sorted(payload.keys())}")
-        page += 1
         if next_params is None or not batch or page > 80:
             break
         params = next_params
@@ -278,6 +287,73 @@ def _has_ad_source_id(row: dict) -> bool:
     return False
 
 
+def _parse_any_date(value: str):
+    """Best-effort parse of the two date string shapes Hyros returns:
+    ISO8601 with offset (leads' `created`, e.g. "2026-08-03T13:00:04-06:00")
+    and the Java-style toString format calls' `creationDate` uses (e.g.
+    "Wed Aug 05 04:01:36 UTC 2026"). Returns None if neither matches, so
+    callers can fall back to lexicographic min/max rather than crash.
+    """
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    try:
+        parts = value.split()
+        if len(parts) == 6:
+            without_zone = " ".join(parts[:4] + parts[5:6])
+            return datetime.strptime(without_zone, "%a %b %d %H:%M:%S %Y")
+    except ValueError:
+        pass
+    return None
+
+
+def _print_range(label: str, rows: list[dict], date_key: str) -> None:
+    """Print row count and the earliest/latest date_key value actually
+    retrieved, so the range asked for can be checked against the range
+    Hyros actually served. Cohort pulls specifically need this: if Hyros
+    silently caps how far back it serves, that changes downstream maturity
+    math and needs to surface here, not get discovered later.
+    """
+    print(f"{label}: rows={len(rows)}")
+    raw_values = [r.get(date_key) for r in rows if r.get(date_key)]
+    if not raw_values:
+        print(f"{label}: no {date_key} values found")
+        return
+    parsed = [(v, _parse_any_date(v)) for v in raw_values]
+    parsed_ok = [(v, d) for v, d in parsed if d is not None]
+    if len(parsed_ok) == len(raw_values):
+        earliest = min(parsed_ok, key=lambda vd: vd[1])[0]
+        latest = max(parsed_ok, key=lambda vd: vd[1])[0]
+        print(f"{label}: earliest {date_key}={earliest!r}  latest {date_key}={latest!r}")
+    else:
+        print(f"{label}: earliest {date_key}={min(raw_values)!r}  "
+              f"latest {date_key}={max(raw_values)!r}  "
+              f"(lexicographic fallback: only {len(parsed_ok)}/{len(raw_values)} "
+              f"values parsed as a recognized date format)")
+
+
+def _utc_click_date_coverage(rows: list[dict]) -> tuple[int, int]:
+    """Fraction of leads WITH A SOURCE BLOCK that also carry UTCClickDate.
+
+    The denominator is leads that have any source at all (raw_first or
+    raw_last is a dict), not all leads: a lead with no source could never
+    carry UTCClickDate, so including it in the denominator would
+    understate coverage for the population that could possibly have the
+    field. Returns (count_with_utc_click_date, count_with_any_source).
+    """
+    with_source = 0
+    with_utc_click = 0
+    for r in rows:
+        srcs = [r.get("raw_first"), r.get("raw_last")]
+        has_any_source = any(isinstance(s, dict) for s in srcs)
+        if has_any_source:
+            with_source += 1
+            if any(isinstance(s, dict) and s.get("UTCClickDate") for s in srcs):
+                with_utc_click += 1
+    return with_utc_click, with_source
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -324,6 +400,36 @@ def main() -> None:
     else:
         endpoints_path.write_text(
             json.dumps(discover(), indent=1), encoding="utf-8")
+
+    # Wide cohort pull (Step 10). Much bigger than the 14-day windows
+    # (expect ~1,500-2,500 rows each, roughly 10 pages at pageSize=250);
+    # _pull_all already prints per-page progress and sleeps 0.3s between
+    # pages, so a stall here is visible rather than silent.
+    cohort_start, cohort_end = COHORT
+
+    cohort_leads_path = OUT / "hyros_cohort_leads.json"
+    if cohort_leads_path.exists() and not FORCE:
+        print(f"{cohort_leads_path.name} exists, skipping")
+    else:
+        raw = pull_leads(cohort_start, cohort_end)
+        rows = [flatten(x) for x in raw]
+        cohort_leads_path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+        _print_range("cohort leads", rows, "created")
+        with_utc, with_source = _utc_click_date_coverage(rows)
+        if with_source:
+            print(f"cohort leads: UTCClickDate present on {with_utc}/{with_source} "
+                  f"({with_utc / with_source:.0%}) of leads that have any source block")
+        else:
+            print("cohort leads: no leads with a source block, cannot assess UTCClickDate coverage")
+
+    cohort_calls_path = OUT / "hyros_cohort_calls.json"
+    if cohort_calls_path.exists() and not FORCE:
+        print(f"{cohort_calls_path.name} exists, skipping")
+    else:
+        raw = pull_calls(cohort_start, cohort_end)
+        rows = [flatten_call(x) for x in raw]
+        cohort_calls_path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+        _print_range("cohort calls", rows, "creationDate")
 
     # Aggregate diagnostics across all windows, read back from disk (so
     # this is correct even when some windows were skipped this run) and
