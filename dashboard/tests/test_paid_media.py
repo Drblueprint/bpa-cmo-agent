@@ -1,5 +1,6 @@
 from dashboard.data.paid_media import (
     action_value, derive_metrics, LEAD_ACTION_TYPES,
+    _f, first_lead_value,
 )
 
 
@@ -60,3 +61,45 @@ def test_derive_metrics_zero_denominators_are_none_not_crash():
 def test_lead_action_types_prefers_pixel_lead_first():
     assert LEAD_ACTION_TYPES[0] == "offsite_conversion.fb_pixel_lead"
     assert "lead" in LEAD_ACTION_TYPES
+
+
+def test_first_lead_value_prefers_pixel_lead_when_both_present():
+    # FB often reports the same conversions under two action-type labels.
+    # Priority order must win so the same leads are not double counted.
+    actions = [{"action_type": "lead", "value": "9"},
+               {"action_type": "offsite_conversion.fb_pixel_lead", "value": "4"}]
+    assert first_lead_value(actions) == 4.0
+
+
+def test_first_lead_value_falls_through_a_present_but_zero_type():
+    # A zero on the higher-priority type is not a lead count, it is an absent
+    # one. Falling through to the next type is deliberate: it is what makes
+    # the function return the real count instead of 0.
+    actions = [{"action_type": "offsite_conversion.fb_pixel_lead", "value": "0"},
+               {"action_type": "lead", "value": "5"}]
+    assert first_lead_value(actions) == 5.0
+
+
+def test_f_coerces_bad_input_to_zero():
+    assert _f(None) == 0.0
+    assert _f("") == 0.0
+    assert _f("N/A") == 0.0
+    assert _f("12.5") == 12.5
+    assert _f(3) == 3.0
+
+
+def test_derive_metrics_does_not_mutate_its_input():
+    row = {"spend": "100", "impressions": "1000",
+           "inline_link_clicks": "10", "actions": []}
+    before = dict(row)
+    derive_metrics(row)
+    assert row == before
+
+
+def test_derive_metrics_all_ratio_keys_none_on_zero_denominators():
+    m = derive_metrics({"spend": "0", "impressions": "0",
+                        "inline_link_clicks": "0", "actions": []})
+    for key in ("link_cpc", "link_ctr", "cpm_calc", "cpl",
+                "cost_per_lp_view", "lp_view_to_lead",
+                "hook_rate", "hold_rate"):
+        assert m[key] is None, f"{key} should be None on a zero denominator"
