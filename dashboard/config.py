@@ -133,6 +133,10 @@ CAMPAIGN_GROUPS: list[tuple[str, re.Pattern[str]]] = [
     ("PT Recovery",              re.compile(r"__PT__|__Recovery__", re.IGNORECASE)),
     ("TheraRay",                 re.compile(r"__Theraray__", re.IGNORECASE)),
     ("NLAP",                     re.compile(r"__NLAP__", re.IGNORECASE)),
+    # MAP campaigns carry no __TOKEN__ wrapper, unlike the others. Verified
+    # against all 46 distinct campaign names in the trailing 120 days: this
+    # pattern hits the three MAP Protocol campaigns and nothing else.
+    ("MAP",                      re.compile(r"\bMAP Protocol\b", re.IGNORECASE)),
 ]
 
 # EMX rolls up into Chiro totals in addition to being its own row
@@ -158,6 +162,16 @@ ASSET_TO_GROUP: dict[str, str] = {
     "EMX Forth Worth typeform":       "EMX",     # typo "Forth" matches HubSpot's stored value
     "EMX Kansas City 2026":           "EMX",     # year-suffixed variant
     "Practice Growth Workshop Dallas": "Practice Growth Workshop",
+    # --- Added 2026-08-28 from a live 120-day probe. These three labels were
+    # in active use and mapped to nothing, so their leads attributed to no
+    # group: spend still landed in the group, the leads it bought did not, and
+    # cost per lead inflated silently. The first two are renamed variants of
+    # assets already mapped under their older labels (both variants are live).
+    "Top 10 Things Muiltimillion Dollar Practices Do": "Chiro",  # 54 leads/120d
+    "BPA Revenue Pyramid":            "Chiro",   # 16 leads/120d
+    # Trailing space is part of the value HubSpot stores. Removing it makes the
+    # lookup miss silently. Covered by test_map_asset_requires_exact_trailing_space.
+    "Movement Activation Protocol ":  "MAP",     # 13 leads/120d
 }
 
 # --- HubSpot owner ID -> human name mapping ---

@@ -112,3 +112,64 @@ def test_merge_list_group_excludes_emails():
         excluded_emails={"drop@x.com"}, asset_to_group={},
     )
     assert set(out["hs_id"].astype(str)) == {"9"}   # member 1 dropped by email
+
+
+# --- MAP segment + renamed-asset attribution fix (2026-08-28) ---------------
+# Live probe (120d) found three actively-used typeform asset labels mapped to
+# nothing, so their leads attributed to no group at all: 54 + 16 Chiro leads
+# and 13 MAP leads. Two are renamed variants of already-mapped assets. See
+# docs/superpowers/specs/2026-08-27-paid-media-mql-dashboard-design.md.
+
+from dashboard import config as cfg
+
+
+def test_match_group_map_protocol():
+    """MAP Protocol campaigns were matching no group, so their spend was
+    invisible in every group breakdown."""
+    assert match_group(
+        "DS | MAP Protocol Funnel Setup | CBO | USA | Aug 2026 New Images | C1"
+    ) == "MAP"
+    assert match_group(
+        "DS | MAP Protocol Funnel Setup | CBO | USA | Aug 2026 Images | C1-2"
+    ) == "MAP"
+
+
+def test_map_regex_does_not_capture_other_campaigns():
+    """Verified against all 46 distinct campaign names in the trailing 120
+    days: the MAP pattern hits the three MAP campaigns and nothing else."""
+    assert match_group("DS | __Chiro__ Mixed Funnel Setup | CBO | USA") == "Chiro"
+    assert match_group("DS | EMX 2026 Kansas City Mixed Funnel Setup") == "EMX"
+    assert match_group("DS | __NLAP__ Funnel Setup | CBO | USA | CA") == "NLAP"
+    assert match_group("DS | __Theraray__ Funnel Setup | CBO | USA") == "TheraRay"
+
+
+@pytest.mark.parametrize("label,expected", [
+    # Renamed variants of assets already mapped under their old labels.
+    ("Top 10 Things Muiltimillion Dollar Practices Do", "Chiro"),
+    ("BPA Revenue Pyramid", "Chiro"),
+    # NOTE: trailing space is part of the value HubSpot stores. Dropping it
+    # makes the lookup miss silently, which is the bug being fixed here.
+    ("Movement Activation Protocol ", "MAP"),
+])
+def test_renamed_assets_now_attribute(label, expected):
+    assert cfg.ASSET_TO_GROUP.get(label) == expected
+
+
+def test_original_asset_labels_still_mapped():
+    """The old labels stay in place; both variants are live in HubSpot."""
+    assert cfg.ASSET_TO_GROUP["Top 10 typeform"] == "Chiro"
+    assert cfg.ASSET_TO_GROUP["BPA Revenue Pyramid typeform"] == "Chiro"
+
+
+def test_map_asset_requires_exact_trailing_space():
+    """Guard against a future edit 'tidying' the trailing space away."""
+    assert "Movement Activation Protocol " in cfg.ASSET_TO_GROUP
+    assert "Movement Activation Protocol" not in cfg.ASSET_TO_GROUP
+
+
+def test_list_based_assets_stay_unmapped():
+    """TheraRay and NLAP attribute through HubSpot lists 6280 / 7086. Adding
+    asset mappings for them would double-count those leads."""
+    for label in ("TheraRay", "TheraRay Device ", "TheraRay User ",
+                  "NLAP User ", "Neuro-Lymphatic Activation Protocol "):
+        assert label not in cfg.ASSET_TO_GROUP
