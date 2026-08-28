@@ -60,7 +60,7 @@ def _run(contacts, *, meetings=None, bofu=None, fb=None):
             columns=["form_id", "submission_id", "submitted_at", "email"]),
         week_ranges=[WEEK],
         asset_to_group={"TR": "TheraRay", "NL": "NLAP", "CH": "Chiro", "EM": "EMX",
-                        "PGW": "Practice Growth Workshop"},
+                        "PGW": "Practice Growth Workshop", "MP": "MAP"},
         stages_closed_won=set(),
         new_customer_stages=set(),
         goals={},
@@ -202,3 +202,28 @@ def test_pgw_weekly_rows_and_chiro_rollin():
     assert r.loc["chiro_link_clicks", "w0"] == 16          # 4 + 12
     assert r.loc["chiro_lead_magnet_optins", "w0"] == 1    # PGW submit rolls in
     assert r.loc["chiro_new_leads", "w0"] == 1             # PGW submit+created -> net-new
+
+
+def test_map_weekly_rows_and_combined_rollin():
+    fb = pd.DataFrame([
+        {"group": "MAP", "spend": 300.0, "inline_link_clicks": 20,
+         "fb_leads": 0, "date_start": "2026-06-09"},
+        {"group": "Chiro", "spend": 100.0, "inline_link_clicks": 10,
+         "fb_leads": 0, "date_start": "2026-06-09"},
+    ])
+    contacts = _contacts([
+        {"hs_id": "1", "typeform_asset_download": "MP",
+         "typeform_submission_date": "2026-06-09T10:00:00Z",
+         "created": "2026-06-09T09:00:00Z", "email": "a@x.com"},
+    ])
+    r = _run(contacts, fb=fb)
+    # Standalone MAP rows
+    assert r.loc["map_ad_spend", "w0"] == 300.0
+    assert r.loc["map_leads", "w0"] == 1
+    # MAP rolls into the combined spend/clicks/cpc
+    assert r.loc["chiro_ad_spend", "w0"] == 400.0          # Chiro 100 + MAP 300
+    assert r.loc["chiro_link_clicks", "w0"] == 30          # 10 + 20
+    assert abs(r.loc["chiro_cpc", "w0"] - (400.0 / 30)) < 1e-9
+    # MAP leads stay standalone: NOT rolled into Chiro lead rows
+    assert r.loc["chiro_lead_magnet_optins", "w0"] == 0
+    assert r.loc["chiro_new_leads", "w0"] == 0
