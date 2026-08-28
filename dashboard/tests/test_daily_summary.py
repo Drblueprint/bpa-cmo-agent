@@ -96,6 +96,9 @@ def test_daily_va_summary_handles_empty_inputs():
     assert out["theraray_submissions"] == 0
     assert out["theraray_ad_spend"] == 0.0
     assert out["theraray_cpl"] is None
+    assert out["map_submissions"] == 0
+    assert out["map_ad_spend"] == 0.0
+    assert out["map_cpl"] is None
 
 
 def test_daily_va_summary_single_day_window():
@@ -125,3 +128,37 @@ def test_daily_va_summary_single_day_window():
     assert out["chiro_spend"] == 421.04
     assert out["chiro_all_leads"] == 1
     assert out["chiro_new_leads"] == 1
+
+
+def test_daily_va_summary_map_standalone():
+    fb = pd.DataFrame([
+        {"group": "MAP", "spend": 120.0, "date_start": "2026-05-05"},
+        {"group": "Chiro", "spend": 400.0, "date_start": "2026-05-05"},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "m1", "typeform_asset_download": "Movement Activation Protocol ",
+         "typeform_submission_date": "2026-05-10T12:00:00Z",
+         "created": "2026-05-10T12:00:00Z"},
+        {"hs_id": "m2", "typeform_asset_download": "Movement Activation Protocol ",
+         "typeform_submission_date": "2026-05-11T12:00:00Z",
+         "created": "2026-05-11T12:00:00Z"},
+        {"hs_id": "c1", "typeform_asset_download": "Top 10 typeform",
+         "typeform_submission_date": "2026-05-10T12:00:00Z",
+         "created": "2026-05-10T12:00:00Z"},
+    ])
+    out = daily_va_summary(
+        fb=fb, contacts=contacts,
+        theraray_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
+        nlap_memberships=pd.DataFrame(columns=["contact_id", "membership_timestamp"]),
+        start=_d(2026, 5, 1), end=_d(2026, 5, 21),
+        asset_to_group={
+            "Top 10 typeform": "Chiro",
+            "Movement Activation Protocol ": "MAP",
+        },
+    )
+    assert out["map_submissions"] == 2
+    assert out["map_ad_spend"] == 120.0
+    assert out["map_cpl"] == 60.0
+    # MAP standalone: does not leak into Chiro totals
+    assert out["chiro_spend"] == 400.0
+    assert out["chiro_all_leads"] == 1

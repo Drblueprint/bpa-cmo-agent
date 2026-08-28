@@ -1980,9 +1980,12 @@ def daily_va_summary(
         chiro_new_leads = int(
             (chiro_mask & in_submit_window & in_create_window).sum()
         )
+        map_mask = cx["group"] == "MAP"
+        map_submissions = int((map_mask & in_submit_window).sum())
     else:
         chiro_all_leads = 0
         chiro_new_leads = 0
+        map_submissions = 0
 
     # --- FB spend by group within window ---
     if not fb.empty and "date_start" in fb.columns:
@@ -1999,10 +2002,14 @@ def daily_va_summary(
         nlap_spend = float(
             fb.loc[in_window & (fb["group"] == "NLAP"), "spend"].sum()
         )
+        map_spend = float(
+            fb.loc[in_window & (fb["group"] == "MAP"), "spend"].sum()
+        )
     else:
         chiro_spend = 0.0
         theraray_spend = 0.0
         nlap_spend = 0.0
+        map_spend = 0.0
 
     # --- TheraRay submissions: list memberships in window ---
     if not theraray_memberships.empty \
@@ -2036,6 +2043,9 @@ def daily_va_summary(
         "nlap_submissions": nlap_submissions,
         "nlap_ad_spend": nlap_spend,
         "nlap_cpl": (nlap_spend / nlap_submissions) if nlap_submissions else None,
+        "map_submissions": map_submissions,
+        "map_ad_spend": map_spend,
+        "map_cpl": (map_spend / map_submissions) if map_submissions else None,
     }
 
 
