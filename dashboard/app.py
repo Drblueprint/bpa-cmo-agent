@@ -15,6 +15,7 @@ from dashboard.auth import require_password
 from dashboard.sections.commissions import render_commissions
 from dashboard.sections.executive import render_executive
 from dashboard.sections.metrics import render_metrics
+from dashboard.sections.paid_media import render_paid_media
 from dashboard.sections.sales import render_sales
 
 
@@ -88,14 +89,17 @@ else:
 st.caption(f"Window: {start_date} → {end_date}")
 
 # --- Tabs ---
-tab_executive, tab_sales, tab_metrics, tab_commissions = st.tabs(
-    ["EXECUTIVE", "SALES", "METRICS", "COMMISSIONS"])
+tab_executive, tab_sales, tab_paid, tab_metrics, tab_commissions = st.tabs(
+    ["EXECUTIVE", "SALES", "PAID MEDIA", "METRICS", "COMMISSIONS"])
 
 with tab_executive:
     render_executive(start_date, end_date)
 
 with tab_sales:
     render_sales(start_date, end_date)
+
+with tab_paid:
+    render_paid_media(start_date, end_date)
 
 with tab_metrics:
     render_metrics()
