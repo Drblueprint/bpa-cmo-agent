@@ -54,7 +54,7 @@ def _fmt_int(x) -> str:
 def _money_metric_ids() -> set[str]:
     """Whole-dollar money metrics (rounded to integer)."""
     return {"chiro_ad_spend", "pt_ad_spend",
-            "theraray_ad_spend", "emx_ad_spend"}
+            "theraray_ad_spend", "emx_ad_spend", "map_ad_spend"}
 
 
 def _cents_money_metric_ids() -> set[str]:
@@ -165,6 +165,13 @@ def _render_daily_summary() -> None:
         k, _ = st.columns(2)
         k.metric("Cost / Submission", _money_or_dash(mtd["nlap_cpl"]),
                  help="NLAP Ad Spend / Submissions.")
+        st.markdown("**MAP**")
+        map_a, map_b = st.columns(2)
+        map_a.metric("Submissions", mtd["map_submissions"])
+        map_b.metric("Ad Spend", _money(mtd["map_ad_spend"]))
+        map_c, _ = st.columns(2)
+        map_c.metric("Cost / Submission", _money_or_dash(mtd["map_cpl"]),
+                     help="MAP Ad Spend / Submissions.")
 
     with col_yday:
         st.markdown(f"**Yesterday · {yesterday.strftime('%b %d, %Y')}**")
@@ -189,6 +196,12 @@ def _render_daily_summary() -> None:
         j.metric("Ad Spend", _money(yday["nlap_ad_spend"]))
         k, _ = st.columns(2)
         k.metric("Cost / Submission", _money_or_dash(yday["nlap_cpl"]))
+        st.markdown("**MAP**")
+        map_a2, map_b2 = st.columns(2)
+        map_a2.metric("Submissions", yday["map_submissions"])
+        map_b2.metric("Ad Spend", _money(yday["map_ad_spend"]))
+        map_c2, _ = st.columns(2)
+        map_c2.metric("Cost / Submission", _money_or_dash(yday["map_cpl"]))
 
     # --- Copy-pastable text block matching the VA's format ---
     def _fmt_cpl(x) -> str:
@@ -248,6 +261,24 @@ def _render_daily_summary() -> None:
         f"{_fmt_cpl(mtd['nlap_cpl'])}\n"
         f"{yesterday.strftime('%b %d')}                 - "
         f"{_fmt_cpl(yday['nlap_cpl'])}\n"
+        f"\nMAP Submissions\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}      - "
+        f"{mtd['map_submissions']} submissions\n"
+        f"{yesterday.strftime('%b %d')}                    - "
+        f"{yday['map_submissions']} submission\n\n"
+        f"AD Spent\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}    - "
+        f"${mtd['map_ad_spend']:,.2f}\n"
+        f"{yesterday.strftime('%b %d')}                 - "
+        f"${yday['map_ad_spend']:,.2f}\n\n"
+        f"Cost per Submission\n"
+        f"MTD {month_start.strftime('%b %d')} - "
+        f"{today.strftime('%b %d')}    - "
+        f"{_fmt_cpl(mtd['map_cpl'])}\n"
+        f"{yesterday.strftime('%b %d')}                 - "
+        f"{_fmt_cpl(yday['map_cpl'])}\n"
     )
     st.markdown("**Copy-pastable summary**")
     st.caption("Click the copy icon in the top-right of the block.")
