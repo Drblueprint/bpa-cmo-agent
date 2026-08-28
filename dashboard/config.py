@@ -149,6 +149,28 @@ CAMPAIGN_GROUPS: list[tuple[str, re.Pattern[str]]] = [
 # EMX rolls up into Chiro totals in addition to being its own row
 EMX_PARENT = "Chiro"
 
+# --- PAID MEDIA tab (2026-08-28) ---
+# Segment roll-up for the PAID MEDIA tab ONLY. Existing tabs keep their own
+# group labels; this must not disturb the EMX-into-Chiro roll-in the weekly
+# metrics depend on.
+SEGMENT_ROLLUP: dict[str, str] = {
+    "EMX": "Event",
+    "Practice Growth Workshop": "Event",
+}
+
+# Creative Tracker. 500 ads delivered in the trailing 90 days but only 37
+# cleared $500, and the reference deck shows 16 rows, so a floor is required
+# for the table to be readable.
+CREATIVE_SPEND_FLOOR: float = 500.0
+# An ad is a Winner at 25% below its own segment's average cost per callable
+# MQL, Stand Out between 10% and 25% below. Scored per segment so a Chiro ad
+# is judged against Chiro, not against NLAP.
+CREATIVE_WINNER_PCT: float = 0.25
+CREATIVE_STANDOUT_PCT: float = 0.10
+# Volume guard. Without it, one callable MQL on $600 of spend scores as a
+# Winner on noise alone.
+CREATIVE_MIN_MQL: int = 3
+
 # --- Typeform asset download -> campaign group mapping ---
 # Populated from live probe run on 2026-05-15 (dashboard/probes/asset_probe.py).
 # Expand as new assets ship. Re-run the probe to discover new values.
