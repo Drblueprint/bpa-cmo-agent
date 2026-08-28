@@ -139,3 +139,32 @@ def test_daily_summary_row_per_calendar_day_sorted():
     dates = [d for d in out["date"] if d != "Total"]
     assert dates == ["2026-08-20", "2026-08-21"]
     assert out["date"].iloc[-1] == "Total"
+
+
+def test_daily_summary_none_preserved_in_mixed_frame():
+    """Ruling P8: None values must survive DataFrame construction even when
+    mixed with floats. This is the normal multi-day case: day 1 has a ratio,
+    day 2 has no leads so cost_per_lead is None.
+
+    Without _frame_preserving_none, pandas coerces the column to float64
+    and silently rewrites None as NaN, breaking `is None` checks in callers.
+    """
+    out = daily_mql_summary(
+        _fb([("2026-08-20", CHIRO, 100.0), ("2026-08-21", CHIRO, 100.0)]),
+        _leads([("a@x.com", "2026-08-20", "Chiro")]),
+        _mqls([]), segment_rollup=ROLLUP,
+    )
+    day1 = out[out["date"] == "2026-08-20"].iloc[0]
+    day2 = out[out["date"] == "2026-08-21"].iloc[0]
+
+    # Day 1 has leads, so cost_per_lead is a real float.
+    assert day1["cost_per_lead"] == 100.0
+    assert isinstance(day1["cost_per_lead"], float)
+
+    # Day 2 has no leads, so cost_per_lead is None, not NaN.
+    assert day2["cost_per_lead"] is None
+
+    # Ratio columns are object dtype to preserve None.
+    assert out["cost_per_lead"].dtype == object
+    assert out["cost_per_callable_mql"].dtype == object
+    assert out["lead_to_callable_pct"].dtype == object

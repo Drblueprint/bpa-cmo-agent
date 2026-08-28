@@ -27,6 +27,18 @@ def _safe_div(num: float, den: float) -> float | None:
     return num / den
 
 
+def _frame_preserving_none(rows: list[dict], columns: list[str]) -> pd.DataFrame:
+    """Build a frame WITHOUT letting pandas turn None into NaN.
+
+    pandas coerces a column holding both None and float to float64, which
+    silently rewrites None as NaN. These frames are small display tables
+    whose None values mean "no value, render a dash", and callers test that
+    with `is None`, so object dtype is the correct trade here.
+    """
+    out = pd.DataFrame(rows, columns=columns).astype(object)
+    return out.where(out.notna(), None)
+
+
 def resolve_segment(campaign_name, *, segment_rollup: dict[str, str],
                     unmatched_label: str = UNMATCHED) -> str:
     """Map an FB campaign name to a PAID MEDIA segment.
@@ -120,4 +132,4 @@ def daily_mql_summary(fb_daily: pd.DataFrame,
         "cost_per_lead": _safe_div(tot_spend, tot_leads),
         "cost_per_callable_mql": _safe_div(tot_spend, tot_mql),
     })
-    return pd.DataFrame(rows, columns=DAILY_COLUMNS)
+    return _frame_preserving_none(rows, DAILY_COLUMNS)
