@@ -40,3 +40,6 @@ Thumbs.db
 .streamlit/secrets.toml
 dashboard/__pycache__/
 dashboard/**/__pycache__/
+
+# Subagent-driven development scratch (ledgers, briefs, review packages)
+.superpowers/
