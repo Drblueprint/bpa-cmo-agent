@@ -168,3 +168,99 @@ def test_daily_summary_none_preserved_in_mixed_frame():
     assert out["cost_per_lead"].dtype == object
     assert out["cost_per_callable_mql"].dtype == object
     assert out["lead_to_callable_pct"].dtype == object
+
+
+from dashboard.data.paid_mql import segment_results
+
+NLAP = "DS | __NLAP__ Funnel Setup | CBO | USA"
+
+
+def _seg_fb(rows):
+    return pd.DataFrame(rows, columns=["campaign_name", "spend"])
+
+
+def _seg_leads(rows):
+    return pd.DataFrame(rows, columns=["email", "segment"])
+
+
+def test_segment_results_full_funnel():
+    out = segment_results(
+        _seg_fb([(CHIRO, 1000.0)]),
+        _seg_leads([("a@x.com", "Chiro"), ("b@x.com", "Chiro"),
+                    ("c@x.com", "Chiro"), ("d@x.com", "Chiro")]),
+        mql_emails={"a@x.com", "b@x.com"},
+        call_emails={"a@x.com"},
+        sale_emails={"a@x.com"},
+        commissions_by_segment={"Chiro": 2500.0},
+        segment_rollup=ROLLUP,
+    )
+    row = out[out["segment"] == "Chiro"].iloc[0]
+    assert row["spend"] == 1000.0
+    assert row["leads"] == 4
+    assert row["callable_mql"] == 2
+    assert row["calls"] == 1
+    assert row["sales"] == 1
+    assert row["lead_to_callable_pct"] == 0.5
+    assert row["callable_to_call_pct"] == 0.5
+    assert row["call_to_sale_pct"] == 1.0
+    assert row["cost_cmql"] == 500.0
+    assert row["cost_per_call"] == 1000.0
+    assert row["cost_per_close"] == 1000.0
+    # Segment CAC = (spend + commissions) / sales, mirroring blended_cac.
+    assert row["segment_cac"] == 3500.0
+
+
+def test_segment_results_event_rollup():
+    """EMX and Practice Growth Workshop collapse into one Event row."""
+    out = segment_results(
+        _seg_fb([("DS | EMX 2026 Kansas City", 700.0),
+                 ("DS | __Practice Growth Workshop Dallas__", 300.0)]),
+        _seg_leads([("a@x.com", "Event")]),
+        mql_emails=set(), call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    segs = set(out["segment"])
+    assert "Event" in segs
+    assert "EMX" not in segs and "Practice Growth Workshop" not in segs
+    assert out[out["segment"] == "Event"].iloc[0]["spend"] == 1000.0
+
+
+def test_segment_results_spend_only_segment_still_appears():
+    """A segment that spent money but produced no leads must show up with a
+    dash, not be dropped. Vanishing is how MAP stayed invisible."""
+    out = segment_results(
+        _seg_fb([(NLAP, 5000.0)]), _seg_leads([]),
+        mql_emails=set(), call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    row = out[out["segment"] == "NLAP"].iloc[0]
+    assert row["spend"] == 5000.0
+    assert row["leads"] == 0
+    assert row["cost_cmql"] is None
+    assert row["cost_per_close"] is None
+
+
+def test_segment_results_zero_spend_segment_is_omitted():
+    """PT Recovery has spent $0 for 60 days. It should not clutter the table,
+    but it must reappear automatically if spend resumes."""
+    out = segment_results(
+        _seg_fb([(CHIRO, 100.0), ("DS | __PT__ Recovery", 0.0)]),
+        _seg_leads([]), mql_emails=set(), call_emails=set(),
+        sale_emails=set(), commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    assert "PT Recovery" not in set(out["segment"])
+
+
+def test_segment_results_total_row_uses_totals_not_averages():
+    out = segment_results(
+        _seg_fb([(CHIRO, 1000.0), (NLAP, 3000.0)]),
+        _seg_leads([("a@x.com", "Chiro"), ("n@x.com", "NLAP")]),
+        mql_emails={"a@x.com"}, call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    total = out[out["segment"] == "Total"].iloc[0]
+    assert total["spend"] == 4000.0
+    assert total["leads"] == 2
+    assert total["callable_mql"] == 1
+    assert total["cost_cmql"] == 4000.0
+    assert out["segment"].iloc[-1] == "Total"

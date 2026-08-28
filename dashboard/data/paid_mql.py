@@ -133,3 +133,98 @@ def daily_mql_summary(fb_daily: pd.DataFrame,
         "cost_per_callable_mql": _safe_div(tot_spend, tot_mql),
     })
     return _frame_preserving_none(rows, DAILY_COLUMNS)
+
+
+SEGMENT_COLUMNS = ["segment", "spend", "leads", "callable_mql", "cost_cmql",
+                   "lead_to_callable_pct", "calls", "cost_per_call",
+                   "callable_to_call_pct", "sales", "call_to_sale_pct",
+                   "cost_per_close", "segment_cac"]
+
+
+def segment_results(fb: pd.DataFrame,
+                    leads: pd.DataFrame,
+                    mql_emails: set[str],
+                    call_emails: set[str],
+                    sale_emails: set[str],
+                    commissions_by_segment: dict[str, float],
+                    *,
+                    segment_rollup: dict[str, str],
+                    ) -> pd.DataFrame:
+    """One row per segment, COHORT dated, plus a Total row.
+
+    Every downstream count is attributed to the lead that generated it, so
+    spend is matched to the leads it actually bought. Because closes lag lead
+    arrival, sales and both cost-per-close columns read low on recent windows.
+    That is inherent to cohort dating and is surfaced on the page rather than
+    engineered around.
+
+    segment_cac mirrors the existing blended_cac: (spend + close commissions)
+    / sales. Payroll is excluded, exactly as blended_cac excludes it.
+    """
+    fb = fb.copy() if fb is not None else pd.DataFrame()
+    lds = leads.copy() if leads is not None else pd.DataFrame()
+
+    if not fb.empty:
+        fb["segment"] = fb["campaign_name"].apply(
+            lambda n: resolve_segment(n, segment_rollup=segment_rollup))
+        spend_by_seg = fb.groupby("segment")["spend"].sum().to_dict()
+    else:
+        spend_by_seg = {}
+    # A segment with no spend at all is dormant and is omitted. It reappears
+    # automatically the moment spend resumes, because rows are enumerated
+    # from the data rather than hardcoded.
+    spend_by_seg = {k: float(v) for k, v in spend_by_seg.items() if v}
+
+    leads_by_seg: dict[str, set[str]] = {}
+    if not lds.empty:
+        for seg, grp in lds.groupby("segment"):
+            leads_by_seg[seg] = set(grp["email"].dropna())
+
+    rows = []
+    for seg in sorted(set(spend_by_seg) | set(leads_by_seg)):
+        spend = spend_by_seg.get(seg, 0.0)
+        emails = leads_by_seg.get(seg, set())
+        n_leads = len(emails)
+        n_mql = len(emails & mql_emails)
+        n_call = len(emails & call_emails)
+        n_sale = len(emails & sale_emails)
+        commission = float(commissions_by_segment.get(seg, 0.0))
+        rows.append({
+            "segment": seg,
+            "spend": spend,
+            "leads": n_leads,
+            "callable_mql": n_mql,
+            "cost_cmql": _safe_div(spend, n_mql),
+            "lead_to_callable_pct": _safe_div(n_mql, n_leads),
+            "calls": n_call,
+            "cost_per_call": _safe_div(spend, n_call),
+            "callable_to_call_pct": _safe_div(n_call, n_mql),
+            "sales": n_sale,
+            "call_to_sale_pct": _safe_div(n_sale, n_call),
+            "cost_per_close": _safe_div(spend, n_sale),
+            "segment_cac": _safe_div(spend + commission, n_sale),
+        })
+
+    all_emails = set().union(*leads_by_seg.values()) if leads_by_seg else set()
+    t_spend = float(sum(spend_by_seg.values()))
+    t_leads = len(all_emails)
+    t_mql = len(all_emails & mql_emails)
+    t_call = len(all_emails & call_emails)
+    t_sale = len(all_emails & sale_emails)
+    t_comm = float(sum(commissions_by_segment.values()))
+    rows.append({
+        "segment": "Total",
+        "spend": t_spend,
+        "leads": t_leads,
+        "callable_mql": t_mql,
+        "cost_cmql": _safe_div(t_spend, t_mql),
+        "lead_to_callable_pct": _safe_div(t_mql, t_leads),
+        "calls": t_call,
+        "cost_per_call": _safe_div(t_spend, t_call),
+        "callable_to_call_pct": _safe_div(t_call, t_mql),
+        "sales": t_sale,
+        "call_to_sale_pct": _safe_div(t_sale, t_call),
+        "cost_per_close": _safe_div(t_spend, t_sale),
+        "segment_cac": _safe_div(t_spend + t_comm, t_sale),
+    })
+    return _frame_preserving_none(rows, SEGMENT_COLUMNS)
