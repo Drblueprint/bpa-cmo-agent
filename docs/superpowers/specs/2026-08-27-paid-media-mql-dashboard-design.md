@@ -203,26 +203,73 @@ a monthly payroll figure across segments needs an allocation rule that does not
 exist yet. If Kurt sets the payroll constants later, that rule is a separate
 decision, not an automatic switch-on.
 
-## Prerequisite: attribution fixes
+## Prerequisite: attribution fixes (SHIPPED 2026-08-28, commit `4a88ca3`)
 
-These are defects in current attribution discovered while probing. They must
-land before the new tables are trustworthy, because they corrupt the Leads
-column and therefore every cost-per-lead figure derived from it.
+These were defects in live attribution discovered while probing. They corrupted
+the Leads column and therefore every cost-per-lead figure derived from it, so
+they had to land before the new tables could be trusted. Kurt chose to ship
+them ahead of this build; they are now live on the deployed dashboard.
 
 `ASSET_TO_GROUP` maps typeform asset labels to segments. Three labels in active
 use are unmapped, so those leads attribute to no segment at all:
 
-| Asset label | Leads, 60d | Should map to | Currently |
-|---|---|---|---|
-| `Top 10 Things Muiltimillion Dollar Practices Do` | 54 | Chiro | unmapped |
-| `BPA Revenue Pyramid` | 15 | Chiro | unmapped |
-| `Movement Activation Protocol` | 10 | MAP | unmapped |
+| Asset label (exact, as HubSpot stores it) | Leads, 60d | Mapped to |
+|---|---|---|
+| `Top 10 Things Muiltimillion Dollar Practices Do` | 54 | Chiro |
+| `BPA Revenue Pyramid` | 16 | Chiro |
+| `Movement Activation Protocol ` | 15 | MAP |
 
-The first two are renamed variants of assets already mapped under older labels
-(`Top 10 typeform` at 21 leads, `BPA Revenue Pyramid typeform` at 5 leads). The
-lead magnet was relabeled and the mapping was never updated, so the majority of
-each asset's volume is being dropped. **69 Chiro leads in 60 days currently
-attribute to nothing**, which overstates Chiro cost per lead substantially.
+Note the trailing space on the third label and the source-system typo in
+`Muiltimillion`. Both are part of the stored value. `ASSET_TO_GROUP` matches
+exactly and case-sensitively, so a label copied without its trailing space
+fails silently, which is the same class of bug being fixed here.
+
+The first two are renamed variants of assets already mapped under older labels.
+The lead magnet was relabeled in HubSpot and the mapping was never updated, so
+the majority of each asset's volume was being dropped.
+
+### The rename happened about 60 days ago, and the damage was accelerating
+
+Measured impact depends heavily on the window, and the shorter window is the
+one that describes the current state. Chiro leads, and Chiro cost per lead
+against `group == "Chiro"` campaign spend:
+
+| | 60 days | 120 days |
+|---|---|---|
+| Chiro leads before fix | 43 | 171 |
+| Chiro leads after fix | 113 | 241 |
+| Cost per lead before | **$416.07** | $314.98 |
+| Cost per lead after | **$158.33** | $223.49 |
+| Overstatement | **163%** | 41% |
+
+The two figures differ because the 120-day window averages in pre-rename data,
+when the old labels still captured most volume. Evidence for the rename timing,
+from label counts in each window:
+
+| Label | 60d | 120d |
+|---|---|---|
+| `Top 10 typeform` (old) | 21 | 102 |
+| `BPA Revenue Pyramid typeform` (old) | 4 | 49 |
+| `Top 10 Things Muiltimillion Dollar Practices Do` (new) | 54 | 54 |
+| `BPA Revenue Pyramid` (new) | 16 | 16 |
+
+Both new labels show identical counts in both windows, so every one of those
+leads arrived within the last 60 days. Both old labels fall off sharply over
+the same period. Volume migrated from mapped labels to unmapped ones roughly 60
+days ago, meaning the error grew every week until the fix shipped.
+
+**Use the 163% figure, not 41%, when describing what this fix corrected.** The
+41% is real but diluted, and it understates what was happening to current
+reporting.
+
+Lead counts come from `load_marketing_contacts`, which filters on
+`recent_conversion_date` in-window, so this is the All Leads convention: a
+returning contact re-converting counts. Spend is FB `group == "Chiro"` only and
+excludes EMX and Event.
+
+The "before" figures are computed by re-running current data with the three
+labels excluded from `ASSET_TO_GROUP`. They isolate the mapping's effect; they
+are not a replay of what the dashboard rendered at the time.
 
 Note the source-system typo in `Muiltimillion`. The mapping must match the
 label exactly as HubSpot stores it.
@@ -234,11 +281,19 @@ design; adding asset mappings would double-count them.
 
 Required config changes:
 
-1. `CAMPAIGN_GROUPS` gains `("MAP", re.compile(r"\bMAP Protocol\b", re.IGNORECASE))`.
-2. `ASSET_TO_GROUP` gains the three rows in the table above.
-3. A new `SEGMENT_ROLLUP` map folding `EMX` and `Practice Growth Workshop` into
-   `Event` for this tab only. Existing tabs keep their current group labels;
-   this must not disturb the EMX-into-Chiro roll-in the weekly metrics rely on.
+1. DONE in `4a88ca3`. `CAMPAIGN_GROUPS` gained
+   `("MAP", re.compile(r"\bMAP Protocol\b", re.IGNORECASE))`. MAP campaigns
+   carry no `__TOKEN__` wrapper, unlike every other group. Verified against all
+   46 distinct campaign names in 120 days: the pattern hits the three MAP
+   campaigns and nothing else.
+2. DONE in `4a88ca3`. `ASSET_TO_GROUP` gained the three rows above. The
+   TheraRay and NLAP labels stay deliberately unmapped, pinned by a test, since
+   those attribute through HubSpot lists 6280 and 7086 and asset mappings would
+   double-count them.
+3. NOT DONE, belongs to this build. A new `SEGMENT_ROLLUP` map folding `EMX` and
+   `Practice Growth Workshop` into `Event` for this tab only. Existing tabs keep
+   their current group labels; this must not disturb the EMX-into-Chiro roll-in
+   the weekly metrics rely on.
 
 ## Data sources
 

@@ -45,9 +45,16 @@ Practices Do`, `BPA Revenue Pyramid`, and `Movement Activation Protocol `
 (that last one keeps a trailing space that is part of the stored HubSpot
 value; a test pins it).
 
-Verified impact on a 120-day window: Chiro leads 171 to 241, MAP leads 0 to
-13, unattributed leads 315 to 232, unmatched spend $4,542 to $0, Chiro cost
-per lead $314.88 to $223.42.
+Verified impact, 120-day window: Chiro leads 171 to 241, MAP leads 0 to 15,
+unattributed leads 315 to 232, unmatched spend $4,542 to $0, Chiro cost per
+lead $314.98 to $223.49.
+
+**On a 60-day window the same fix moves Chiro cost per lead from $416.07 to
+$158.33, a 163% overstatement.** The typeform labels were renamed roughly 60
+days ago (both new labels show identical counts at 60 and 120 days, so all
+their volume is recent, while both old labels fall off sharply), so the error
+was growing every week until this shipped. Use 163% when describing the impact;
+the 41% implied by the 120-day window is diluted by pre-rename data.
 
 Do not re-apply these edits. Task 2 builds on them.
 
