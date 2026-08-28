@@ -37,6 +37,13 @@ HS_PROP_REFERRING_DOCTOR = "referring_doctor_s_name"
 SEND_CONTRACT_MUDA_TOKEN = "MUDA"
 HS_PROP_TYPEFORM_SUBMISSION_DATE = "typeform_submission_date"  # datetime; HubSpot confirms via probe
 HS_LIFECYCLE_MQL_VALUE = "marketingqualifiedlead"  # confirmed via probe on 2026-05-15
+# Date a contact entered the Marketing Qualified Lead lifecycle stage.
+# This is the Callable MQL source, NOT lifecyclestage. lifecyclestage
+# ratchets forward, so a contact promoted to salesqualifiedlead stops
+# reading as MQL; this property is stamped once and never moves.
+# Verified 2026-08-28: filterable server-side, 189 entries in 60 days,
+# 98% stamp rate for contacts created in-window who booked a discovery call.
+HS_PROP_MQL_ENTERED = "hs_v2_date_entered_marketingqualifiedlead"
 
 # --- HubSpot deal stage IDs ---
 # Confirmed via probe on 2026-05-15.

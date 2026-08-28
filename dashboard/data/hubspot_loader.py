@@ -1019,3 +1019,62 @@ def load_closed_deals_in_window(
             break
 
     return pd.DataFrame(deal_rows, columns=deal_cols)
+
+
+@st.cache_data(ttl=900, show_spinner="Loading callable MQLs...")
+def load_mql_entries(start: date, end: date) -> pd.DataFrame:
+    """Return contacts that ENTERED the MQL lifecycle stage in the window.
+
+    Callable MQL for the PAID MEDIA tab. Filters on the v2 stage-entry
+    timestamp rather than current lifecyclestage: lifecyclestage ratchets
+    forward, so counting it would both undercount (a contact promoted to
+    salesqualifiedlead no longer reads as MQL) and rewrite history on every
+    refresh.
+
+    Columns: hs_id, email, mql_entered_at, lifecycle_stage,
+             typeform_asset_download, createdate
+    """
+    token = st.secrets["HUBSPOT_TOKEN"]
+    start_ms = int(datetime.combine(start, datetime.min.time(),
+                                    tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(datetime.combine(end, datetime.max.time(),
+                                  tzinfo=timezone.utc).timestamp() * 1000)
+    body = {
+        "filterGroups": [{
+            "filters": [
+                {"propertyName": cfg.HS_PROP_MQL_ENTERED,
+                 "operator": "BETWEEN",
+                 "value": start_ms, "highValue": end_ms},
+            ]
+        }],
+        "properties": [
+            "email", "createdate", cfg.HS_PROP_MQL_ENTERED,
+            cfg.HS_PROP_LIFECYCLE_STAGE, cfg.HS_PROP_TYPEFORM_ASSET,
+            "firstname", "lastname",
+        ],
+        "limit": 100,
+    }
+    results = _hs_search(token, "contacts", body)
+
+    rows = []
+    for r in results:
+        p = r.get("properties", {})
+        _fn = (p.get("firstname") or "").strip().lower()
+        _ln = (p.get("lastname") or "").strip().lower()
+        if _fn == "test" or _ln == "test":
+            continue
+        _em = (p.get("email") or "").strip().lower()
+        if _em in cfg.MARKETING_EXCLUDED_EMAILS:
+            continue
+        rows.append({
+            "hs_id": r.get("id"),
+            "email": _em,
+            "mql_entered_at": p.get(cfg.HS_PROP_MQL_ENTERED),
+            "lifecycle_stage": p.get(cfg.HS_PROP_LIFECYCLE_STAGE),
+            "typeform_asset_download": p.get(cfg.HS_PROP_TYPEFORM_ASSET),
+            "createdate": p.get("createdate"),
+        })
+    return pd.DataFrame(rows, columns=[
+        "hs_id", "email", "mql_entered_at", "lifecycle_stage",
+        "typeform_asset_download", "createdate",
+    ])
