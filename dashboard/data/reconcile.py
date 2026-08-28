@@ -3190,16 +3190,18 @@ def sdr_completions_by_owner(meetings: pd.DataFrame, contacts: pd.DataFrame,
 
 
 def compute_monthly_commissions(closed_deals: pd.DataFrame,
-                                sdr_completions: dict, start: date, end: date,
+                                sdr_call_contacts: pd.DataFrame, start: date, end: date,
                                 *, rates: dict) -> dict:
     """Per-rep commissions for the month [start, end].
 
     closed_deals: build_closed_deals_table output (needs sdr_owner, bds, sme,
       typeform, dealstage, entered_primary1, entered_90day, closedate).
-    sdr_completions: sdr_completions_by_owner(...) output for the SAME month.
-    Returns {"sdr": df, "bds": df, "sme": df, "gerri": {count, total}} where each
-    df has rep_id + component columns + total. No double-pay: a converted deal's
-    90-day base counts in its 90-day month, its bonus in its Primary-1 month.
+    sdr_call_contacts: sdr_completion_contacts(...) output for the SAME month.
+    Returns {"sdr": df, "bds": df, "sme": df, "gerri": {count, total}, "detail": df}
+    where each summary df has rep_id + component columns + total, and "detail" is
+    a per-contact DataFrame (role, rep_id, contact_id, contact_name, event, amount)
+    that reconciles to those totals by construction. No double-pay: a converted
+    deal's 90-day base counts in its 90-day month, its bonus in its Primary-1 month.
     """
     full_stages = set(rates["stages"]["full"])
     ninety_stage = rates["stages"]["ninety_day"]
@@ -3217,12 +3219,15 @@ def compute_monthly_commissions(closed_deals: pd.DataFrame,
     bds: dict = {}
     sme: dict = {}
     gerri_count = 0
+    detail_rows: list = []  # role, rep_id, contact_id, contact_name, event, amount
 
-    def _add(acc, rep, comp, amt):
+    def _add(acc, role, rep, comp, amt, cid, cname):
         if not rep:
             return
         acc.setdefault(rep, {})
         acc[rep][comp] = acc[rep].get(comp, 0.0) + amt
+        detail_rows.append({"role": role, "rep_id": rep, "contact_id": cid,
+                            "contact_name": cname, "event": comp, "amount": amt})
 
     for _, r in closed_deals.iterrows():
         stage = str(r.get("dealstage") or "")
@@ -3231,6 +3236,8 @@ def compute_monthly_commissions(closed_deals: pd.DataFrame,
         sdr_owner = str(r.get("sdr_owner") or "")
         bds_owner = str(r.get("bds") or "")
         sme_owner = str(r.get("sme") or "")
+        cid = str(r.get("hs_id") or "")
+        cname = str(r.get("contact_name") or "")
         p1 = _d(r.get("entered_primary1"))
         d90 = _d(r.get("entered_90day"))
         close_d = _d(r.get("closedate"))
@@ -3241,29 +3248,31 @@ def compute_monthly_commissions(closed_deals: pd.DataFrame,
             continue  # Gerri only
         # 90-day base counts in the 90-day month (whether or not it later converts)
         if d90 is not None and _in(d90):
-            _add(sdr, sdr_owner, "ninety", rates["sdr"]["ninety_day"][temp])
-            _add(bds, bds_owner, "ninety", rates["bds"]["ninety_day"])
-            _add(sme, sme_owner, "ninety", rates["sme"]["ninety_day"])
+            _add(sdr, "sdr", sdr_owner, "ninety", rates["sdr"]["ninety_day"][temp], cid, cname)
+            _add(bds, "bds", bds_owner, "ninety", rates["bds"]["ninety_day"], cid, cname)
+            _add(sme, "sme", sme_owner, "ninety", rates["sme"]["ninety_day"], cid, cname)
         if stage in full_stages:
             full_month = p1 if p1 is not None else close_d
             if _in(full_month):
                 if d90 is not None:  # converted -> bonus only
-                    _add(sdr, sdr_owner, "conversion", rates["sdr"]["conversion_bonus"][temp])
-                    _add(bds, bds_owner, "conversion", rates["bds"]["conversion_bonus"])
-                    _add(sme, sme_owner, "conversion", rates["sme"]["conversion_bonus"])
+                    _add(sdr, "sdr", sdr_owner, "conversion", rates["sdr"]["conversion_bonus"][temp], cid, cname)
+                    _add(bds, "bds", bds_owner, "conversion", rates["bds"]["conversion_bonus"], cid, cname)
+                    _add(sme, "sme", sme_owner, "conversion", rates["sme"]["conversion_bonus"], cid, cname)
                 else:                # direct full close
-                    _add(sdr, sdr_owner, "full", rates["sdr"]["full_close"][temp])
-                    _add(bds, bds_owner, "full", rates["bds"]["full_close"])
-                    _add(sme, sme_owner, "full", rates["sme"]["full_close"])
+                    _add(sdr, "sdr", sdr_owner, "full", rates["sdr"]["full_close"][temp], cid, cname)
+                    _add(bds, "bds", bds_owner, "full", rates["bds"]["full_close"], cid, cname)
+                    _add(sme, "sme", sme_owner, "full", rates["sme"]["full_close"], cid, cname)
 
-    # SDR call completions (this month) — from sdr_completions
-    for owner, c in (sdr_completions or {}).items():
-        disco = c.get("disco_warm", 0) * rates["sdr"]["disco_complete"]["warm"] \
-            + c.get("disco_cold", 0) * rates["sdr"]["disco_complete"]["cold"]
-        strat = c.get("strat_warm", 0) * rates["sdr"]["strategy_complete"]["warm"] \
-            + c.get("strat_cold", 0) * rates["sdr"]["strategy_complete"]["cold"]
-        _add(sdr, owner, "disco", disco)
-        _add(sdr, owner, "strategy", strat)
+    # SDR call completions (this month) -- one detail row per held call
+    if sdr_call_contacts is not None and not sdr_call_contacts.empty:
+        for _, cc in sdr_call_contacts.iterrows():
+            owner = str(cc.get("sdr_owner") or "")
+            temp = "warm" if cc.get("temp") == "warm" else "cold"
+            comp = "disco" if cc.get("event") == "disco" else "strategy"
+            rate_key = "disco_complete" if comp == "disco" else "strategy_complete"
+            amt = rates["sdr"][rate_key][temp]
+            _add(sdr, "sdr", owner, comp, amt,
+                 str(cc.get("contact_id") or ""), str(cc.get("contact_name") or ""))
 
     def _frame(acc, comps):
         rows = []
@@ -3275,9 +3284,13 @@ def compute_monthly_commissions(closed_deals: pd.DataFrame,
             rows.append(row)
         return pd.DataFrame(rows, columns=["rep_id"] + comps + ["total"])
 
+    detail = pd.DataFrame(
+        detail_rows,
+        columns=["role", "rep_id", "contact_id", "contact_name", "event", "amount"])
     return {
         "sdr": _frame(sdr, ["disco", "strategy", "full", "ninety", "conversion"]),
         "bds": _frame(bds, ["full", "ninety", "conversion"]),
         "sme": _frame(sme, ["full", "ninety", "conversion"]),
         "gerri": {"count": gerri_count, "total": gerri_count * rates["gerri_per_close"]},
+        "detail": detail,
     }
