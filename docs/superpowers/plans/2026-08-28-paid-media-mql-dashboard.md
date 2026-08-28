@@ -20,10 +20,20 @@
 - Loaders are wrapped in `@st.cache_data(ttl=900)`. In probes, bypass with `getattr(fn, "__wrapped__", fn)`.
 - Probes run from repo root via the **Bash tool**: `python <path>`. The context-mode sandbox's `python` is a Windows stub and will not work.
 - All probe output goes to the scratchpad, never the repo: `C:\Users\kxbox\AppData\Local\Temp\claude\C--Users-kxbox--claude\1115b3fa-cbdd-47c7-8c7d-cdfe6c2e67f7\scratchpad`
-- Tests: `python -m pytest dashboard/tests -q`. Full suite must stay green. **Currently 155 passing.**
+- Tests: `python -m pytest dashboard/tests -q`. Full suite must stay green. **Currently 161 passing** (re-verified 2026-08-28; a concurrent session added tests, so confirm this number before starting rather than trusting it).
 - All prose, comments, commit messages and UI copy use **standard hyphens. No em dashes.**
 - Secrets already in `.streamlit/secrets.toml`: `FB_ADS_TOKEN`, `FB_AD_ACCOUNT_ID`, `HYROS_API_KEY`, `HUBSPOT_TOKEN`.
 - All API access is **read-only**. GET, or POST only to HubSpot and Hyros search/list endpoints. No PATCH, PUT, or DELETE.
+- **Another session has been committing to this same branch concurrently.**
+  Between this plan being written and reviewed, commits landed for MAP group
+  reporting across the METRICS and EXECUTIVE tabs and for a commissions
+  drill-down. `git pull` before starting and again between tasks. Expect the
+  test count and `app.py` tab list to have moved; re-read `app.py:88-104`
+  before the Task 5 edit rather than applying the diff blind. Files most
+  likely to collide: `dashboard/config.py`, `dashboard/app.py`,
+  `dashboard/sections/metrics.py`, `dashboard/sections/executive.py`.
+  `dashboard/data/paid_mql.py` and `dashboard/sections/paid_media.py` did not
+  exist as of 2026-08-28, so those two are safe to create.
 
 ### Fixed values from the spec
 
@@ -330,7 +340,7 @@ Expected: PASS, 8 tests.
 - [ ] **Step 6: Run the full suite**
 
 Run: `python -m pytest dashboard/tests -q`
-Expected: 163 passed (155 existing + 8 new).
+Expected: 169 passed (161 existing + 8 new).
 
 - [ ] **Step 7: Commit**
 
@@ -796,7 +806,7 @@ Expected: PASS, 19 tests.
 - [ ] **Step 5: Run the full suite**
 
 Run: `python -m pytest dashboard/tests -q`
-Expected: 174 passed.
+Expected: 180 passed.
 
 - [ ] **Step 6: Commit**
 
@@ -1075,7 +1085,7 @@ Note: read the existing `st.tabs([...])` label list at line 91-93 before replaci
 - [ ] **Step 3: Run the full suite**
 
 Run: `python -m pytest dashboard/tests -q`
-Expected: 174 passed. No test touches rendering, so this is a regression check on the imports.
+Expected: 180 passed. No test touches rendering, so this is a regression check on the imports.
 
 - [ ] **Step 4: Smoke-test the render path off-Streamlit**
 
@@ -1635,7 +1645,7 @@ Expected: PASS, 25 tests.
 - [ ] **Step 5: Run the full suite**
 
 Run: `python -m pytest dashboard/tests -q`
-Expected: 180 passed.
+Expected: 186 passed.
 
 - [ ] **Step 6: Commit**
 
@@ -1747,7 +1757,7 @@ Add at the end of `render_paid_media`:
 - [ ] **Step 3: Run the full suite**
 
 Run: `python -m pytest dashboard/tests -q`
-Expected: 180 passed.
+Expected: 186 passed.
 
 - [ ] **Step 4: Smoke-test the render path**
 
@@ -1771,7 +1781,7 @@ Confirm all three tables render on the deployed app. Check specifically that the
 
 Run after Task 9.
 
-- [ ] `python -m pytest dashboard/tests -q` reports 180 passed.
+- [ ] `python -m pytest dashboard/tests -q` reports 186 passed.
 - [ ] The PAID MEDIA tab renders all three tables without exception on the deployed app.
 - [ ] The segment table lists Event, Chiro, NLAP, TheraRay and MAP, with MAP showing non-zero spend.
 - [ ] No `(unmatched)` row appears. If one does, a campaign launched after 2026-08-28 needs a `CAMPAIGN_GROUPS` pattern and an `ASSET_TO_GROUP` label.
