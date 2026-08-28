@@ -10,7 +10,7 @@ from dashboard.data.hubspot_loader import (
     load_meetings_in_window, load_contacts_by_ids, load_deal_contacts,
 )
 from dashboard.data.reconcile import (
-    build_closed_deals_table, sdr_completions_by_owner, compute_monthly_commissions,
+    build_closed_deals_table, sdr_completion_contacts, compute_monthly_commissions,
 )
 
 _MONEY = lambda v: f"${v:,.0f}"
@@ -82,9 +82,10 @@ def render_commissions(start: date, end: date) -> None:
                 mc = load_contacts_by_ids(mcids)
     except Exception:
         pass
-    comps = sdr_completions_by_owner(meetings, mc, m_start, m_end) if not mc.empty else {}
+    call_contacts = sdr_completion_contacts(meetings, mc, m_start, m_end) if not mc.empty \
+        else pd.DataFrame(columns=["sdr_owner", "contact_id", "contact_name", "event", "temp"])
 
-    res = compute_monthly_commissions(ct, comps, m_start, m_end, rates=cfg.COMMISSION_RATES)
+    res = compute_monthly_commissions(ct, call_contacts, m_start, m_end, rates=cfg.COMMISSION_RATES)
 
     def _show(title, df, label_cols):
         st.markdown(f"**{title}**")
@@ -99,16 +100,43 @@ def render_commissions(start: date, end: date) -> None:
         d = d[["Rep"] + label_cols]
         st.dataframe(d, use_container_width=True, hide_index=True)
 
+    _EVENT_LABELS = {"disco": "15-min Call", "strategy": "Strategy Call",
+                     "full": "Full Close", "ninety": "90-Day", "conversion": "Conversion"}
+
+    def _detail_expander(role, role_label):
+        with st.expander(f"{role_label} commission detail (contacts)"):
+            d = res["detail"]
+            d = d[d["role"] == role].copy()
+            if not d.empty:
+                d["Rep"] = d["rep_id"].map(cfg.resolve_owner)
+                d = d[d["Rep"] != "(unassigned)"]
+            if d.empty:
+                st.caption(f"No {role_label} commission detail in {m_start.strftime('%B %Y')}.")
+                return
+            d = d.sort_values(["Rep", "amount"], ascending=[True, False])
+            d["Contact"] = d["contact_name"]
+            d["Event"] = d["event"].map(_EVENT_LABELS)
+            d["Open"] = d["contact_id"].map(cfg.hubspot_contact_url)
+            d["Amount"] = d["amount"].map(_MONEY)
+            d = d[["Rep", "Contact", "Event", "Amount", "Open"]]
+            st.dataframe(
+                d, use_container_width=True, hide_index=True,
+                column_config={"Open": st.column_config.LinkColumn(
+                    "Open", display_text="HubSpot ↗")})
+
     _show("SDR", res["sdr"].rename(columns={
         "disco": "15-min", "strategy": "Strategy", "full": "Full Close",
         "ninety": "90-Day", "conversion": "Conversion", "total": "Total"}),
         ["15-min", "Strategy", "Full Close", "90-Day", "Conversion", "Total"])
+    _detail_expander("sdr", "SDR")
     _show("BDS", res["bds"].rename(columns={
         "full": "Full Close", "ninety": "90-Day", "conversion": "Conversion", "total": "Total"}),
         ["Full Close", "90-Day", "Conversion", "Total"])
+    _detail_expander("bds", "BDS")
     _show("SME", res["sme"].rename(columns={
         "full": "Full Close", "ninety": "90-Day", "conversion": "Conversion", "total": "Total"}),
         ["Full Close", "90-Day", "Conversion", "Total"])
+    _detail_expander("sme", "SME")
     g = res["gerri"]
     st.markdown("**Gerri**")
     st.metric("Gerri (flat $25 / close)", _MONEY(g["total"]), delta=f"{g['count']} closes",
