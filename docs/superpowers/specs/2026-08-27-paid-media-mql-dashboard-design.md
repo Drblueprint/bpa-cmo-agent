@@ -53,12 +53,34 @@ Probe evidence, 2026-08-27:
   71 `opportunity`. The 87 and 71 are contacts a current-stage count would
   wrongly exclude.
 
-**Known limitation, accepted:** the property is stamped only on contacts that
-actually pass through the MQL stage. In a 100 contact sample, 19 customers and
-1 opportunity had no MQL stamp, having jumped straight from `lead` to a later
-stage. Those contacts will never count as Callable MQL. This understates the
-metric by an unknown but small amount. It is preferable to the alternative,
-which is a number that silently changes every day.
+**Stamp reliability, verified 2026-08-28.** Kurt's model is that booking a 15
+minute discovery call marks the contact MQL in HubSpot. Tested directly against
+the 316 contacts with a discovery meeting in the trailing 60 days:
+
+| Cohort | Stamped with MQL entry date |
+|---|---|
+| Created in the reporting window (new leads) | **121 / 123, 98%** |
+| All ages, marketing leads only | 216 / 236, 92% |
+| All ages, any contact | 286 / 316, 91% |
+
+Stamp rate by contact create year: 2026 98%, 2024 95%, 2023 92%, 2022 91%,
+2021 77%. The shortfall is concentrated entirely in old records. Those are
+contacts created years ago that re-engaged recently, predating reliable v2
+lifecycle stamping in this portal. They are not contacts skipping the MQL stage.
+
+**For the cohort this dashboard measures, which is leads arriving in the
+reporting window, the stamp is 98% reliable.** The two in-window exceptions both
+remain at lifecycle stage `lead` despite holding a discovery meeting, consistent
+with workflow lag or a manually logged meeting rather than a stage skip.
+
+An earlier draft of this spec claimed roughly 20% of contacts skip MQL. That was
+wrong. It came from sampling by current lifecycle stage across all record ages,
+which pulled in re-engaged pre-2026 records. Corrected here so the number is not
+carried forward.
+
+The residual caveat is narrow and accepted: MQL counts for **re-engaged old
+leads** are unreliable. Cohort dating on lead arrival means the segment table
+never counts those, so this does not affect either table as designed.
 
 ### Row dating differs by table, deliberately
 
@@ -105,6 +127,25 @@ An **(unmatched)** row catches any campaign whose name matches no segment
 regex. This is a tripwire, not a bucket. Kurt is correct that campaign names are
 always accurate; the failure this guards against is our regex list falling
 behind a new launch, which is exactly how MAP went unreported.
+
+**Two attribution keys, and they must agree.** Spend attributes by Facebook
+campaign name via `CAMPAIGN_GROUPS`. Leads attribute by HubSpot typeform
+submission via `ASSET_TO_GROUP`, which Kurt confirmed is the best lead
+attribution available and which identifies the funnel the lead came from.
+These are different keys reading different systems, and every cost-per-X column
+divides one by the other.
+
+A segment is therefore only correct when both keys are maintained. Every
+attribution defect found in this session is an instance of the two drifting
+apart: MAP had neither key, and the two renamed Chiro assets had a campaign
+regex but no matching asset label, so spend landed in Chiro while the leads it
+bought landed nowhere. Cost per lead inflates silently when this happens,
+because the numerator survives and the denominator does not.
+
+Adding a segment means adding both keys. The `(unmatched)` row catches a missing
+campaign key. A missing asset key produces no error at all, only a quietly wrong
+number, so the plan must include a check that surfaces unmapped asset labels
+carrying non-trivial volume.
 
 ### No revenue, profit, or ROAS columns
 
