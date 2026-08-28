@@ -222,3 +222,35 @@ def test_commissions_sdr_call_completions():
     # disco: 2*20 + 1*100 = 140 ; strategy: 1*100 = 100
     assert sdr.loc["S1", "disco"] == 140.0 and sdr.loc["S1", "strategy"] == 100.0
     assert sdr.loc["S1", "total"] == 240.0
+
+
+from dashboard.data.reconcile import sdr_completion_contacts
+
+
+def test_sdr_completion_contacts_rows():
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "sdr_owner": "S1", "name": "Alice",
+         "typeform_asset_download": "Top 10 typeform"},   # warm
+        {"hs_id": "2", "sdr_owner": "S1", "name": "Bob",
+         "typeform_asset_download": ""},                    # cold
+    ])
+    meetings = pd.DataFrame([
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "COMPLETED",
+         "start_time": "2026-06-03T15:00:00Z"},             # warm disco held
+        {"contact_id": "2", "activity_type": "Strategy Call", "outcome": "COMPLETE - QUALIFIED",
+         "start_time": "2026-06-04T15:00:00Z"},             # cold strategy held
+        {"contact_id": "1", "activity_type": "15 min call", "outcome": "SCHEDULED",
+         "start_time": "2026-06-05T15:00:00Z"},             # not held -> ignored
+    ])
+    out = sdr_completion_contacts(meetings, contacts, date(2026, 6, 1), date(2026, 6, 30))
+    rows = {(r["contact_id"], r["event"], r["temp"], r["contact_name"], r["sdr_owner"])
+            for _, r in out.iterrows()}
+    assert rows == {("1", "disco", "warm", "Alice", "S1"),
+                    ("2", "strategy", "cold", "Bob", "S1")}
+
+
+def test_sdr_completion_contacts_empty():
+    empty = pd.DataFrame(columns=["contact_id", "activity_type", "outcome", "start_time"])
+    out = sdr_completion_contacts(empty, pd.DataFrame(), date(2026, 6, 1), date(2026, 6, 30))
+    assert list(out.columns) == ["sdr_owner", "contact_id", "contact_name", "event", "temp"]
+    assert out.empty

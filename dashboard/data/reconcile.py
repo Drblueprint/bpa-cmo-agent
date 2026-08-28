@@ -3132,21 +3132,25 @@ def compute_close_commissions(
     }
 
 
-def sdr_completions_by_owner(meetings: pd.DataFrame, contacts: pd.DataFrame,
-                             start: date, end: date) -> dict[str, dict[str, int]]:
-    """Held 15-min + strategy completions in [start, end], grouped by the lead's
-    sdr_owner, split warm (contact has a typeform) vs cold. Held = outcome
-    COMPLETE*. Month = meeting start_time. Returns
-    {sdr_owner: {disco_warm, disco_cold, strat_warm, strat_cold}}."""
-    out: dict[str, dict[str, int]] = {}
+def sdr_completion_contacts(meetings: pd.DataFrame, contacts: pd.DataFrame,
+                            start: date, end: date) -> pd.DataFrame:
+    """Held 15-min + strategy completions in [start, end], one row per contact
+    meeting, tagged with the lead's sdr_owner and warm/cold. Columns:
+    sdr_owner, contact_id, contact_name, event ("disco"|"strategy"),
+    temp ("warm"|"cold"). Held = outcome COMPLETE*; month = meeting start_time;
+    rows with an empty sdr_owner are dropped. Source of truth for SDR call
+    commissions (both the aggregate and the per-contact detail)."""
+    cols = ["sdr_owner", "contact_id", "contact_name", "event", "temp"]
     if meetings.empty or contacts.empty:
-        return out
+        return pd.DataFrame(columns=cols)
     owner_map = dict(zip(contacts["hs_id"].astype(str),
                          contacts["sdr_owner"].fillna("").astype(str)))
     warm_map = dict(zip(
         contacts["hs_id"].astype(str),
         contacts["typeform_asset_download"].fillna("").astype(str).str.strip() != "",
     ))
+    name_map = dict(zip(contacts["hs_id"].astype(str),
+                        contacts.get("name", pd.Series(dtype=object)).fillna("").astype(str)))
     types = meetings["activity_type"].fillna("").astype(str).str.lower()
     outc = meetings["outcome"].fillna("").astype(str).str.upper()
     mstart = pd.to_datetime(meetings["start_time"], utc=True, errors="coerce").dt.date
@@ -3156,13 +3160,32 @@ def sdr_completions_by_owner(meetings: pd.DataFrame, contacts: pd.DataFrame,
     sdr = cid.map(owner_map).fillna("")
     warm = cid.map(warm_map).fillna(False)
     base = held & in_win & (sdr != "")
+    rows = []
     for kind, kmask in (("disco", discovery_mask(types)),
-                        ("strat", types.str.contains("strategy", na=False))):
+                        ("strategy", types.str.contains("strategy", na=False))):
         sub = base & kmask
-        for owner, w in zip(sdr[sub], warm[sub]):
-            rec = out.setdefault(owner, {"disco_warm": 0, "disco_cold": 0,
-                                         "strat_warm": 0, "strat_cold": 0})
-            rec[f"{kind}_{'warm' if w else 'cold'}"] += 1
+        for c, o, w in zip(cid[sub], sdr[sub], warm[sub]):
+            rows.append({"sdr_owner": o, "contact_id": c,
+                         "contact_name": name_map.get(c, ""),
+                         "event": kind, "temp": "warm" if w else "cold"})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def sdr_completions_by_owner(meetings: pd.DataFrame, contacts: pd.DataFrame,
+                             start: date, end: date) -> dict[str, dict[str, int]]:
+    """Held 15-min + strategy completions in [start, end], grouped by the lead's
+    sdr_owner, split warm (contact has a typeform) vs cold. Held = outcome
+    COMPLETE*. Month = meeting start_time. Returns
+    {sdr_owner: {disco_warm, disco_cold, strat_warm, strat_cold}}. Thin
+    aggregation over sdr_completion_contacts (single source of truth)."""
+    detail = sdr_completion_contacts(meetings, contacts, start, end)
+    out: dict[str, dict[str, int]] = {}
+    for _, r in detail.iterrows():
+        rec = out.setdefault(str(r["sdr_owner"]),
+                             {"disco_warm": 0, "disco_cold": 0,
+                              "strat_warm": 0, "strat_cold": 0})
+        prefix = "disco" if r["event"] == "disco" else "strat"
+        rec[f"{prefix}_{r['temp']}"] += 1
     return out
 
 
