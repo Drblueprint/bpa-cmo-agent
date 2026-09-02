@@ -264,3 +264,133 @@ def test_segment_results_total_row_uses_totals_not_averages():
     assert total["callable_mql"] == 1
     assert total["cost_cmql"] == 4000.0
     assert out["segment"].iloc[-1] == "Total"
+
+
+from dashboard.data.paid_mql import creative_tracker
+
+
+def _ads(rows):
+    return pd.DataFrame(rows, columns=["ad_id", "ad_name", "campaign_name",
+                                       "spend", "video_plays"])
+
+
+def _ents(rows):
+    return pd.DataFrame(rows, columns=["ad_id", "created_time",
+                                       "effective_status", "story_id"])
+
+
+def _tracker(ads, ad_emails, mql_emails, **kw):
+    defaults = dict(segment_rollup=ROLLUP, spend_floor=500.0,
+                    winner_pct=0.25, standout_pct=0.10, min_mql=3)
+    defaults.update(kw)
+    return creative_tracker(
+        ads,
+        _ents([(r[0], "2026-08-01T00:00:00-0500", "ACTIVE", "1_2")
+               for r in ads.itertuples(index=False)]),
+        ad_emails=ad_emails, mql_emails=mql_emails,
+        call_emails=set(), sale_emails=set(), **defaults)
+
+
+def test_ad_below_spend_floor_is_excluded():
+    out = _tracker(_ads([("1", "Cheap ad", CHIRO, 100.0, 0.0)]), {}, set())
+    assert out.empty
+
+
+def test_ad_without_enough_mqls_is_not_labeled():
+    """One MQL on $600 of spend must not read as a Winner. That is noise,
+    and a creative tracker that promotes noise is worse than none."""
+    out = _tracker(
+        _ads([("1", "Thin ad", CHIRO, 600.0, 0.0)]),
+        {"1": {"a@x.com"}}, {"a@x.com"})
+    assert out.iloc[0]["performance"] == "Not enough data"
+
+
+def test_winner_and_standout_thresholds():
+    """Segment average cost per callable MQL is $100 here. An ad at $70 is
+    30% below (Winner); $85 is 15% below (Stand Out); $95 is 5% below
+    (neither)."""
+    ads = _ads([
+        ("w", "Winner ad", CHIRO, 700.0, 0.0),
+        ("s", "Standout ad", CHIRO, 850.0, 0.0),
+        ("n", "Normal ad", CHIRO, 950.0, 0.0),
+        ("x", "Expensive ad", CHIRO, 1500.0, 0.0),
+    ])
+    ad_emails = {
+        "w": {f"w{i}@x.com" for i in range(10)},
+        "s": {f"s{i}@x.com" for i in range(10)},
+        "n": {f"n{i}@x.com" for i in range(10)},
+        "x": {f"x{i}@x.com" for i in range(10)},
+    }
+    mql = set().union(*ad_emails.values())
+    out = _tracker(ads, ad_emails, mql).set_index("ad_id")
+    assert out.loc["w", "performance"] == "Winner"
+    assert out.loc["s", "performance"] == "Stand Out"
+    assert out.loc["n", "performance"] == ""
+    assert out.loc["x", "performance"] == ""
+
+
+def test_scored_against_own_segment_not_account_average():
+    """A cheap segment must not swallow every Winner label. Each segment
+    produces its own winner."""
+    ads = _ads([
+        ("c1", "Chiro cheap", CHIRO, 500.0, 0.0),
+        ("c2", "Chiro dear", CHIRO, 1500.0, 0.0),
+        ("n1", "NLAP cheap", NLAP, 5000.0, 0.0),
+        ("n2", "NLAP dear", NLAP, 15000.0, 0.0),
+    ])
+    ad_emails = {k: {f"{k}{i}@x.com" for i in range(10)}
+                 for k in ("c1", "c2", "n1", "n2")}
+    mql = set().union(*ad_emails.values())
+    out = _tracker(ads, ad_emails, mql).set_index("ad_id")
+    assert out.loc["c1", "performance"] == "Winner"
+    assert out.loc["n1", "performance"] == "Winner"
+
+
+def test_format_from_video_plays():
+    ads = _ads([("v", "Video ad", CHIRO, 600.0, 42.0),
+                ("s", "Static ad", CHIRO, 600.0, 0.0)])
+    out = _tracker(ads, {}, set()).set_index("ad_id")
+    assert out.loc["v", "format"] == "Video"
+    assert out.loc["s", "format"] == "Static"
+
+
+def test_ad_with_no_hyros_attribution_reports_zero_not_a_label():
+    """An ad Hyros never attributed must not be scored as an infinitely
+    expensive loser. It has no data, which is a different fact."""
+    out = _tracker(_ads([("1", "Untracked", CHIRO, 900.0, 0.0)]), {}, set())
+    row = out.iloc[0]
+    assert row["callable_mql"] == 0
+    assert row["cost_cmql"] is None
+    assert row["performance"] == "Not enough data"
+
+
+def test_creative_tracker_sort_with_missing_launched():
+    """Verify that sort_values with na_position='last' correctly handles None
+    in an object-dtype column (launched). Ads with None launched must sort
+    last, not raise or sort first."""
+    ads = _ads([
+        ("1", "Ad with date", CHIRO, 600.0, 0.0),
+        ("2", "Ad without date", CHIRO, 600.0, 0.0),
+    ])
+    ad_emails = {"1": {"a@x.com"}, "2": {"b@x.com"}}
+    mql_emails = {"a@x.com", "b@x.com"}
+    # Override ad_entities to give ad 1 a date but not ad 2
+    out = creative_tracker(
+        ads,
+        _ents([
+            ("1", "2026-08-15T00:00:00-0500", "ACTIVE", "1_2"),
+            ("2", "", "ACTIVE", "1_2"),
+        ]),
+        ad_emails=ad_emails, mql_emails=mql_emails,
+        call_emails=set(), sale_emails=set(),
+        segment_rollup=ROLLUP, spend_floor=500.0,
+        winner_pct=0.25, standout_pct=0.10, min_mql=3,
+    )
+    # Verify both ads are present
+    assert len(out) == 2
+    # Verify ad with date comes first
+    assert out.iloc[0]["ad_id"] == "1"
+    assert out.iloc[0]["launched"] == "2026-08-15"
+    # Verify ad without date comes last (None sorts last)
+    assert out.iloc[1]["ad_id"] == "2"
+    assert out.iloc[1]["launched"] is None

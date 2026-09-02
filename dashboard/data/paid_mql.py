@@ -228,3 +228,100 @@ def segment_results(fb: pd.DataFrame,
         "segment_cac": _safe_div(t_spend + t_comm, t_sale),
     })
     return _frame_preserving_none(rows, SEGMENT_COLUMNS)
+
+
+CREATIVE_COLUMNS = ["ad_id", "ad_name", "segment", "format", "launched",
+                    "status", "story_id", "spend", "callable_mql",
+                    "cost_cmql", "calls", "cost_per_call", "sales",
+                    "performance"]
+
+NOT_ENOUGH_DATA = "Not enough data"
+
+
+def creative_tracker(ad_insights: pd.DataFrame,
+                     ad_entities: pd.DataFrame,
+                     ad_emails: dict[str, set[str]],
+                     mql_emails: set[str],
+                     call_emails: set[str],
+                     sale_emails: set[str],
+                     *,
+                     segment_rollup: dict[str, str],
+                     spend_floor: float,
+                     winner_pct: float,
+                     standout_pct: float,
+                     min_mql: int,
+                     ) -> pd.DataFrame:
+    """One row per ad above the spend floor, scored within its own segment.
+
+    Performance compares each ad's cost per callable MQL against the average
+    for its own segment, so a Chiro ad is judged against Chiro rather than
+    against NLAP. An ad must clear the spend floor AND have at least min_mql
+    callable MQLs to earn any label; below that it reads "Not enough data"
+    rather than being silently ranked on noise.
+    """
+    ads = ad_insights.copy() if ad_insights is not None else pd.DataFrame()
+    if ads.empty:
+        return pd.DataFrame(columns=CREATIVE_COLUMNS)
+
+    ads = ads[ads["spend"].astype(float) >= float(spend_floor)]
+    if ads.empty:
+        return pd.DataFrame(columns=CREATIVE_COLUMNS)
+
+    ents = (ad_entities.set_index("ad_id").to_dict("index")
+            if ad_entities is not None and not ad_entities.empty else {})
+
+    rows = []
+    for r in ads.itertuples(index=False):
+        aid = str(r.ad_id)
+        emails = ad_emails.get(aid, set())
+        n_mql = len(emails & mql_emails)
+        spend = float(r.spend)
+        ent = ents.get(aid, {})
+        rows.append({
+            "ad_id": aid,
+            "ad_name": r.ad_name,
+            "segment": resolve_segment(r.campaign_name,
+                                       segment_rollup=segment_rollup),
+            # The creative object reports object_type SHARE and a null
+            # video_id on every ad in this account, so video plays are the
+            # only reliable format signal.
+            "format": "Video" if float(getattr(r, "video_plays", 0) or 0) > 0
+                      else "Static",
+            "launched": str(ent.get("created_time") or "")[:10] or None,
+            "status": ent.get("effective_status"),
+            "story_id": ent.get("story_id"),
+            "spend": spend,
+            "callable_mql": n_mql,
+            "cost_cmql": _safe_div(spend, n_mql),
+            "calls": len(emails & call_emails),
+            "cost_per_call": _safe_div(spend, len(emails & call_emails)),
+            "sales": len(emails & sale_emails),
+            "performance": "",
+        })
+
+    # Segment averages use only ads that cleared the volume guard, so a
+    # single thin ad cannot drag its segment's benchmark around.
+    per_segment: dict[str, list[float]] = {}
+    for row in rows:
+        if row["callable_mql"] >= min_mql and row["cost_cmql"] is not None:
+            per_segment.setdefault(row["segment"], []).append(row["cost_cmql"])
+    seg_avg = {s: sum(v) / len(v) for s, v in per_segment.items() if v}
+
+    for row in rows:
+        if row["callable_mql"] < min_mql or row["cost_cmql"] is None:
+            row["performance"] = NOT_ENOUGH_DATA
+            continue
+        avg = seg_avg.get(row["segment"])
+        if not avg:
+            row["performance"] = NOT_ENOUGH_DATA
+            continue
+        delta = (avg - row["cost_cmql"]) / avg  # positive means cheaper
+        if delta >= winner_pct:
+            row["performance"] = "Winner"
+        elif delta >= standout_pct:
+            row["performance"] = "Stand Out"
+        else:
+            row["performance"] = ""
+
+    out = _frame_preserving_none(rows, CREATIVE_COLUMNS)
+    return out.sort_values("launched", ascending=False, na_position="last")
