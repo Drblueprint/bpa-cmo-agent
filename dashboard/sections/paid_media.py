@@ -16,11 +16,13 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import config as cfg
-from dashboard.data.hubspot_loader import (
-    load_closed_deals_in_window, load_deal_contacts, load_marketing_contacts,
-    load_meetings_in_window, load_mql_entries,
-)
 from dashboard.data.fb_loader import load_fb_insights
+from dashboard.data.groups import merge_list_group
+from dashboard.data.hubspot_loader import (
+    load_closed_deals_in_window, load_contacts_by_ids, load_deal_contacts,
+    load_list_memberships, load_marketing_contacts, load_meetings_in_window,
+    load_mql_entries,
+)
 from dashboard.data.paid_mql import (
     daily_mql_summary, resolve_segment, segment_results,
 )
@@ -61,16 +63,56 @@ def render_paid_media(start_date: date, end_date: date) -> None:
     mqls = load_mql_entries(start_date, end_date)
     meetings = load_meetings_in_window(start_date, end_date)
 
+    # Merge list-based groups (TheraRay, NLAP): their opt-ins are captured via
+    # HubSpot list membership, not a typeform, because FB lead reporting is
+    # unreliable for them. Without this, TheraRay/NLAP spend shows up with
+    # zero leads -- the exact failure this tab exists to prevent. Mirrors
+    # executive.py:120-136. merge_list_group tags each merged contact's
+    # typeform_submission_date with its membership timestamp (always inside
+    # [start_date, end_date] by construction), so the lead-dating fix below
+    # dates list members correctly automatically, and it registers
+    # cfg.ASSET_TO_GROUP[asset_label] so segment mapping picks them up too.
+    _list_groups = [
+        (cfg.THERARAY_HUBSPOT_LIST_ID, "TheraRay FB Lead", "TheraRay"),
+        (cfg.NLAP_HUBSPOT_LIST_ID, "NLAP FB Lead", "NLAP"),
+    ]
+    for _lid, _label, _grp in _list_groups:
+        try:
+            contacts = merge_list_group(
+                contacts, list_id=_lid, asset_label=_label, group=_grp,
+                start=start_date, end=end_date,
+                load_memberships=load_list_memberships,
+                load_contacts=load_contacts_by_ids,
+                excluded_emails=cfg.MARKETING_EXCLUDED_EMAILS,
+                asset_to_group=cfg.ASSET_TO_GROUP,
+            )
+        except Exception as e:  # noqa: BLE001
+            st.warning(f"{_grp} merge failed: {e}")
+
     # Leads carry their segment from the typeform asset, which is the best
     # lead attribution available and identifies the funnel they came from.
+    #
+    # lead_date comes from typeform_submission_date (the generation event),
+    # NOT recent_conversion_date. HubSpot ADVANCES recent_conversion_date
+    # whenever a lead later books a call, so a lead generated months ago who
+    # merely booked a call in this window would otherwise be counted as a
+    # lead of THIS window, inflating the count and understating cost per
+    # lead. load_marketing_contacts windows on recent_conversion_date (that
+    # is why these contacts arrive at all), so a contact whose
+    # typeform_submission_date is null or falls outside [start_date,
+    # end_date] is dropped here rather than counted. This matches Daily
+    # Summary, Weekly Metrics, and the Executive tab (commit 32da534).
+    _start_iso, _end_iso = str(start_date), str(end_date)
     leads = pd.DataFrame({
         "email": contacts["email"].fillna("").str.strip().str.lower(),
-        "lead_date": contacts["recent_conversion_date"].apply(_iso_day),
+        "lead_date": contacts["typeform_submission_date"].apply(_iso_day),
         "segment": contacts["typeform_asset_download"].map(
             cfg.ASSET_TO_GROUP).map(
             lambda g: cfg.SEGMENT_ROLLUP.get(g, g) if g else None),
     }).dropna(subset=["lead_date"])
-    leads = leads[leads["email"] != ""]
+    leads = leads[(leads["email"] != "")
+                 & (leads["lead_date"] >= _start_iso)
+                 & (leads["lead_date"] <= _end_iso)]
 
     mql_frame = pd.DataFrame({
         "email": mqls["email"].fillna("").str.strip().str.lower(),
