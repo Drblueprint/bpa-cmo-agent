@@ -129,6 +129,9 @@ def load_fb_ad_entities(ad_ids: tuple[str, ...]) -> pd.DataFrame:
     """
     token = st.secrets["FB_ADS_TOKEN"]
     rows = []
+    failed_chunks = []
+    first_error_code = None
+
     for i in range(0, len(ad_ids), 25):
         chunk = ad_ids[i:i + 25]
         r = requests.get(
@@ -141,6 +144,9 @@ def load_fb_ad_entities(ad_ids: tuple[str, ...]) -> pd.DataFrame:
             },
             timeout=90)
         if not r.ok:
+            failed_chunks.append(len(chunk))
+            if first_error_code is None:
+                first_error_code = r.status_code
             continue
         for _aid, node in (r.json() or {}).items():
             rows.append({
@@ -150,5 +156,10 @@ def load_fb_ad_entities(ad_ids: tuple[str, ...]) -> pd.DataFrame:
                 "story_id": (node.get("creative") or {}).get(
                     "effective_object_story_id"),
             })
+
+    if failed_chunks:
+        failed_count = sum(failed_chunks)
+        st.warning(f"Creative data missing for {failed_count} of {len(ad_ids)} ads (first error: HTTP {first_error_code})")
+
     return pd.DataFrame(rows, columns=[
         "ad_id", "created_time", "effective_status", "story_id"])
