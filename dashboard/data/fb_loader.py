@@ -67,3 +67,88 @@ def load_fb_insights(start: date, end: date,
             "date_stop": row.get("date_stop"),
         })
     return pd.DataFrame(records)
+
+
+@st.cache_data(ttl=900, show_spinner="Loading ad-level performance...")
+def load_fb_ad_insights(start: date, end: date) -> pd.DataFrame:
+    """Ad-level insights for the Creative Tracker.
+
+    video_plays is how Format is derived. The creative object reports
+    object_type SHARE and a null video_id on every ad in this account,
+    because the ads share existing posts rather than embedding creative, so
+    the creative object cannot distinguish video from static. Video play
+    actions can.
+
+    Columns: ad_id, ad_name, campaign_name, spend, impressions, clicks,
+             video_plays
+    """
+    token = st.secrets["FB_ADS_TOKEN"]
+    acct = st.secrets["FB_AD_ACCOUNT_ID"]
+    params = {
+        "time_range": f'{{"since":"{start.isoformat()}","until":"{end.isoformat()}"}}',
+        "level": "ad",
+        "fields": ("ad_id,ad_name,campaign_name,spend,impressions,clicks,"
+                   "video_play_actions"),
+        "access_token": token,
+        "limit": 500,
+    }
+    r = requests.get(f"{FB_API}/act_{acct}/insights", params=params, timeout=90)
+    r.raise_for_status()
+    rows = []
+    for row in r.json().get("data", []):
+        plays = 0.0
+        for a in (row.get("video_play_actions") or []):
+            try:
+                plays += float(a.get("value", 0))
+            except (TypeError, ValueError):
+                pass
+        rows.append({
+            "ad_id": str(row.get("ad_id")),
+            "ad_name": row.get("ad_name", ""),
+            "campaign_name": row.get("campaign_name", ""),
+            "spend": float(row.get("spend", 0)),
+            "impressions": int(row.get("impressions", 0) or 0),
+            "clicks": int(row.get("clicks", 0) or 0),
+            "video_plays": plays,
+        })
+    return pd.DataFrame(rows, columns=[
+        "ad_id", "ad_name", "campaign_name", "spend", "impressions",
+        "clicks", "video_plays",
+    ])
+
+
+@st.cache_data(ttl=900, show_spinner="Loading ad creative details...")
+def load_fb_ad_entities(ad_ids: tuple[str, ...]) -> pd.DataFrame:
+    """Launch date, delivery status and post permalink id, per ad.
+
+    These are object fields, NOT insights fields; requesting them in an
+    insights call errors. Fetched in batches of 25 because creative
+    expansion at larger page sizes returns HTTP 500 from FB.
+
+    Columns: ad_id, created_time, effective_status, story_id
+    """
+    token = st.secrets["FB_ADS_TOKEN"]
+    rows = []
+    for i in range(0, len(ad_ids), 25):
+        chunk = ad_ids[i:i + 25]
+        r = requests.get(
+            f"{FB_API}/",
+            params={
+                "ids": ",".join(chunk),
+                "fields": ("id,created_time,effective_status,"
+                           "creative{effective_object_story_id}"),
+                "access_token": token,
+            },
+            timeout=90)
+        if not r.ok:
+            continue
+        for _aid, node in (r.json() or {}).items():
+            rows.append({
+                "ad_id": str(node.get("id")),
+                "created_time": node.get("created_time"),
+                "effective_status": node.get("effective_status"),
+                "story_id": (node.get("creative") or {}).get(
+                    "effective_object_story_id"),
+            })
+    return pd.DataFrame(rows, columns=[
+        "ad_id", "created_time", "effective_status", "story_id"])
