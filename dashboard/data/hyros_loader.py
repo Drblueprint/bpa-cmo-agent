@@ -93,11 +93,18 @@ def load_hyros_leads_with_ads(start: date, end: date) -> pd.DataFrame:
     }
     rows_in: list[dict] = []
     seen_pages = 0
+    prev_page_id = None  # Track for stuck cursor detection
     while True:
         r = requests.get(f"{HYROS_API}/leads", headers={"API-Key": key},
                          params=params, timeout=90)
         r.raise_for_status()
         payload = r.json()
+        # Distinguish unexpected response shape from genuinely empty results.
+        if "result" not in payload and "data" not in payload:
+            st.warning(
+                "Hyros /leads returned an unexpected response shape with no "
+                "'result' or 'data' key. Ad-level attribution may be incomplete.")
+            break
         batch = payload.get("result") or payload.get("data") or []
         if not isinstance(batch, list) or not batch:
             break
@@ -113,8 +120,19 @@ def load_hyros_leads_with_ads(start: date, end: date) -> pd.DataFrame:
                     "with no paging token. Ad-level lead counts may be "
                     "truncated.")
             break
+        # Detect stuck cursor (repeated pageId) to avoid burning requests.
+        current_page_id = nxt.get("pageId")
+        if current_page_id == prev_page_id and current_page_id is not None:
+            st.warning(
+                f"Hyros /leads pagination token did not change after page {seen_pages}. "
+                "Results may be duplicated or incomplete.")
+            break
+        prev_page_id = current_page_id
         params = nxt
         if seen_pages > 200:  # runaway guard
+            st.warning(
+                f"Hyros /leads exceeded 200 pages ({seen_pages}). "
+                "Results may be incomplete or duplicated.")
             break
 
     rows = []
