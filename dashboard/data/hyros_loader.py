@@ -56,3 +56,81 @@ def load_hyros_leads(start: date, end: date) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=[
         "lead_id", "email", "first_source", "last_source", "created",
     ])
+
+
+def _next_page_params(payload: dict, params: dict) -> dict | None:
+    """Hyros paging: the response's nextPageId goes back as pageId.
+
+    Verified per-endpoint in dashboard/probes/paid_media_hyros_probe.py.
+    nextPageToken/pageToken is kept as a documented fallback.
+    """
+    if payload.get("nextPageId"):
+        return dict(params, pageId=payload["nextPageId"])
+    if payload.get("nextPageToken"):
+        return dict(params, pageToken=payload["nextPageToken"])
+    return None
+
+
+@st.cache_data(ttl=900, show_spinner="Pulling Hyros ad attribution...")
+def load_hyros_leads_with_ads(start: date, end: date) -> pd.DataFrame:
+    """Hyros leads retaining the FB ad id, for the Creative Tracker.
+
+    Separate from load_hyros_leads because that one flattens sources to a
+    display label and discards the ad id, and does not paginate.
+
+    The ad id lives at firstSource.sourceLinkAd.adSourceId, falling back to
+    lastSource. Note this routes through the LEAD record deliberately: Hyros
+    sale records arrive from the HubSpot integration with no firstSource or
+    lastSource block at all, so a direct sale-to-ad join is impossible.
+
+    Columns: email, ad_id, created
+    """
+    key = st.secrets["HYROS_API_KEY"]
+    params = {
+        "fromDate": start.isoformat(),
+        "toDate": end.isoformat(),
+        "pageSize": 250,
+    }
+    rows_in: list[dict] = []
+    seen_pages = 0
+    while True:
+        r = requests.get(f"{HYROS_API}/leads", headers={"API-Key": key},
+                         params=params, timeout=90)
+        r.raise_for_status()
+        payload = r.json()
+        batch = payload.get("result") or payload.get("data") or []
+        if not isinstance(batch, list) or not batch:
+            break
+        rows_in.extend(batch)
+        seen_pages += 1
+        nxt = _next_page_params(payload, params)
+        if nxt is None:
+            # A full page with no paging token is suspicious: it usually
+            # means truncation rather than a genuine end of results.
+            if len(batch) == params["pageSize"]:
+                st.warning(
+                    f"Hyros /leads returned a full page ({len(batch)} rows) "
+                    "with no paging token. Ad-level lead counts may be "
+                    "truncated.")
+            break
+        params = nxt
+        if seen_pages > 200:  # runaway guard
+            break
+
+    rows = []
+    for x in rows_in:
+        email = (x.get("email") or "").strip().lower()
+        if not email:
+            continue
+        ad_id = None
+        for key_name in ("firstSource", "lastSource"):
+            sla = ((x.get(key_name) or {}).get("sourceLinkAd") or {})
+            if sla.get("adSourceId"):
+                ad_id = str(sla["adSourceId"])
+                break
+        rows.append({
+            "email": email,
+            "ad_id": ad_id,
+            "created": x.get("createdDate") or x.get("created"),
+        })
+    return pd.DataFrame(rows, columns=["email", "ad_id", "created"])
