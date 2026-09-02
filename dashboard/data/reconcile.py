@@ -109,6 +109,8 @@ def group_marketing_metrics(
     stages_strategy: Iterable[str] = (),
     stages_closed_won: Iterable[str] = (),
     meetings: pd.DataFrame | None = None,
+    start: 'date | None' = None,
+    end: 'date | None' = None,
 ) -> pd.DataFrame:
     """Return per-group marketing metrics.
 
@@ -132,6 +134,21 @@ def group_marketing_metrics(
 
     contacts = contacts.copy()
     contacts["group"] = contacts["typeform_asset_download"].map(asset_to_group)
+
+    # Count a contact as a marketing LEAD only if its typeform_submission_date
+    # (the generation signal) falls in [start, end]. The loader windows on
+    # recent_conversion_date, which HubSpot advances on later events (call
+    # bookings), so without this an older lead who merely booked a call in-window
+    # would be over-counted. When no window is passed, count all fetched contacts
+    # (backward-compatible). Call/close counts below are unaffected.
+    if start is not None and end is not None and not contacts.empty:
+        _sub_col = (contacts["typeform_submission_date"]
+                    if "typeform_submission_date" in contacts.columns
+                    else pd.Series([None] * len(contacts), index=contacts.index))
+        _sub_date = pd.to_datetime(_sub_col, utc=True, errors="coerce").dt.date
+        submit_in_window = _sub_date.between(start, end)
+    else:
+        submit_in_window = pd.Series(True, index=contacts.index)
 
     # Hyros leads -> grouped via regex on first_source (campaign-name match)
     from dashboard.data.groups import match_group
@@ -181,7 +198,7 @@ def group_marketing_metrics(
     for g in groups:
         hyros_count = int(hyros_by_group.get(g, 0))
         fb_count = int(fb_leads_by_group.get(g, 0))
-        typeform_count = int((contacts["group"] == g).sum())
+        typeform_count = int(((contacts["group"] == g) & submit_in_window).sum())
         # "Marketing Leads" = typeform submissions, with FB fallback for groups
         # that don't use a typeform (e.g. TheraRay).
         marketing_leads = typeform_count if typeform_count > 0 else fb_count
@@ -459,6 +476,8 @@ def executive_kpis(
     stages_closed_won: Iterable[str],
     sdr_payroll_monthly: float | None,
     sme_payroll_monthly: float | None,
+    start: 'date | None' = None,
+    end: 'date | None' = None,
 ) -> dict:
     """Return the 15 Executive-tab KPI values for a window.
 
@@ -496,10 +515,25 @@ def executive_kpis(
 
     # --- Row 1: Inputs ---
     total_ad_spend = float(fb_filtered["spend"].sum()) if not fb_filtered.empty else 0.0
-    new_leads = int(len(contacts_filtered))
+    # Marketing leads = contacts whose typeform_submission_date (generation
+    # signal) is in-window. The loader windows on recent_conversion_date, which
+    # HubSpot advances on later events (call bookings), so filter here to avoid
+    # over-counting older leads who merely booked a call in-window. No window ->
+    # count all fetched contacts (backward-compatible). Funnel/meeting/deal
+    # metrics below stay scoped to the full active-contact frame, so an older
+    # lead's in-window call or close still counts.
+    if start is not None and end is not None and not contacts_filtered.empty:
+        _sub_col = (contacts_filtered["typeform_submission_date"]
+                    if "typeform_submission_date" in contacts_filtered.columns
+                    else pd.Series([None] * len(contacts_filtered), index=contacts_filtered.index))
+        _sub_date = pd.to_datetime(_sub_col, utc=True, errors="coerce").dt.date
+        leads_in_window = contacts_filtered[_sub_date.between(start, end)]
+    else:
+        leads_in_window = contacts_filtered
+    new_leads = int(len(leads_in_window))
     engaged_set = {"marketingqualifiedlead", "salesqualifiedlead", "opportunity", "customer"}
-    if not contacts_filtered.empty:
-        ls = contacts_filtered["lifecycle_stage"].fillna("").astype(str).str.lower()
+    if not leads_in_window.empty:
+        ls = leads_in_window["lifecycle_stage"].fillna("").astype(str).str.lower()
         engaged_leads = int(ls.isin(engaged_set).sum())
     else:
         engaged_leads = 0

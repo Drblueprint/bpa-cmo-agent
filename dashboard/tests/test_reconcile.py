@@ -1176,3 +1176,96 @@ def test_executive_kpis_counts_protocol_mapping_as_discovery():
     )
     assert result["discovery_booked"] == 1   # Protocol Mapping Call counts
     assert result["discovery_held"] == 1     # COMPLETE outcome
+
+
+from datetime import date as _date
+
+
+def test_group_marketing_metrics_windows_leads_by_submission():
+    """With start/end, marketing_leads counts only contacts whose
+    typeform_submission_date is in-window (not every fetched contact). Guards the
+    recent_conversion_date over-count: an 8/31-generated lead who booked a call
+    9/1 is fetched by the loader but must NOT count as a 9/1 lead."""
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__", "group": "Chiro",
+         "spend": 900.0, "impressions": 1, "clicks": 1, "fb_leads": 0},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Chiro Audit PDF",
+         "typeform_submission_date": "2026-09-01T10:00:00Z"},   # in window
+        {"hs_id": "2", "typeform_asset_download": "Chiro Audit PDF",
+         "typeform_submission_date": "2026-08-31T10:00:00Z"},   # generated 8/31 -> excluded
+        {"hs_id": "3", "typeform_asset_download": "Chiro Audit PDF",
+         "typeform_submission_date": "2026-09-02T10:00:00Z"},   # in window
+    ])
+    result = group_marketing_metrics(
+        fb, contacts, pd.DataFrame(columns=["contact_id", "deal_id"]),
+        pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        asset_to_group={"Chiro Audit PDF": "Chiro"},
+        stages_15min_booked=set(),
+        start=_date(2026, 9, 1), end=_date(2026, 9, 2),
+    )
+    chiro = result[result["group"] == "Chiro"].iloc[0]
+    assert chiro["marketing_leads"] == 2          # contacts 1 and 3; NOT 2 (8/31)
+    assert chiro["marketing_leads_source"] == "typeform"
+    assert chiro["cpl"] == 450.0                  # 900 / 2
+
+
+def test_group_marketing_metrics_fb_fallback_unaffected_by_window():
+    """A list-based group (no typeform_submission_date) still falls back to FB
+    leads when a window is applied."""
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Theraray__", "group": "TheraRay",
+         "spend": 100.0, "impressions": 1, "clicks": 1, "fb_leads": 4},
+    ])
+    contacts = pd.DataFrame(columns=["hs_id", "typeform_asset_download",
+                                     "typeform_submission_date"])
+    result = group_marketing_metrics(
+        fb, contacts, pd.DataFrame(columns=["contact_id", "deal_id"]),
+        pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        asset_to_group={}, stages_15min_booked=set(),
+        start=_date(2026, 9, 1), end=_date(2026, 9, 2),
+    )
+    tr = result[result["group"] == "TheraRay"].iloc[0]
+    assert tr["marketing_leads"] == 4             # FB fallback, window doesn't zero it wrongly
+    assert tr["marketing_leads_source"] == "fb"
+
+
+def test_executive_kpis_windows_new_leads_by_submission():
+    """With start/end, new_leads counts only in-window typeform submissions, but
+    an older lead's in-window CALL still counts in the funnel."""
+    from dashboard.data.reconcile import executive_kpis
+    fb = pd.DataFrame([
+        {"campaign_name": "DS | __Chiro__", "group": "Chiro",
+         "spend": 600.0, "impressions": 1, "clicks": 1, "fb_leads": 0},
+    ])
+    contacts = pd.DataFrame([
+        {"hs_id": "1", "typeform_asset_download": "Top 10 typeform",
+         "lifecycle_stage": "lead", "fifteen_min_call_date": None,
+         "sdr_owner": "", "bds": "",
+         "typeform_submission_date": "2026-09-01T00:00:00Z",
+         "createdate": "2026-09-01T00:00:00Z"},
+        {"hs_id": "2", "typeform_asset_download": "Top 10 typeform",
+         "lifecycle_stage": "lead", "fifteen_min_call_date": None,
+         "sdr_owner": "", "bds": "",
+         "typeform_submission_date": "2026-08-31T00:00:00Z",   # old lead
+         "createdate": "2026-08-31T00:00:00Z"},
+    ])
+    meetings = pd.DataFrame([
+        {"meeting_id": "m1", "contact_id": "2", "activity_type": "15 min call",
+         "outcome": "SCHEDULED", "start_time": "2026-09-01T10:00:00Z"},
+    ])
+    result = executive_kpis(
+        fb=fb, contacts=contacts, meetings=meetings,
+        contact_deals=pd.DataFrame(columns=["contact_id", "deal_id"]),
+        deals=pd.DataFrame(columns=["deal_id", "dealstage", "amount"]),
+        group_filter="All",
+        asset_to_group={"Top 10 typeform": "Chiro"},
+        group_default_amount={"Chiro": 0.0},
+        stages_closed_won={"closedwon"},
+        sdr_payroll_monthly=None, sme_payroll_monthly=None,
+        start=_date(2026, 9, 1), end=_date(2026, 9, 2),
+    )
+    assert result["new_leads"] == 1               # contact 1 (9/1); contact 2 (8/31) excluded
+    assert result["cpl"] == 600.0                 # 600 / 1
+    assert result["discovery_booked"] == 1        # contact 2's in-window call STILL counts

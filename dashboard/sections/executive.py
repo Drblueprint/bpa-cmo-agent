@@ -260,6 +260,7 @@ def render_executive(start: date, end: date) -> None:
         stages_closed_won=cfg.STAGES_CLOSED_WON,
         sdr_payroll_monthly=cfg.SDR_PAYROLL_MONTHLY,
         sme_payroll_monthly=cfg.SME_PAYROLL_MONTHLY,
+        start=start, end=end,
     )
 
     # === ROW 1 — top KPIs (mirrors MARKETING tab) ===
@@ -283,6 +284,7 @@ def render_executive(start: date, end: date) -> None:
             stages_strategy=cfg.STAGES_STRATEGY_BOOKED | cfg.STAGES_STRATEGY_HELD,
             stages_closed_won=cfg.STAGES_CLOSED_WON,
             meetings=meetings,
+            start=start, end=end,
         )
         if not group_metrics.empty:
             bd = group_metrics.copy()
@@ -355,6 +357,7 @@ def render_executive(start: date, end: date) -> None:
                 stages_closed_won=cfg.STAGES_CLOSED_WON,
                 sdr_payroll_monthly=cfg.SDR_PAYROLL_MONTHLY,
                 sme_payroll_monthly=cfg.SME_PAYROLL_MONTHLY,
+                start=start, end=end,
             )
             # Suppress groups with no leads + no funnel activity in this
             # window — keeps the table clean and avoids misleading
