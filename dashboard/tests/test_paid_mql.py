@@ -394,3 +394,39 @@ def test_creative_tracker_sort_with_missing_launched():
     # Verify ad without date comes last (None sorts last)
     assert out.iloc[1]["ad_id"] == "2"
     assert out.iloc[1]["launched"] is None
+
+
+def test_ad_entities_numeric_id_lookup_succeeds():
+    """Ruling P13: ad_entities.ad_id may arrive as numeric type rather than
+    string. Without defensive coercion, the join silently fails on every row,
+    leaving launched, status, and story_id blank for the entire table with no
+    error or warning. This is the MAP invisibility problem: silent total
+    blank-out instead of loud failure.
+
+    This test verifies the join works even when ad_entities carries numeric
+    ad_id, and that launched/status/story_id come through populated."""
+    ads = _ads([
+        (1, "Numeric id ad", CHIRO, 600.0, 0.0),
+    ])
+    ad_emails = {1: {"a@x.com"}}
+    mql_emails = {"a@x.com"}
+    # ad_entities with NUMERIC ad_id (not string)
+    ents_df = pd.DataFrame([
+        (1, "2026-08-15T00:00:00-0500", "ACTIVE", "story_1"),
+    ], columns=["ad_id", "created_time", "effective_status", "story_id"])
+    # Force ad_id to stay numeric
+    ents_df["ad_id"] = ents_df["ad_id"].astype(int)
+
+    out = creative_tracker(
+        ads,
+        ents_df,
+        ad_emails=ad_emails, mql_emails=mql_emails,
+        call_emails=set(), sale_emails=set(),
+        segment_rollup=ROLLUP, spend_floor=500.0,
+        winner_pct=0.25, standout_pct=0.10, min_mql=3,
+    )
+    # Verify the ad came through with populated entity fields
+    row = out.iloc[0]
+    assert row["launched"] == "2026-08-15"
+    assert row["status"] == "ACTIVE"
+    assert row["story_id"] == "story_1"

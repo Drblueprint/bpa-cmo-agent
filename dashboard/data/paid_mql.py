@@ -267,8 +267,12 @@ def creative_tracker(ad_insights: pd.DataFrame,
     if ads.empty:
         return pd.DataFrame(columns=CREATIVE_COLUMNS)
 
-    ents = (ad_entities.set_index("ad_id").to_dict("index")
-            if ad_entities is not None and not ad_entities.empty else {})
+    if ad_entities is not None and not ad_entities.empty:
+        _ents = ad_entities.copy()
+        _ents["ad_id"] = _ents["ad_id"].astype(str)
+        ents = _ents.set_index("ad_id").to_dict("index")
+    else:
+        ents = {}
 
     rows = []
     for r in ads.itertuples(index=False):
