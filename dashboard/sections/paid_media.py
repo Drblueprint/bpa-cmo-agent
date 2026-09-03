@@ -27,7 +27,8 @@ from dashboard.data.hubspot_loader import (
 )
 from dashboard.data.hyros_loader import load_hyros_leads_with_ads
 from dashboard.data.paid_mql import (
-    creative_tracker, daily_mql_summary, resolve_segment, segment_results,
+    UNMATCHED_LEADS, creative_tracker, daily_mql_summary, resolve_segment,
+    segment_results,
 )
 from dashboard.data.reconcile import (
     DISCOVERY_MEETING_SUBSTRINGS, build_closed_deals_table,
@@ -51,6 +52,53 @@ def _iso_day(value) -> str | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     return str(value)[:10]
+
+
+# A single stray contact should not nag. This is the number of in-window
+# leads that unmapped asset labels must carry between them before the tripwire
+# fires. Set low on purpose: five orphaned leads is already enough to move a
+# cost-per-lead number, and the whole point is to catch a rename early.
+UNMAPPED_ASSET_WARN_MIN = 3
+
+
+def unmapped_asset_counts(leads: pd.DataFrame) -> dict[str, int]:
+    """In-window leads per RAW typeform label that maps to no segment.
+
+    The spec requires a check that surfaces unmapped asset labels carrying
+    non-trivial volume, because a missing ASSET_TO_GROUP key produces no error
+    at all, only a quietly wrong number. Returns {} when every label maps.
+    """
+    if leads is None or leads.empty or "asset" not in leads.columns:
+        return {}
+    orphans = leads[leads["segment"].isna()]
+    if orphans.empty:
+        return {}
+    counts = orphans.groupby(
+        orphans["asset"].fillna("(no asset recorded)").astype(str)
+    )["email"].nunique()
+    return {str(k): int(v) for k, v in counts.items()}
+
+
+def unmapped_asset_warning(counts: dict[str, int], *,
+                           minimum: int = UNMAPPED_ASSET_WARN_MIN) -> str | None:
+    """Warning text naming the unmapped labels, or None when volume is trivial.
+
+    Modelled on the (unmatched) campaign warning below the segment table. The
+    threshold applies to the TOTAL across labels, not to any single label, so
+    five orphaned leads spread across five renamed labels still fires.
+    """
+    total = sum(counts.values())
+    if total < minimum:
+        return None
+    listed = ", ".join(f'"{label}" ({n})'
+                       for label, n in sorted(counts.items(),
+                                              key=lambda kv: (-kv[1], kv[0])))
+    return (
+        f"{total} leads in this window carry a typeform asset label that maps "
+        f"to no segment, so they are grouped under {UNMATCHED_LEADS} instead "
+        f"of the funnel they came from: {listed}. This is usually a label "
+        "renamed in HubSpot. Add each one to config.ASSET_TO_GROUP."
+    )
 
 
 def build_lead_frames(contacts: pd.DataFrame,
@@ -78,25 +126,59 @@ def build_lead_frames(contacts: pd.DataFrame,
     all), so a contact whose typeform_submission_date is null or falls outside
     [start_date, end_date] is dropped here rather than counted. This matches
     Daily Summary, Weekly Metrics, and the Executive tab (commit 32da534).
+
+    An MQL is segmented the SAME way its own contact was segmented as a lead,
+    by email against this merged frame, NOT by mapping the MQL loader's raw
+    asset value a second time. merge_list_group re-tags TheraRay and NLAP list
+    members with the synthetic labels "TheraRay FB Lead" / "NLAP FB Lead" and
+    registers those in ASSET_TO_GROUP, while load_mql_entries returns the same
+    contacts' RAW HubSpot labels ("NLAP User ", "TheraRay Device "), which are
+    deliberately and permanently absent from ASSET_TO_GROUP. Mapping the raw
+    value therefore segmented one person one way as a lead and another way as
+    an MQL: every NLAP and TheraRay MQL was dropped by the segment filter while
+    all of their spend was kept, overstating Cost Per Callable MQL.
     """
     _start_iso, _end_iso = str(start_date), str(end_date)
+
+    def _segment_of(asset):
+        group = asset_to_group.get(asset) if isinstance(asset, str) else None
+        return segment_rollup.get(group, group) if group else None
+
+    emails = contacts["email"].fillna("").str.strip().str.lower()
+    segments = contacts["typeform_asset_download"].map(_segment_of)
     leads = pd.DataFrame({
-        "email": contacts["email"].fillna("").str.strip().str.lower(),
+        "email": emails,
         "lead_date": contacts["typeform_submission_date"].apply(_iso_day),
-        "segment": contacts["typeform_asset_download"].map(
-            asset_to_group).map(
-            lambda g: segment_rollup.get(g, g) if g else None),
+        "segment": segments,
+        # The raw label is carried so the unmapped-asset tripwire can name the
+        # labels that need adding to ASSET_TO_GROUP.
+        "asset": contacts["typeform_asset_download"],
     }).dropna(subset=["lead_date"])
     leads = leads[(leads["email"] != "")
                   & (leads["lead_date"] >= _start_iso)
                   & (leads["lead_date"] <= _end_iso)]
 
+    # Every known email is a key, including one whose segment is None. An
+    # unresolvable contact must stay unresolvable on the MQL side too, or the
+    # two halves of the page drift apart again; the asset fallback applies
+    # only to an MQL this contacts frame never saw.
+    contact_segment: dict[str, str | None] = {}
+    for _email, _seg in zip(emails, segments):
+        if not _email:
+            continue
+        if contact_segment.get(_email) is None:
+            contact_segment[_email] = _seg
+
+    mql_emails = mqls["email"].fillna("").str.strip().str.lower()
+    mql_segments = pd.Series(
+        [contact_segment[e] if e in contact_segment else _segment_of(a)
+         for e, a in zip(mql_emails, mqls["typeform_asset_download"])],
+        index=mqls.index, dtype=object)
+
     mql_frame = pd.DataFrame({
-        "email": mqls["email"].fillna("").str.strip().str.lower(),
+        "email": mql_emails,
         "mql_date": mqls["mql_entered_at"].apply(_iso_day),
-        "segment": mqls["typeform_asset_download"].map(
-            asset_to_group).map(
-            lambda g: segment_rollup.get(g, g) if g else None),
+        "segment": mql_segments,
     }).dropna(subset=["mql_date"])
     mql_frame = mql_frame[mql_frame["email"] != ""]
     return leads, mql_frame
@@ -155,16 +237,27 @@ def render_paid_media(start_date: date, end_date: date) -> None:
         "Callable % on a single row is a ratio of that day's two counts, not "
         "a cohort conversion rate."
     )
-    available = sorted({s for s in leads["segment"].dropna().unique()}
+    _lead_segments = {s for s in leads["segment"].dropna().unique()}
+    # Leads whose asset maps to nothing are a selectable segment of their own,
+    # so they are visible and counted by default instead of being deleted by
+    # the filter, and Table 1 reconciles with Table 2's (unmatched leads) row.
+    if leads["segment"].isna().any():
+        _lead_segments.add(UNMATCHED_LEADS)
+    available = sorted(_lead_segments
                        | {resolve_segment(n, segment_rollup=cfg.SEGMENT_ROLLUP)
                           for n in fb_window["campaign_name"].dropna()})
     picked = st.multiselect("Segments", available, default=available,
                             key="paid_media_segments")
+    if not picked:
+        # An empty selection means an empty table. Falling back to None here
+        # showed MORE rows than any partial selection, which read as a bug.
+        st.info("No segments selected, so the table below is empty. Pick at "
+                "least one segment.")
 
     daily = daily_mql_summary(
         fb_daily, leads, mql_frame,
         segment_rollup=cfg.SEGMENT_ROLLUP,
-        segments=tuple(picked) if picked else None,
+        segments=tuple(picked),
     )
     st.dataframe(pd.DataFrame({
         "Date": daily["date"],
@@ -282,6 +375,14 @@ def render_paid_media(start_date: date, end_date: date) -> None:
             "config.ASSET_TO_GROUP."
         )
 
+    # The campaign-side tripwire above covers the failure mode that already
+    # announces itself. A missing ASSET key is the silent one: it produces no
+    # error at all, only a quietly wrong number, because the spend survives
+    # and the leads it bought do not.
+    _unmapped = unmapped_asset_warning(unmapped_asset_counts(leads))
+    if _unmapped:
+        st.warning(_unmapped)
+
     # --- Table 3 ---
     st.subheader("Creative Tracker")
     floor = st.number_input(
@@ -342,12 +443,25 @@ def render_paid_media(start_date: date, end_date: date) -> None:
             column_config={"Ad Link": st.column_config.LinkColumn(
                 "Ad Link", display_text="open")})
 
-        untracked = int((hyros["ad_id"].isna()).sum())
+        # The denominator is reported because without it a total attribution
+        # outage reads as perfect coverage: an empty Hyros pull makes isna()
+        # count 0 and prints "0 records carry no ad id", which is maximally
+        # reassuring exactly when it is maximally wrong.
+        hyros_records = int(len(hyros))
+        untracked = int(hyros["ad_id"].isna().sum()) if hyros_records else 0
         st.caption(
             "Ad-level lead counts come from Hyros ad attribution, while the "
             "segment table's counts come from HubSpot typeform submissions. "
             "These are different keys reading different systems, so the two "
             "tables will NOT sum identically. Hyros only sees leads it "
-            f"tracked. In this window {untracked} Hyros lead records carry no "
-            "ad id and are therefore absent from every ad row above."
+            f"tracked. In this window {untracked} of {hyros_records} Hyros "
+            "lead records carry no ad id and are therefore absent from every "
+            "ad row above."
         )
+        if hyros_records == 0:
+            st.warning(
+                "The Hyros pull returned no lead records at all for this "
+                "window, so every Callable MQL, Calls and Units Sold count in "
+                "the table above is zero for want of data rather than for "
+                "want of results. Ad-level attribution is unavailable."
+            )

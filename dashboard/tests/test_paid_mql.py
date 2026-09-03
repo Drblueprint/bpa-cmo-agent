@@ -430,3 +430,192 @@ def test_ad_entities_numeric_id_lookup_succeeds():
     assert row["launched"] == "2026-08-15"
     assert row["status"] == "ACTIVE"
     assert row["story_id"] == "story_1"
+
+
+# --- B2: leads whose asset maps to no segment must not vanish ---------------
+
+from dashboard.data.paid_mql import UNMATCHED_LEADS
+
+
+def test_unsegmented_leads_get_their_own_row_and_reach_the_total():
+    """B2: lds.groupby("segment") dropped segment=None rows from every segment
+    row AND from all_emails, so unmapped-asset leads vanished from the table
+    entirely, Total included. No row, no dash, no warning. That is how Chiro
+    cost per lead came to be overstated by 163% when a typeform label was
+    renamed in HubSpot."""
+    out = segment_results(
+        _seg_fb([(CHIRO, 1000.0)]),
+        _seg_leads([("a@x.com", "Chiro"), ("b@x.com", "Chiro"),
+                    ("c@x.com", None), ("d@x.com", None), ("e@x.com", None)]),
+        mql_emails={"a@x.com", "c@x.com", "d@x.com"},
+        call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    rows = {r["segment"]: r for _, r in out.iterrows()}
+    assert UNMATCHED_LEADS in rows, "unsegmented leads were dropped"
+    assert rows[UNMATCHED_LEADS]["leads"] == 3
+    assert rows[UNMATCHED_LEADS]["callable_mql"] == 2
+    assert rows[UNMATCHED_LEADS]["spend"] == 0.0
+    assert rows["Chiro"]["leads"] == 2
+    assert rows["Total"]["leads"] == 5
+    assert rows["Total"]["callable_mql"] == 3
+    assert rows["Total"]["cost_cmql"] == pytest.approx(1000.0 / 3)
+
+
+def test_unsegmented_leads_arriving_as_nan_are_bucketed_too():
+    """In production the unresolved segment is a pandas NaN, not None:
+    Series.map(dict) yields NaN for a missing key and the rollup lambda passes
+    it straight through, because bool(nan) is True. A fix that only handled
+    None would leave the live defect in place."""
+    frame = _seg_leads([("a@x.com", "Chiro"), ("b@x.com", "Chiro")])
+    frame.loc[1, "segment"] = float("nan")
+    out = segment_results(
+        _seg_fb([(CHIRO, 500.0)]), frame,
+        mql_emails=set(), call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    rows = {r["segment"]: r for _, r in out.iterrows()}
+    assert rows[UNMATCHED_LEADS]["leads"] == 1
+    assert rows["Total"]["leads"] == 2
+
+
+def test_unmatched_leads_row_is_not_merged_into_unmatched_campaign_row():
+    """Two different failures, two different rows. (unmatched) means a campaign
+    name matched no regex; (unmatched leads) means a typeform label maps to no
+    segment. Folding them together would hide which key needs fixing."""
+    out = segment_results(
+        _seg_fb([("Brand New Thing 2027", 800.0)]),
+        _seg_leads([("a@x.com", None)]),
+        mql_emails=set(), call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    segs = set(out["segment"])
+    assert "(unmatched)" in segs
+    assert UNMATCHED_LEADS in segs
+    rows = {r["segment"]: r for _, r in out.iterrows()}
+    assert rows["(unmatched)"]["spend"] == 800.0
+    assert rows["(unmatched)"]["leads"] == 0
+    assert rows[UNMATCHED_LEADS]["leads"] == 1
+
+
+def test_all_segments_mapped_produces_no_unmatched_leads_row():
+    """The bucket is a tripwire, not a permanent fixture."""
+    out = segment_results(
+        _seg_fb([(CHIRO, 100.0)]), _seg_leads([("a@x.com", "Chiro")]),
+        mql_emails=set(), call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    assert UNMATCHED_LEADS not in set(out["segment"])
+
+
+# --- B4: zero spend must render a dash, never $0.00 ------------------------
+
+def test_zero_spend_segment_cost_columns_are_none_not_zero():
+    """B4: _safe_div guards a zero denominator but not a zero numerator, so a
+    segment with real leads and no spend row reported Cost CMQL $0.00, Cost per
+    Call $0.00 and Cost per Close $0.00. The table then states that the segment
+    acquires customers for free, which is the most decision-distorting cell you
+    can put in front of someone allocating budget."""
+    leads = [(f"t{i}@x.com", "TheraRay") for i in range(12)]
+    out = segment_results(
+        _seg_fb([(CHIRO, 900.0)]),
+        _seg_leads([("a@x.com", "Chiro")] + leads),
+        mql_emails={f"t{i}@x.com" for i in range(4)},
+        call_emails={f"t{i}@x.com" for i in range(7)},
+        sale_emails={"t0@x.com"},
+        commissions_by_segment={}, segment_rollup=ROLLUP,
+    )
+    row = out[out["segment"] == "TheraRay"].iloc[0]
+    assert row["spend"] == 0.0
+    assert row["leads"] == 12
+    assert row["callable_mql"] == 4
+    assert row["calls"] == 7
+    assert row["sales"] == 1
+    assert row["cost_cmql"] is None
+    assert row["cost_per_call"] is None
+    assert row["cost_per_close"] is None
+    assert row["segment_cac"] is None
+    # Count ratios are genuine facts and must survive.
+    assert row["lead_to_callable_pct"] == pytest.approx(4 / 12)
+    assert row["callable_to_call_pct"] == pytest.approx(7 / 4)
+
+
+def test_zero_spend_segment_cac_still_reports_real_commissions():
+    """Commissions are money actually spent acquiring the customer, so a CAC
+    built only from them is a real number, not a missing one. Only a wholly
+    zero numerator (no spend AND no commission) suppresses the cell."""
+    out = segment_results(
+        _seg_fb([(CHIRO, 900.0)]),
+        _seg_leads([("a@x.com", "Chiro"), ("t@x.com", "TheraRay")]),
+        mql_emails=set(), call_emails=set(), sale_emails={"t@x.com"},
+        commissions_by_segment={"TheraRay": 1525.0}, segment_rollup=ROLLUP,
+    )
+    row = out[out["segment"] == "TheraRay"].iloc[0]
+    assert row["spend"] == 0.0
+    assert row["cost_per_close"] is None
+    assert row["segment_cac"] == 1525.0
+
+
+def test_zero_spend_total_row_cost_columns_are_none():
+    out = segment_results(
+        _seg_fb([]), _seg_leads([("a@x.com", "Chiro")]),
+        mql_emails={"a@x.com"}, call_emails={"a@x.com"},
+        sale_emails={"a@x.com"}, commissions_by_segment={},
+        segment_rollup=ROLLUP,
+    )
+    total = out[out["segment"] == "Total"].iloc[0]
+    assert total["spend"] == 0.0
+    assert total["leads"] == 1
+    assert total["cost_cmql"] is None
+    assert total["cost_per_call"] is None
+    assert total["cost_per_close"] is None
+    assert total["segment_cac"] is None
+
+
+def test_daily_row_with_leads_but_no_spend_has_no_cost_columns():
+    """Table 1, same defect: a day where the selected segments produced leads
+    but carry no spend row reported Cost Per Lead $0.00."""
+    out = daily_mql_summary(
+        _fb([]),
+        _leads([("a@x.com", "2026-08-10", "Chiro"),
+                ("b@x.com", "2026-08-10", "Chiro")]),
+        _mqls([("a@x.com", "2026-08-10", "Chiro")]),
+        segment_rollup=ROLLUP,
+    )
+    day = out[out["date"] == "2026-08-10"].iloc[0]
+    assert day["leads"] == 2
+    assert day["callable_mql"] == 1
+    assert day["cost_per_lead"] is None
+    assert day["cost_per_callable_mql"] is None
+    assert day["lead_to_callable_pct"] == 0.5
+    total = out[out["date"] == "Total"].iloc[0]
+    assert total["cost_per_lead"] is None
+    assert total["cost_per_callable_mql"] is None
+
+
+# --- B2 in Table 1: the same leads must survive the segment filter ---------
+
+def test_daily_summary_keeps_unsegmented_leads_when_their_label_is_selected():
+    frame = _leads([("a@x.com", "2026-08-10", "Chiro"),
+                    ("b@x.com", "2026-08-10", None)])
+    out = daily_mql_summary(
+        _fb([("2026-08-10", CHIRO, 200.0)]), frame,
+        _mqls([("b@x.com", "2026-08-10", None)]),
+        segment_rollup=ROLLUP, segments=("Chiro", UNMATCHED_LEADS),
+    )
+    total = out[out["date"] == "Total"].iloc[0]
+    assert total["leads"] == 2
+    assert total["callable_mql"] == 1
+
+
+def test_daily_summary_excludes_unsegmented_leads_when_not_selected():
+    frame = _leads([("a@x.com", "2026-08-10", "Chiro"),
+                    ("b@x.com", "2026-08-10", None)])
+    out = daily_mql_summary(
+        _fb([("2026-08-10", CHIRO, 200.0)]), frame,
+        _mqls([("b@x.com", "2026-08-10", None)]),
+        segment_rollup=ROLLUP, segments=("Chiro",),
+    )
+    total = out[out["date"] == "Total"].iloc[0]
+    assert total["leads"] == 1
+    assert total["callable_mql"] == 0

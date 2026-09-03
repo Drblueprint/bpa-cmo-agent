@@ -14,6 +14,12 @@ from dashboard.data.groups import match_group
 
 UNMATCHED = "(unmatched)"
 
+# Two different failures, two different rows. UNMATCHED means a CAMPAIGN name
+# matched no regex, so spend arrived with no segment. UNMATCHED_LEADS means a
+# typeform asset label maps to no segment, so LEADS arrived with none. Folding
+# them together would hide which of the two attribution keys needs fixing.
+UNMATCHED_LEADS = "(unmatched leads)"
+
 
 def _safe_div(num: float, den: float) -> float | None:
     """None on a zero denominator, never 0. A zero denominator and a genuine
@@ -25,6 +31,41 @@ def _safe_div(num: float, den: float) -> float | None:
     if not den:
         return None
     return num / den
+
+
+def _cost_div(num: float, den: float) -> float | None:
+    """Cost columns only: None unless BOTH sides are non-zero.
+
+    _safe_div guards a zero denominator but not a zero numerator, so a segment
+    with real leads and no spend row rendered "$0.00" and told the reader it
+    acquires customers for free. That is the same fault in the other direction:
+    a MISSING numerator dressed up as a genuine zero. Zero spend on this page
+    means the media cost of that segment is not measurable here, not that its
+    customers were free.
+
+    _safe_div's zero-denominator contract is deliberately left alone; other
+    code depends on it, and count ratios still want a genuine 0.0.
+    """
+    if not num or not den:
+        return None
+    return num / den
+
+
+def _seg_label(value) -> str:
+    """Name the no-segment bucket instead of leaving it as None or NaN.
+
+    A lead whose typeform asset maps to nothing arrives here as a pandas NaN,
+    because Series.map(dict) yields NaN for a missing key and bool(nan) is
+    True, so the caller's rollup lambda passes it straight through. groupby's
+    default dropna=True then deletes those rows from every segment row AND
+    from the union that builds the Total, so the leads vanish with no row, no
+    dash and no warning. A named bucket keeps them visible and countable.
+    """
+    if isinstance(value, str):
+        return value.strip() or UNMATCHED_LEADS
+    if value is None or pd.isna(value):
+        return UNMATCHED_LEADS
+    return str(value)
 
 
 def _frame_preserving_none(rows: list[dict], columns: list[str]) -> pd.DataFrame:
@@ -88,6 +129,13 @@ def daily_mql_summary(fb_daily: pd.DataFrame,
     if not fb.empty:
         fb["segment"] = fb["campaign_name"].apply(
             lambda n: resolve_segment(n, segment_rollup=segment_rollup))
+    # Leads and MQLs whose asset maps to nothing carry a NaN segment, which is
+    # in no `keep` set, so the filter silently deleted them. Naming the bucket
+    # lets the caller include or exclude it deliberately, like any segment.
+    if not lds.empty and "segment" in lds.columns:
+        lds["segment"] = lds["segment"].map(_seg_label)
+    if not mqs.empty and "segment" in mqs.columns:
+        mqs["segment"] = mqs["segment"].map(_seg_label)
     if segments is not None:
         keep = set(segments)
         if not fb.empty:
@@ -115,8 +163,8 @@ def daily_mql_summary(fb_daily: pd.DataFrame,
             "leads": n_leads,
             "callable_mql": n_mql,
             "lead_to_callable_pct": _safe_div(n_mql, n_leads),
-            "cost_per_lead": _safe_div(spend, n_leads),
-            "cost_per_callable_mql": _safe_div(spend, n_mql),
+            "cost_per_lead": _cost_div(spend, n_leads),
+            "cost_per_callable_mql": _cost_div(spend, n_mql),
         })
 
     tot_spend = float(sum(spend_by_day.values()))
@@ -129,8 +177,8 @@ def daily_mql_summary(fb_daily: pd.DataFrame,
         # Ratios come from the totals, never from averaging the per-day
         # ratios, which would weight a $10 day the same as a $3,000 day.
         "lead_to_callable_pct": _safe_div(tot_mql, tot_leads),
-        "cost_per_lead": _safe_div(tot_spend, tot_leads),
-        "cost_per_callable_mql": _safe_div(tot_spend, tot_mql),
+        "cost_per_lead": _cost_div(tot_spend, tot_leads),
+        "cost_per_callable_mql": _cost_div(tot_spend, tot_mql),
     })
     return _frame_preserving_none(rows, DAILY_COLUMNS)
 
@@ -175,9 +223,15 @@ def segment_results(fb: pd.DataFrame,
     # from the data rather than hardcoded.
     spend_by_seg = {k: float(v) for k, v in spend_by_seg.items() if v}
 
+    # A lead whose asset maps to no segment gets an explicit (unmatched leads)
+    # row rather than being deleted by groupby's default dropna=True. It is
+    # NOT folded into any real segment: that would move real leads under a
+    # funnel they did not come from. dropna=False is belt and braces, since
+    # _seg_label has already replaced every NaN with a name.
     leads_by_seg: dict[str, set[str]] = {}
     if not lds.empty:
-        for seg, grp in lds.groupby("segment"):
+        lds["segment"] = lds["segment"].map(_seg_label)
+        for seg, grp in lds.groupby("segment", dropna=False):
             leads_by_seg[seg] = set(grp["email"].dropna())
 
     rows = []
@@ -194,15 +248,19 @@ def segment_results(fb: pd.DataFrame,
             "spend": spend,
             "leads": n_leads,
             "callable_mql": n_mql,
-            "cost_cmql": _safe_div(spend, n_mql),
+            "cost_cmql": _cost_div(spend, n_mql),
             "lead_to_callable_pct": _safe_div(n_mql, n_leads),
             "calls": n_call,
-            "cost_per_call": _safe_div(spend, n_call),
+            "cost_per_call": _cost_div(spend, n_call),
             "callable_to_call_pct": _safe_div(n_call, n_mql),
             "sales": n_sale,
             "call_to_sale_pct": _safe_div(n_sale, n_call),
-            "cost_per_close": _safe_div(spend, n_sale),
-            "segment_cac": _safe_div(spend + commission, n_sale),
+            "cost_per_close": _cost_div(spend, n_sale),
+            # CAC keeps a commission-only figure. Commissions are money
+            # actually spent acquiring that customer, so with zero media spend
+            # the number is real, merely smaller than a segment that also
+            # bought ads. Only a wholly zero numerator suppresses the cell.
+            "segment_cac": _cost_div(spend + commission, n_sale),
         })
 
     all_emails = set().union(*leads_by_seg.values()) if leads_by_seg else set()
@@ -217,15 +275,15 @@ def segment_results(fb: pd.DataFrame,
         "spend": t_spend,
         "leads": t_leads,
         "callable_mql": t_mql,
-        "cost_cmql": _safe_div(t_spend, t_mql),
+        "cost_cmql": _cost_div(t_spend, t_mql),
         "lead_to_callable_pct": _safe_div(t_mql, t_leads),
         "calls": t_call,
-        "cost_per_call": _safe_div(t_spend, t_call),
+        "cost_per_call": _cost_div(t_spend, t_call),
         "callable_to_call_pct": _safe_div(t_call, t_mql),
         "sales": t_sale,
         "call_to_sale_pct": _safe_div(t_sale, t_call),
-        "cost_per_close": _safe_div(t_spend, t_sale),
-        "segment_cac": _safe_div(t_spend + t_comm, t_sale),
+        "cost_per_close": _cost_div(t_spend, t_sale),
+        "segment_cac": _cost_div(t_spend + t_comm, t_sale),
     })
     return _frame_preserving_none(rows, SEGMENT_COLUMNS)
 
