@@ -53,6 +53,55 @@ def _iso_day(value) -> str | None:
     return str(value)[:10]
 
 
+def build_lead_frames(contacts: pd.DataFrame,
+                      mqls: pd.DataFrame,
+                      start_date: date,
+                      end_date: date,
+                      *,
+                      asset_to_group: dict,
+                      segment_rollup: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (leads, mql_frame) from the POST-MERGE contacts frame.
+
+    Extracted from render_paid_media so the segment derivation is testable
+    without a Streamlit runtime. Config arrives as parameters, matching the
+    convention in paid_mql.py.
+
+    leads carry their segment from the typeform asset, which is the best lead
+    attribution available and identifies the funnel they came from.
+
+    lead_date comes from typeform_submission_date (the generation event), NOT
+    recent_conversion_date. HubSpot ADVANCES recent_conversion_date whenever a
+    lead later books a call, so a lead generated months ago who merely booked a
+    call in this window would otherwise be counted as a lead of THIS window,
+    inflating the count and understating cost per lead. load_marketing_contacts
+    windows on recent_conversion_date (that is why these contacts arrive at
+    all), so a contact whose typeform_submission_date is null or falls outside
+    [start_date, end_date] is dropped here rather than counted. This matches
+    Daily Summary, Weekly Metrics, and the Executive tab (commit 32da534).
+    """
+    _start_iso, _end_iso = str(start_date), str(end_date)
+    leads = pd.DataFrame({
+        "email": contacts["email"].fillna("").str.strip().str.lower(),
+        "lead_date": contacts["typeform_submission_date"].apply(_iso_day),
+        "segment": contacts["typeform_asset_download"].map(
+            asset_to_group).map(
+            lambda g: segment_rollup.get(g, g) if g else None),
+    }).dropna(subset=["lead_date"])
+    leads = leads[(leads["email"] != "")
+                  & (leads["lead_date"] >= _start_iso)
+                  & (leads["lead_date"] <= _end_iso)]
+
+    mql_frame = pd.DataFrame({
+        "email": mqls["email"].fillna("").str.strip().str.lower(),
+        "mql_date": mqls["mql_entered_at"].apply(_iso_day),
+        "segment": mqls["typeform_asset_download"].map(
+            asset_to_group).map(
+            lambda g: segment_rollup.get(g, g) if g else None),
+    }).dropna(subset=["mql_date"])
+    mql_frame = mql_frame[mql_frame["email"] != ""]
+    return leads, mql_frame
+
+
 def render_paid_media(start_date: date, end_date: date) -> None:
     st.header("Paid Media")
     st.caption(
@@ -92,39 +141,11 @@ def render_paid_media(start_date: date, end_date: date) -> None:
         except Exception as e:  # noqa: BLE001
             st.warning(f"{_grp} merge failed: {e}")
 
-    # Leads carry their segment from the typeform asset, which is the best
-    # lead attribution available and identifies the funnel they came from.
-    #
-    # lead_date comes from typeform_submission_date (the generation event),
-    # NOT recent_conversion_date. HubSpot ADVANCES recent_conversion_date
-    # whenever a lead later books a call, so a lead generated months ago who
-    # merely booked a call in this window would otherwise be counted as a
-    # lead of THIS window, inflating the count and understating cost per
-    # lead. load_marketing_contacts windows on recent_conversion_date (that
-    # is why these contacts arrive at all), so a contact whose
-    # typeform_submission_date is null or falls outside [start_date,
-    # end_date] is dropped here rather than counted. This matches Daily
-    # Summary, Weekly Metrics, and the Executive tab (commit 32da534).
-    _start_iso, _end_iso = str(start_date), str(end_date)
-    leads = pd.DataFrame({
-        "email": contacts["email"].fillna("").str.strip().str.lower(),
-        "lead_date": contacts["typeform_submission_date"].apply(_iso_day),
-        "segment": contacts["typeform_asset_download"].map(
-            cfg.ASSET_TO_GROUP).map(
-            lambda g: cfg.SEGMENT_ROLLUP.get(g, g) if g else None),
-    }).dropna(subset=["lead_date"])
-    leads = leads[(leads["email"] != "")
-                 & (leads["lead_date"] >= _start_iso)
-                 & (leads["lead_date"] <= _end_iso)]
-
-    mql_frame = pd.DataFrame({
-        "email": mqls["email"].fillna("").str.strip().str.lower(),
-        "mql_date": mqls["mql_entered_at"].apply(_iso_day),
-        "segment": mqls["typeform_asset_download"].map(
-            cfg.ASSET_TO_GROUP).map(
-            lambda g: cfg.SEGMENT_ROLLUP.get(g, g) if g else None),
-    }).dropna(subset=["mql_date"])
-    mql_frame = mql_frame[mql_frame["email"] != ""]
+    leads, mql_frame = build_lead_frames(
+        contacts, mqls, start_date, end_date,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        segment_rollup=cfg.SEGMENT_ROLLUP,
+    )
 
     # --- Table 1 ---
     st.subheader("Daily MQL Summary")
