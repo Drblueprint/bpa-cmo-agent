@@ -12,6 +12,12 @@ from dashboard.data.groups import match_group
 
 FB_API = "https://graph.facebook.com/v19.0"
 
+# Ad-level paging. AD_MAX_PAGES is a runaway guard, not an expected ceiling:
+# at 500 rows a page it allows 25,000 ads, far past this account's size, so
+# tripping it means a paging loop rather than a genuinely huge account.
+AD_PAGE_SIZE = 500
+AD_MAX_PAGES = 50
+
 
 def _action_value(actions: list | None, atype: str) -> float:
     if not actions:
@@ -79,6 +85,14 @@ def load_fb_ad_insights(start: date, end: date) -> pd.DataFrame:
     the creative object cannot distinguish video from static. Video play
     actions can.
 
+    Paginated. At campaign level a 500-row page is generous headroom, but at
+    ad level 500 was the exact number this account returned on two separate
+    probe runs, which is a truncation signature rather than a coincidence. A
+    silently missing ad is the worst failure this table can have: it vanishes
+    from the tracker AND it shifts the segment average that decides which of
+    the remaining ads is labelled Winner. Follows FB's paging.next until it is
+    exhausted, matching the pattern in hyros_loader.load_hyros_leads_with_ads.
+
     Columns: ad_id, ad_name, campaign_name, spend, impressions, clicks,
              video_plays
     """
@@ -90,12 +104,47 @@ def load_fb_ad_insights(start: date, end: date) -> pd.DataFrame:
         "fields": ("ad_id,ad_name,campaign_name,spend,impressions,clicks,"
                    "video_play_actions"),
         "access_token": token,
-        "limit": 500,
+        "limit": AD_PAGE_SIZE,
     }
-    r = requests.get(f"{FB_API}/act_{acct}/insights", params=params, timeout=90)
-    r.raise_for_status()
+    url = f"{FB_API}/act_{acct}/insights"
+    raw: list[dict] = []
+    seen_pages = 0
+    while True:
+        r = requests.get(url, params=params, timeout=90)
+        r.raise_for_status()
+        payload = r.json()
+        # Distinguish an unexpected response shape from a genuinely empty
+        # window: an empty window is quiet, a malformed payload is not.
+        if "data" not in payload:
+            st.warning(
+                "Facebook ad insights returned an unexpected response shape "
+                "with no 'data' key. The Creative Tracker may be incomplete.")
+            break
+        batch = payload.get("data") or []
+        if not isinstance(batch, list) or not batch:
+            break
+        raw.extend(batch)
+        seen_pages += 1
+        nxt = (payload.get("paging") or {}).get("next")
+        if not nxt:
+            # A full page with no next link is the truncation signature this
+            # fix exists to catch, so say so rather than returning quietly.
+            if len(batch) == AD_PAGE_SIZE:
+                st.warning(
+                    f"Facebook returned a full page ({len(batch)} ads) with no "
+                    "paging link. The Creative Tracker may be truncated.")
+            break
+        # The next link is a complete URL carrying the cursor and every
+        # original parameter, so the params dict must not be resent.
+        url, params = nxt, None
+        if seen_pages >= AD_MAX_PAGES:
+            st.warning(
+                f"Facebook ad insights stopped after {seen_pages} pages "
+                f"({len(raw)} ads). The Creative Tracker may be incomplete.")
+            break
+
     rows = []
-    for row in r.json().get("data", []):
+    for row in raw:
         plays = 0.0
         for a in (row.get("video_play_actions") or []):
             try:
