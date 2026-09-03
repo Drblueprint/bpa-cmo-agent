@@ -16,15 +16,18 @@ import pandas as pd
 import streamlit as st
 
 from dashboard import config as cfg
-from dashboard.data.fb_loader import load_fb_insights
+from dashboard.data.fb_loader import (
+    load_fb_ad_entities, load_fb_ad_insights, load_fb_insights,
+)
 from dashboard.data.groups import merge_list_group
 from dashboard.data.hubspot_loader import (
     load_closed_deals_in_window, load_contacts_by_ids, load_deal_contacts,
     load_list_memberships, load_marketing_contacts, load_meetings_in_window,
     load_mql_entries,
 )
+from dashboard.data.hyros_loader import load_hyros_leads_with_ads
 from dashboard.data.paid_mql import (
-    daily_mql_summary, resolve_segment, segment_results,
+    creative_tracker, daily_mql_summary, resolve_segment, segment_results,
 )
 from dashboard.data.reconcile import (
     DISCOVERY_MEETING_SUBSTRINGS, build_closed_deals_table,
@@ -256,4 +259,74 @@ def render_paid_media(start_date: date, end_date: date) -> None:
             "reported but its leads are not attributed. Add the pattern to "
             "config.CAMPAIGN_GROUPS and the matching typeform label to "
             "config.ASSET_TO_GROUP."
+        )
+
+    # --- Table 3 ---
+    st.subheader("Creative Tracker")
+    floor = st.number_input(
+        "Minimum spend to appear", min_value=0.0, step=100.0,
+        value=float(cfg.CREATIVE_SPEND_FLOOR), key="paid_media_floor")
+    st.caption(
+        "One row per ad above the spend floor, newest first. Performance "
+        "compares each ad's cost per callable MQL against the average for "
+        "its OWN segment, so a Chiro ad is judged against Chiro. An ad needs "
+        f"at least {cfg.CREATIVE_MIN_MQL} callable MQLs to earn a label. "
+        "Revenue and ROAS are omitted for the same reason as the segment "
+        "table."
+    )
+
+    ad_ins = load_fb_ad_insights(start_date, end_date)
+    kept = ad_ins[ad_ins["spend"] >= floor]
+    ad_ents = load_fb_ad_entities(tuple(kept["ad_id"]))
+    hyros = load_hyros_leads_with_ads(start_date, end_date)
+
+    ad_emails: dict[str, set[str]] = {}
+    for r in hyros.itertuples(index=False):
+        if r.ad_id:
+            ad_emails.setdefault(str(r.ad_id), set()).add(r.email)
+
+    tracker = creative_tracker(
+        kept, ad_ents, ad_emails,
+        mql_emails=set(mql_frame["email"]),
+        call_emails=call_emails,
+        sale_emails=sale_emails,
+        segment_rollup=cfg.SEGMENT_ROLLUP,
+        spend_floor=floor,
+        winner_pct=cfg.CREATIVE_WINNER_PCT,
+        standout_pct=cfg.CREATIVE_STANDOUT_PCT,
+        min_mql=cfg.CREATIVE_MIN_MQL,
+    )
+
+    if tracker.empty:
+        st.info(f"No ads spent {_dash(floor)} or more in this window.")
+    else:
+        st.dataframe(pd.DataFrame({
+            "Ad Name": tracker["ad_name"],
+            "Ad Link": tracker["story_id"].map(
+                lambda s: f"https://www.facebook.com/{str(s).replace('_', '/posts/')}"
+                if s else ""),
+            "Funnel": tracker["segment"],
+            "Format": tracker["format"],
+            "Launched": tracker["launched"],
+            "Status": tracker["status"],
+            "Performance": tracker["performance"],
+            "Spend": tracker["spend"].map(_dash),
+            "Callable MQL": tracker["callable_mql"].map(
+                lambda v: _dash(v, "int")),
+            "Cost per CMQL": tracker["cost_cmql"].map(_dash),
+            "Calls": tracker["calls"].map(lambda v: _dash(v, "int")),
+            "Cost per Call": tracker["cost_per_call"].map(_dash),
+            "Units Sold": tracker["sales"].map(lambda v: _dash(v, "int")),
+        }), use_container_width=True, hide_index=True,
+            column_config={"Ad Link": st.column_config.LinkColumn(
+                "Ad Link", display_text="open")})
+
+        untracked = int((hyros["ad_id"].isna()).sum())
+        st.caption(
+            "Ad-level lead counts come from Hyros ad attribution, while the "
+            "segment table's counts come from HubSpot typeform submissions. "
+            "These are different keys reading different systems, so the two "
+            "tables will NOT sum identically. Hyros only sees leads it "
+            f"tracked. In this window {untracked} Hyros lead records carry no "
+            "ad id and are therefore absent from every ad row above."
         )
