@@ -515,6 +515,24 @@ BOFU_FORM_IDS: list[str] = [
 THERARAY_HUBSPOT_LIST_ID: str = "6280"
 NLAP_HUBSPOT_LIST_ID: str = "7086"  # HubSpot list of NLAP opt-ins (FB lead source)
 
+# Typeform asset labels that are unmapped BY DESIGN, because those leads
+# attribute through the two HubSpot lists above rather than through
+# ASSET_TO_GROUP. Adding any of these to ASSET_TO_GROUP would double-count
+# leads that merge_list_group already re-tags, which is why
+# test_groups.test_list_based_assets_stay_unmapped pins them as absent.
+#
+# This exists so the unmapped-asset tripwire on the PAID MEDIA tab can tell an
+# operator which labels are a genuine gap to fix and which must be left alone.
+# Compared case-insensitively and whitespace-stripped, so a variant that gains
+# or loses a trailing space is still recognised.
+LIST_ATTRIBUTED_ASSETS: frozenset[str] = frozenset({
+    "TheraRay",
+    "TheraRay Device ",
+    "TheraRay User ",
+    "NLAP User ",
+    "Neuro-Lymphatic Activation Protocol ",
+})
+
 # Webinar contact properties (confirmed via probe on 2026-05-19).
 HS_PROP_WEBINAR_REG_DATE = "webinar_registration_date"
 HS_PROP_WEBINAR_COMPLETED_DATE = "webinar_completed_date"

@@ -11,7 +11,8 @@ import pytest
 
 from dashboard.data.paid_mql import UNMATCHED_LEADS, daily_mql_summary
 from dashboard.sections.paid_media import (
-    build_lead_frames, unmapped_asset_counts, unmapped_asset_warning,
+    available_segments, build_lead_frames, unmapped_asset_counts,
+    unmapped_asset_warning,
 )
 
 # merge_list_group re-tags TheraRay and NLAP list members with these synthetic
@@ -210,3 +211,153 @@ def test_unmapped_warning_counts_the_total_not_the_largest_label():
 def test_unmapped_warning_lists_labels_worst_first():
     msg = unmapped_asset_warning({"Small ": 1, "Big ": 9}, minimum=3)
     assert msg.index("Big ") < msg.index("Small ")
+
+
+# --- Residual 1: orphan MQLs are as invisible as orphan leads --------------
+
+LIST_ATTRIBUTED = frozenset({
+    "TheraRay", "TheraRay Device ", "TheraRay User ", "NLAP User ",
+    "Neuro-Lymphatic Activation Protocol ",
+})
+
+
+def _fb_window(rows):
+    return pd.DataFrame(rows, columns=["campaign_name"])
+
+
+CHIRO_CAMPAIGN = "DS | __Chiro__ Mixed Funnel Setup | CBO | USA"
+
+
+def test_orphan_mqls_offer_the_bucket_even_with_no_orphan_leads():
+    """The picker offered (unmatched leads) only when an orphan LEAD existed,
+    but daily_mql_summary buckets orphan MQLs under the same label, so a window
+    with orphan MQLs and no orphan leads filtered those MQLs straight out. That
+    is B1's signature on a narrower trigger: numerator lost, spend kept."""
+    contacts = _contacts([
+        ("1", "a@example.com", "2026-08-10T12:00:00Z", "Top 10 typeform"),
+    ])
+    mqls = _mqls([
+        ("a@example.com", "2026-08-10T09:00:00Z", "Top 10 typeform"),
+        ("ghost1@example.com", "2026-08-10T09:00:00Z", "Renamed Thing "),
+        ("ghost2@example.com", "2026-08-10T09:00:00Z", "Renamed Thing "),
+        ("ghost3@example.com", "2026-08-10T09:00:00Z", "Renamed Thing "),
+        ("ghost4@example.com", "2026-08-10T09:00:00Z", "Renamed Thing "),
+    ])
+    leads, mql_frame = _frames(contacts, mqls)
+    assert not leads["segment"].isna().any(), "no orphan LEADS in this shape"
+    assert mql_frame["segment"].isna().sum() == 4
+
+    available = available_segments(leads, mql_frame,
+                                   _fb_window([(CHIRO_CAMPAIGN,)]),
+                                   segment_rollup=ROLLUP)
+    assert UNMATCHED_LEADS in available
+
+    out = daily_mql_summary(
+        pd.DataFrame([("2026-08-10", CHIRO_CAMPAIGN, 1000.0)],
+                     columns=["date_start", "campaign_name", "spend"]),
+        leads, mql_frame, segment_rollup=ROLLUP, segments=tuple(available))
+    total = out[out["date"] == "Total"].iloc[0]
+    assert total["callable_mql"] == 5
+    assert total["cost_per_callable_mql"] == 200.0
+
+
+def test_available_segments_offers_a_segment_only_the_mqls_carry():
+    """A segment present in the MQL frame but in neither the leads frame nor a
+    campaign name is still a segment the filter would otherwise delete."""
+    contacts = _contacts([
+        ("1", "a@example.com", "2026-08-10T12:00:00Z", "Top 10 typeform"),
+        ("2", "n@example.com", "2026-07-01T12:00:00Z", "NLAP FB Lead"),
+    ])
+    mqls = _mqls([("n@example.com", "2026-08-12T09:00:00Z", "NLAP User ")])
+    leads, mql_frame = _frames(contacts, mqls)
+    assert "NLAP" not in set(leads["segment"])  # its lead date is out of window
+    assert available_segments(leads, mql_frame,
+                              _fb_window([(CHIRO_CAMPAIGN,)]),
+                              segment_rollup=ROLLUP) == ["Chiro", "NLAP"]
+
+
+def test_available_segments_stays_clean_when_everything_maps():
+    contacts = _contacts([
+        ("1", "a@example.com", "2026-08-10T12:00:00Z", "Top 10 typeform"),
+    ])
+    mqls = _mqls([("a@example.com", "2026-08-11T09:00:00Z", "Top 10 typeform")])
+    leads, mql_frame = _frames(contacts, mqls)
+    assert available_segments(leads, mql_frame,
+                              _fb_window([(CHIRO_CAMPAIGN,)]),
+                              segment_rollup=ROLLUP) == ["Chiro"]
+
+
+def test_mql_frame_carries_the_asset_that_decided_its_segment():
+    """The tripwire must name the label that actually decided the outcome. For
+    a known contact that is the CONTACT's label, not the MQL loader's own copy,
+    which can be a different and even mapped label for the same person."""
+    contacts = _contacts([
+        ("1", "doc@example.com", "2026-08-10T12:00:00Z", "Renamed Thing "),
+    ])
+    mqls = _mqls([("doc@example.com", "2026-08-12T09:00:00Z",
+                   "Top 10 typeform")])
+    _leads, mql_frame = _frames(contacts, mqls)
+    assert mql_frame["asset"].tolist() == ["Renamed Thing "]
+    assert unmapped_asset_counts(mql_frame) == {"Renamed Thing ": 1}
+
+
+def test_unmapped_warning_covers_mqls_when_there_are_no_orphan_leads():
+    msg = unmapped_asset_warning({}, mql_counts={"Renamed Thing ": 4},
+                                 minimum=3)
+    assert msg is not None
+    assert "Renamed Thing " in msg
+    assert "ASSET_TO_GROUP" in msg
+
+
+# --- Residual 2: do not tell operators to break a pinned test --------------
+
+def test_list_attributed_labels_are_never_told_to_be_added():
+    """"TheraRay Device " and "Neuro-Lymphatic Activation Protocol " are pinned
+    as permanently unmapped by test_groups.test_list_based_assets_stay_unmapped,
+    because mapping them double-counts leads that already attribute through
+    HubSpot lists 6280 and 7086. The warning must not instruct an operator to
+    do the exact thing that test forbids."""
+    msg = unmapped_asset_warning(
+        {"TheraRay Device ": 4, "Neuro-Lymphatic Activation Protocol ": 7},
+        list_attributed=LIST_ATTRIBUTED, minimum=3)
+    assert msg is not None
+    assert "TheraRay Device " in msg
+    assert "BY DESIGN" in msg
+    assert "Do NOT add these to ASSET_TO_GROUP" in msg
+    # No instruction to add anything, because nothing here is addable.
+    assert "Add these to config.ASSET_TO_GROUP" not in msg
+
+
+def test_genuine_gap_and_by_design_labels_are_reported_separately():
+    msg = unmapped_asset_warning(
+        {"Renamed Chiro Thing ": 5, "TheraRay Device ": 2},
+        list_attributed=LIST_ATTRIBUTED, minimum=3)
+    assert "Add these to config.ASSET_TO_GROUP: \"Renamed Chiro Thing \"" in msg
+    assert "Do NOT add these to ASSET_TO_GROUP" in msg
+    # The by-design label must not appear in the addable clause.
+    add_clause = msg.split("Add these to config.ASSET_TO_GROUP:")[1]
+    assert add_clause.index("Do NOT add") < add_clause.find("TheraRay Device ")
+
+
+def test_list_attributed_match_tolerates_a_changed_trailing_space():
+    msg = unmapped_asset_warning({"theraray device": 4},
+                                 list_attributed=LIST_ATTRIBUTED, minimum=3)
+    assert "BY DESIGN" in msg
+    assert "Add these to config.ASSET_TO_GROUP" not in msg
+
+
+def test_contacts_with_no_asset_at_all_are_called_a_data_gap():
+    msg = unmapped_asset_warning({}, mql_counts={"(no asset recorded)": 21},
+                                 list_attributed=LIST_ATTRIBUTED, minimum=3)
+    assert "no typeform asset at all" in msg
+    assert "HubSpot data gap" in msg
+    assert "Add these to config.ASSET_TO_GROUP" not in msg
+
+
+def test_config_pins_the_list_attributed_labels_the_group_test_forbids():
+    """The tripwire's by-design list and the pinning test must not drift."""
+    from dashboard import config as cfg
+    for label in ("TheraRay", "TheraRay Device ", "TheraRay User ",
+                  "NLAP User ", "Neuro-Lymphatic Activation Protocol "):
+        assert label in cfg.LIST_ATTRIBUTED_ASSETS
+        assert label not in cfg.ASSET_TO_GROUP

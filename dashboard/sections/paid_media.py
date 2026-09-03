@@ -54,51 +54,149 @@ def _iso_day(value) -> str | None:
     return str(value)[:10]
 
 
-# A single stray contact should not nag. This is the number of in-window
-# leads that unmapped asset labels must carry between them before the tripwire
-# fires. Set low on purpose: five orphaned leads is already enough to move a
-# cost-per-lead number, and the whole point is to catch a rename early.
+# A single stray contact should not nag. This is the number of in-window leads
+# and callable MQLs that unmapped asset labels must carry between them before
+# the tripwire fires. Set low on purpose: five orphaned leads is already enough
+# to move a cost-per-lead number, and the whole point is to catch a rename
+# early.
 UNMAPPED_ASSET_WARN_MIN = 3
 
+NO_ASSET = "(no asset recorded)"
 
-def unmapped_asset_counts(leads: pd.DataFrame) -> dict[str, int]:
-    """In-window leads per RAW typeform label that maps to no segment.
 
-    The spec requires a check that surfaces unmapped asset labels carrying
-    non-trivial volume, because a missing ASSET_TO_GROUP key produces no error
-    at all, only a quietly wrong number. Returns {} when every label maps.
+def _has_unresolved_segment(frame: pd.DataFrame) -> bool:
+    if frame is None or frame.empty or "segment" not in frame.columns:
+        return False
+    return bool(frame["segment"].isna().any())
+
+
+def unmapped_asset_counts(frame: pd.DataFrame) -> dict[str, int]:
+    """Distinct contacts per RAW typeform label that maps to no segment.
+
+    Works on either the leads frame or the MQL frame; both carry the label
+    that DECIDED their segment. The spec requires a check that surfaces
+    unmapped asset labels carrying non-trivial volume, because a missing
+    ASSET_TO_GROUP key produces no error at all, only a quietly wrong number.
+    Returns {} when every label maps.
     """
-    if leads is None or leads.empty or "asset" not in leads.columns:
+    if frame is None or frame.empty or "asset" not in frame.columns:
         return {}
-    orphans = leads[leads["segment"].isna()]
+    orphans = frame[frame["segment"].isna()]
     if orphans.empty:
         return {}
     counts = orphans.groupby(
-        orphans["asset"].fillna("(no asset recorded)").astype(str)
+        orphans["asset"].fillna(NO_ASSET).astype(str)
     )["email"].nunique()
     return {str(k): int(v) for k, v in counts.items()}
 
 
-def unmapped_asset_warning(counts: dict[str, int], *,
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def unmapped_asset_warning(lead_counts: dict[str, int], *,
+                           mql_counts: dict[str, int] | None = None,
+                           list_attributed=frozenset(),
                            minimum: int = UNMAPPED_ASSET_WARN_MIN) -> str | None:
     """Warning text naming the unmapped labels, or None when volume is trivial.
 
-    Modelled on the (unmatched) campaign warning below the segment table. The
-    threshold applies to the TOTAL across labels, not to any single label, so
-    five orphaned leads spread across five renamed labels still fires.
+    Covers BOTH frames. An orphan MQL is as invisible as an orphan lead, and a
+    window can carry orphan MQLs with no orphan leads at all, so a lead-only
+    check would stay silent through exactly the case that hurts most.
+
+    Labels are split into three buckets, because the instruction differs:
+
+      - Unmapped BY DESIGN. TheraRay and NLAP attribute through HubSpot lists
+        6280 and 7086, and adding them to ASSET_TO_GROUP would double-count
+        leads that merge_list_group already re-tags. A test pins them as
+        absent. Telling an operator to add these would be telling them to
+        break the thing the test protects.
+      - No label at all. Nothing to map; this is a HubSpot data gap, not a
+        config gap.
+      - Genuine gaps, usually a label renamed in HubSpot. ONLY these carry the
+        instruction to edit config.ASSET_TO_GROUP.
+
+    The threshold applies to the TOTAL across labels and both frames, not to
+    any single label, so five orphans spread across five renamed labels still
+    fires while one stray contact does not nag.
     """
-    total = sum(counts.values())
-    if total < minimum:
+    mql_counts = mql_counts or {}
+    n_leads = sum(lead_counts.values())
+    n_mqls = sum(mql_counts.values())
+    if n_leads + n_mqls < minimum:
         return None
-    listed = ", ".join(f'"{label}" ({n})'
-                       for label, n in sorted(counts.items(),
-                                              key=lambda kv: (-kv[1], kv[0])))
-    return (
-        f"{total} leads in this window carry a typeform asset label that maps "
-        f"to no segment, so they are grouped under {UNMATCHED_LEADS} instead "
-        f"of the funnel they came from: {listed}. This is usually a label "
-        "renamed in HubSpot. Add each one to config.ASSET_TO_GROUP."
-    )
+
+    known = {str(a).strip().lower() for a in list_attributed}
+    pairs = {label: (lead_counts.get(label, 0), mql_counts.get(label, 0))
+             for label in set(lead_counts) | set(mql_counts)}
+
+    def _fmt(label: str) -> str:
+        lds, mqs = pairs[label]
+        return f'"{label}" ({_plural(lds, "lead")}, {_plural(mqs, "MQL")})'
+
+    def _listed(labels: list[str]) -> str:
+        return ", ".join(_fmt(x) for x in sorted(
+            labels, key=lambda x: (-(pairs[x][0] + pairs[x][1]), x)))
+
+    by_design, gaps, no_label = [], [], []
+    for label in pairs:
+        if label == NO_ASSET:
+            no_label.append(label)
+        elif label.strip().lower() in known:
+            by_design.append(label)
+        else:
+            gaps.append(label)
+
+    parts = [
+        f'{_plural(n_leads, "lead")} and {_plural(n_mqls, "callable MQL")} in '
+        f"this window carry a typeform asset label that maps to no segment, so "
+        f"they sit under {UNMATCHED_LEADS} instead of the funnel they came from."
+    ]
+    if gaps:
+        parts.append(
+            "Genuine gaps, usually a label renamed in HubSpot. Add these to "
+            f"config.ASSET_TO_GROUP: {_listed(gaps)}.")
+    if by_design:
+        parts.append(
+            "Unmapped BY DESIGN. Do NOT add these to ASSET_TO_GROUP: they "
+            "attribute through the TheraRay and NLAP HubSpot lists, and "
+            "mapping them would double-count leads the list merge already "
+            f"re-tags: {_listed(by_design)}.")
+    if no_label:
+        lds, mqs = pairs[NO_ASSET]
+        parts.append(
+            f'{_plural(lds, "lead")} and {_plural(mqs, "callable MQL")} carry '
+            "no typeform asset at all, so no asset key can attribute them. "
+            "That is a HubSpot data gap, not a config gap.")
+    return " ".join(parts)
+
+
+def available_segments(leads: pd.DataFrame,
+                       mql_frame: pd.DataFrame,
+                       fb_window: pd.DataFrame,
+                       *,
+                       segment_rollup: dict) -> list[str]:
+    """Segments the picker offers, which is also its default selection.
+
+    Enumerated from ALL THREE inputs, not from the leads frame alone. A
+    segment missing here is a segment the filter deletes, so anything present
+    in any frame has to be offered.
+
+    The (unmatched leads) bucket is offered when EITHER frame carries an
+    unresolvable segment. daily_mql_summary maps _seg_label over the MQL frame
+    too, so an orphan MQL also becomes (unmatched leads); offering the label
+    only when an orphan LEAD happened to exist would mean a window with orphan
+    MQLs and no orphan leads silently filters those MQLs out. That is B1's
+    signature again, numerator lost and spend kept, on a narrower trigger.
+    """
+    segs = {s for s in leads["segment"].dropna().unique()}
+    if mql_frame is not None and not mql_frame.empty:
+        segs |= {s for s in mql_frame["segment"].dropna().unique()}
+    if _has_unresolved_segment(leads) or _has_unresolved_segment(mql_frame):
+        segs.add(UNMATCHED_LEADS)
+    segs |= {resolve_segment(n, segment_rollup=segment_rollup)
+             for n in fb_window["campaign_name"].dropna()}
+    return sorted(segs)
 
 
 def build_lead_frames(contacts: pd.DataFrame,
@@ -161,24 +259,31 @@ def build_lead_frames(contacts: pd.DataFrame,
     # Every known email is a key, including one whose segment is None. An
     # unresolvable contact must stay unresolvable on the MQL side too, or the
     # two halves of the page drift apart again; the asset fallback applies
-    # only to an MQL this contacts frame never saw.
-    contact_segment: dict[str, str | None] = {}
-    for _email, _seg in zip(emails, segments):
+    # only to an MQL this contacts frame never saw. The deciding ASSET is kept
+    # alongside the segment so the tripwire names the label that actually
+    # decided the outcome, rather than the MQL loader's own copy, which can be
+    # a different and possibly mapped label for the same person.
+    contact_decision: dict[str, tuple] = {}
+    for _email, _seg, _asset in zip(emails, segments,
+                                    contacts["typeform_asset_download"]):
         if not _email:
             continue
-        if contact_segment.get(_email) is None:
-            contact_segment[_email] = _seg
+        prev = contact_decision.get(_email)
+        if prev is None or (prev[0] is None and _seg is not None):
+            contact_decision[_email] = (_seg, _asset)
 
     mql_emails = mqls["email"].fillna("").str.strip().str.lower()
-    mql_segments = pd.Series(
-        [contact_segment[e] if e in contact_segment else _segment_of(a)
-         for e, a in zip(mql_emails, mqls["typeform_asset_download"])],
-        index=mqls.index, dtype=object)
+    _decided = [contact_decision[e] if e in contact_decision
+                else (_segment_of(a), a)
+                for e, a in zip(mql_emails, mqls["typeform_asset_download"])]
 
     mql_frame = pd.DataFrame({
         "email": mql_emails,
         "mql_date": mqls["mql_entered_at"].apply(_iso_day),
-        "segment": mql_segments,
+        "segment": pd.Series([d[0] for d in _decided], index=mqls.index,
+                             dtype=object),
+        "asset": pd.Series([d[1] for d in _decided], index=mqls.index,
+                           dtype=object),
     }).dropna(subset=["mql_date"])
     mql_frame = mql_frame[mql_frame["email"] != ""]
     return leads, mql_frame
@@ -237,15 +342,12 @@ def render_paid_media(start_date: date, end_date: date) -> None:
         "Callable % on a single row is a ratio of that day's two counts, not "
         "a cohort conversion rate."
     )
-    _lead_segments = {s for s in leads["segment"].dropna().unique()}
-    # Leads whose asset maps to nothing are a selectable segment of their own,
-    # so they are visible and counted by default instead of being deleted by
-    # the filter, and Table 1 reconciles with Table 2's (unmatched leads) row.
-    if leads["segment"].isna().any():
-        _lead_segments.add(UNMATCHED_LEADS)
-    available = sorted(_lead_segments
-                       | {resolve_segment(n, segment_rollup=cfg.SEGMENT_ROLLUP)
-                          for n in fb_window["campaign_name"].dropna()})
+    # Leads and MQLs whose asset maps to nothing are a selectable segment of
+    # their own, so they are visible and counted by default instead of being
+    # deleted by the filter, and Table 1 reconciles with Table 2's
+    # (unmatched leads) row.
+    available = available_segments(leads, mql_frame, fb_window,
+                                   segment_rollup=cfg.SEGMENT_ROLLUP)
     picked = st.multiselect("Segments", available, default=available,
                             key="paid_media_segments")
     if not picked:
@@ -379,7 +481,11 @@ def render_paid_media(start_date: date, end_date: date) -> None:
     # announces itself. A missing ASSET key is the silent one: it produces no
     # error at all, only a quietly wrong number, because the spend survives
     # and the leads it bought do not.
-    _unmapped = unmapped_asset_warning(unmapped_asset_counts(leads))
+    _unmapped = unmapped_asset_warning(
+        unmapped_asset_counts(leads),
+        mql_counts=unmapped_asset_counts(mql_frame),
+        list_attributed=cfg.LIST_ATTRIBUTED_ASSETS,
+    )
     if _unmapped:
         st.warning(_unmapped)
 
