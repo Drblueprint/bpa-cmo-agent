@@ -471,7 +471,13 @@ def format_ct_series(series, fmt: str = DEFAULT_DATETIME_FORMAT):
 # AirCall user_id → display name.
 AIRCALL_USER_NAMES: dict[str, str] = {
     "1507558": "Toby Hughes",
-    "1523089": "Scott Warren",
+    # Seat REASSIGNED from Scott Warren to Robbie Zudock (Kurt, 2026-09-02).
+    # AirCall calls carry only the user_id, never the person, so historical
+    # calls Scott made on this seat now render as Robbie in any window that
+    # predates the handover. Accepted: the handover date is not recorded, so
+    # there is no cutover to split on. If past-window accuracy matters, get
+    # the date from Kurt and make this mapping date-aware.
+    "1523089": "Robbie Zudock",     # SDR (was Scott Warren until 2026-09-02)
     "1551010": "Peyton Fulghum",
     "1605109": "Garrett Hustedt",
     "1630108": "Haley Stewart",
@@ -486,7 +492,11 @@ AIRCALL_USER_NAMES: dict[str, str] = {
 AIRCALL_TO_SDR_OWNER: dict[str, str] = {
     "1551010": "89638769",  # Peyton
     "1605109": "79870794",  # Garrett
-    "1523089": "44815718",  # Scott (BDS — included for completeness)
+    "1523089": "97847077",  # Robbie Zudock (SDR). Seat reassigned from Scott
+                            # Warren (44815718) on 2026-09-02 - see the note in
+                            # AIRCALL_USER_NAMES. Scott keeps his HubSpot owner
+                            # id for BDS rollups; he simply has no AirCall seat
+                            # now, so he drops out of SDR Call Activity.
     "1630108": "568393136", # Haley
     "1977979": "93727575",  # Kyle Naron
     "1999397": "95056529",  # Jake Fex
