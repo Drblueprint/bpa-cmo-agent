@@ -213,6 +213,10 @@ HS_OWNER_NAMES: dict[str, str] = {
     "93727575": "Kyle Naron",       # SDR (added 2026-06-17)
     "95056529": "Jake Fex",         # SDR (added 2026-06-27)
     "95056530": "Madison Workman",  # SDR (added 2026-06-27)
+    "97847077": "Robbie Zudock",    # SDR (added 2026-09-02; verified live via
+                                    # crm/v3/owners: robbie@yourautomatedpractice.com,
+                                    # archived=False). AirCall maps still pending -
+                                    # see AIRCALL_USER_NAMES / AIRCALL_TO_SDR_OWNER.
     "44815718": "Scott Warren",
     "176135509": "Scott Warren",   # HubSpot owner-ID variant (same person as 44815718)
     "77643349": "Dr. Eric Smith",
