@@ -11,8 +11,8 @@ import pytest
 
 from dashboard.data.paid_mql import UNMATCHED_LEADS, daily_mql_summary
 from dashboard.sections.paid_media import (
-    available_segments, build_lead_frames, unmapped_asset_counts,
-    unmapped_asset_warning,
+    available_segments, build_lead_frames, reconcile_selection,
+    unmapped_asset_counts, unmapped_asset_warning,
 )
 
 # merge_list_group re-tags TheraRay and NLAP list members with these synthetic
@@ -361,3 +361,142 @@ def test_config_pins_the_list_attributed_labels_the_group_test_forbids():
                   "NLAP User ", "Neuro-Lymphatic Activation Protocol "):
         assert label in cfg.LIST_ATTRIBUTED_ASSETS
         assert label not in cfg.ASSET_TO_GROUP
+
+
+# --- Follow-up 1: the picker's labels and the filter's keys cannot diverge --
+
+PADDED_ROLLUP = {"EMX": " Spaced ", "Practice Growth Workshop": " Spaced "}
+PADDED_ASSETS = {"EMX typeform": "EMX"}
+EMX_CAMPAIGN = "DS | EMX 2026 Kansas City Mixed Funnel Setup"
+
+
+def test_whitespace_in_a_group_value_does_not_drop_leads_or_mqls():
+    """daily_mql_summary normalizes both frames through segment_label, which
+    strips. A picker enumerating RAW values would offer " Spaced " while the
+    filter key is "Spaced", so nothing matches and the rows vanish: B1's
+    signature again, spend kept and leads dropped, with no row and no warning.
+    Not reachable on today's config, but this repo carries trailing spaces in
+    ASSET_TO_GROUP keys because whitespace is endemic in these HubSpot values,
+    and one stray space in a group VALUE reproduces it."""
+    contacts = _contacts([
+        ("1", "a@example.com", "2026-08-10T12:00:00Z", "EMX typeform"),
+        ("2", "b@example.com", "2026-08-10T12:00:00Z", "EMX typeform"),
+    ])
+    mqls = _mqls([("a@example.com", "2026-08-10T09:00:00Z", "EMX typeform")])
+    leads, mql_frame = build_lead_frames(
+        contacts, mqls, START, END,
+        asset_to_group=PADDED_ASSETS, segment_rollup=PADDED_ROLLUP)
+    assert leads["segment"].tolist() == [" Spaced ", " Spaced "]
+
+    fb_window = _fb_window([(EMX_CAMPAIGN,)])
+    available = available_segments(leads, mql_frame, fb_window,
+                                   segment_rollup=PADDED_ROLLUP)
+    assert available == ["Spaced"], "picker must offer the normalized label"
+
+    out = daily_mql_summary(
+        pd.DataFrame([("2026-08-10", EMX_CAMPAIGN, 500.0)],
+                     columns=["date_start", "campaign_name", "spend"]),
+        leads, mql_frame, segment_rollup=PADDED_ROLLUP,
+        segments=tuple(available))
+    total = out[out["date"] == "Total"].iloc[0]
+    assert total["leads"] == 2
+    assert total["callable_mql"] == 1
+    # Spend survives the same filter, so the numerator is not orphaned either.
+    assert total["cost_per_lead"] == 250.0
+    assert total["cost_per_callable_mql"] == 500.0
+
+
+def test_whitespace_in_a_group_value_keeps_spend_and_leads_on_one_row():
+    """The segment table must not split " Spaced " spend from "Spaced" leads
+    into two rows that each look half empty."""
+    from dashboard.data.paid_mql import segment_results
+    out = segment_results(
+        pd.DataFrame([(EMX_CAMPAIGN, 800.0)],
+                     columns=["campaign_name", "spend"]),
+        pd.DataFrame([("a@example.com", " Spaced ")],
+                     columns=["email", "segment"]),
+        mql_emails={"a@example.com"}, call_emails=set(), sale_emails=set(),
+        commissions_by_segment={}, segment_rollup=PADDED_ROLLUP)
+    segs = [s for s in out["segment"] if s != "Total"]
+    assert segs == ["Spaced"], "one row, not a spend row plus a leads row"
+    row = out[out["segment"] == "Spaced"].iloc[0]
+    assert row["spend"] == 800.0
+    assert row["leads"] == 1
+    assert row["cost_cmql"] == 800.0
+
+
+def test_segment_label_is_the_shared_normalizer():
+    from dashboard.data.paid_mql import segment_label
+    assert segment_label(" Spaced ") == "Spaced"
+    assert segment_label("Chiro") == "Chiro"
+    assert segment_label(None) == UNMATCHED_LEADS
+    assert segment_label("   ") == UNMATCHED_LEADS
+
+
+# --- Follow-up 2: a stored selection cannot come to mean other segments ----
+
+def test_stored_selection_survives_an_options_change_by_value():
+    """Streamlit stores indices, so ['Chiro', 'Event'] chosen against
+    ['Chiro', 'Event'] would deserialize to ['(unmatched leads)', 'Chiro']
+    once the orphan bucket appears and sorts first, silently dropping Event
+    and silently adding the bucket. Reconciling by value cannot do that."""
+    previous_options = ["Chiro", "Event"]
+    previous_selection = ["Chiro", "Event"]
+    options = ["(unmatched leads)", "Chiro", "Event"]
+
+    stale_index_result = [options[i] for i in
+                          [previous_options.index(s)
+                           for s in previous_selection]]
+    assert stale_index_result == ["(unmatched leads)", "Chiro"]  # the bug
+
+    selection, dropped = reconcile_selection(previous_options,
+                                             previous_selection, options)
+    assert selection == ["Chiro", "Event"]
+    assert dropped == []
+    assert selection != stale_index_result
+
+
+def test_reconciled_selection_is_never_widened():
+    """A segment the operator did not choose must never appear chosen."""
+    selection, dropped = reconcile_selection(
+        ["Chiro", "Event"], ["Chiro"],
+        ["(unmatched leads)", "Chiro", "Event", "NLAP"])
+    assert selection == ["Chiro"]
+    assert dropped == []
+
+
+def test_a_segment_that_left_the_window_is_dropped_and_reported():
+    selection, dropped = reconcile_selection(
+        ["Chiro", "Event", "NLAP"], ["Event", "NLAP"], ["Chiro", "Event"])
+    assert selection == ["Event"]
+    assert dropped == ["NLAP"], "the caller has to be able to say so out loud"
+
+
+def test_first_load_selects_everything():
+    assert reconcile_selection(None, None, ["Chiro", "Event"]) == (
+        ["Chiro", "Event"], [])
+
+
+def test_an_emptied_selection_is_not_silently_refilled():
+    """Deselecting everything is a choice, and the empty table is deliberate.
+    Refilling it on the next rerun would overrule the operator."""
+    selection, dropped = reconcile_selection(["Chiro", "Event"], [],
+                                             ["Chiro", "Event", "NLAP"])
+    assert selection == []
+    assert dropped == []
+
+
+def test_every_previously_chosen_segment_gone_leaves_an_empty_selection():
+    selection, dropped = reconcile_selection(["MAP"], ["MAP"],
+                                             ["Chiro", "Event"])
+    assert selection == []
+    assert dropped == ["MAP"]
+
+
+def test_widget_key_changes_with_the_option_set():
+    """The key carries the option set, so Streamlit builds a fresh widget
+    instead of deserializing indices from a differently shaped list."""
+    from dashboard.sections.paid_media import SEGMENT_WIDGET_KEY
+    key_a = f"{SEGMENT_WIDGET_KEY}_{'|'.join(['Chiro', 'Event'])}"
+    key_b = f"{SEGMENT_WIDGET_KEY}_{'|'.join(['(unmatched leads)', 'Chiro', 'Event'])}"
+    assert key_a != key_b

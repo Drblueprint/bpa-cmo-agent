@@ -51,15 +51,26 @@ def _cost_div(num: float, den: float) -> float | None:
     return num / den
 
 
-def _seg_label(value) -> str:
-    """Name the no-segment bucket instead of leaving it as None or NaN.
+def segment_label(value) -> str:
+    """Canonical display form of a segment. THE single normalizer.
 
-    A lead whose typeform asset maps to nothing arrives here as a pandas NaN,
-    because Series.map(dict) yields NaN for a missing key and bool(nan) is
-    True, so the caller's rollup lambda passes it straight through. groupby's
-    default dropna=True then deletes those rows from every segment row AND
-    from the union that builds the Total, so the leads vanish with no row, no
-    dash and no warning. A named bucket keeps them visible and countable.
+    Public because every producer of a segment label has to agree with every
+    consumer of one. A caller that enumerates segments for a picker must run
+    them through this, or its labels and this module's filter keys diverge and
+    the filter silently deletes rows whose label differs only in whitespace.
+
+    Name the no-segment bucket instead of leaving it as None or NaN. A lead
+    whose typeform asset maps to nothing arrives here as a pandas NaN, because
+    Series.map(dict) yields NaN for a missing key and bool(nan) is True, so the
+    caller's rollup lambda passes it straight through. groupby's default
+    dropna=True then deletes those rows from every segment row AND from the
+    union that builds the Total, so the leads vanish with no row, no dash and
+    no warning. A named bucket keeps them visible and countable.
+
+    Whitespace is stripped because it is endemic in these HubSpot values:
+    ASSET_TO_GROUP deliberately carries keys like "Referral " and "Movement
+    Activation Protocol " whose trailing space is part of the stored value. One
+    stray space in a GROUP value would otherwise split a segment in two.
     """
     if isinstance(value, str):
         return value.strip() or UNMATCHED_LEADS
@@ -126,16 +137,20 @@ def daily_mql_summary(fb_daily: pd.DataFrame,
     lds = leads.copy() if leads is not None else pd.DataFrame()
     mqs = mql_entries.copy() if mql_entries is not None else pd.DataFrame()
 
+    # All three frames go through the SAME normalizer, so a group value
+    # carrying whitespace cannot put spend under " Chiro " while its leads sit
+    # under "Chiro". Leads and MQLs whose asset maps to nothing carry a NaN
+    # segment, which is in no `keep` set, so the filter silently deleted them.
+    # Naming the bucket lets the caller include or exclude it deliberately,
+    # like any segment.
     if not fb.empty:
         fb["segment"] = fb["campaign_name"].apply(
-            lambda n: resolve_segment(n, segment_rollup=segment_rollup))
-    # Leads and MQLs whose asset maps to nothing carry a NaN segment, which is
-    # in no `keep` set, so the filter silently deleted them. Naming the bucket
-    # lets the caller include or exclude it deliberately, like any segment.
+            lambda n: segment_label(
+                resolve_segment(n, segment_rollup=segment_rollup)))
     if not lds.empty and "segment" in lds.columns:
-        lds["segment"] = lds["segment"].map(_seg_label)
+        lds["segment"] = lds["segment"].map(segment_label)
     if not mqs.empty and "segment" in mqs.columns:
-        mqs["segment"] = mqs["segment"].map(_seg_label)
+        mqs["segment"] = mqs["segment"].map(segment_label)
     if segments is not None:
         keep = set(segments)
         if not fb.empty:
@@ -213,8 +228,11 @@ def segment_results(fb: pd.DataFrame,
     lds = leads.copy() if leads is not None else pd.DataFrame()
 
     if not fb.empty:
+        # Same normalizer as the leads below, so whitespace in a group value
+        # cannot split one segment into a spend row and a separate leads row.
         fb["segment"] = fb["campaign_name"].apply(
-            lambda n: resolve_segment(n, segment_rollup=segment_rollup))
+            lambda n: segment_label(
+                resolve_segment(n, segment_rollup=segment_rollup)))
         spend_by_seg = fb.groupby("segment")["spend"].sum().to_dict()
     else:
         spend_by_seg = {}
@@ -227,10 +245,10 @@ def segment_results(fb: pd.DataFrame,
     # row rather than being deleted by groupby's default dropna=True. It is
     # NOT folded into any real segment: that would move real leads under a
     # funnel they did not come from. dropna=False is belt and braces, since
-    # _seg_label has already replaced every NaN with a name.
+    # segment_label has already replaced every NaN with a name.
     leads_by_seg: dict[str, set[str]] = {}
     if not lds.empty:
-        lds["segment"] = lds["segment"].map(_seg_label)
+        lds["segment"] = lds["segment"].map(segment_label)
         for seg, grp in lds.groupby("segment", dropna=False):
             leads_by_seg[seg] = set(grp["email"].dropna())
 

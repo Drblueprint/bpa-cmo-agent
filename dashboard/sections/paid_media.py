@@ -28,7 +28,7 @@ from dashboard.data.hubspot_loader import (
 from dashboard.data.hyros_loader import load_hyros_leads_with_ads
 from dashboard.data.paid_mql import (
     UNMATCHED_LEADS, creative_tracker, daily_mql_summary, resolve_segment,
-    segment_results,
+    segment_label, segment_results,
 )
 from dashboard.data.reconcile import (
     DISCOVERY_MEETING_SUBSTRINGS, build_closed_deals_table,
@@ -62,6 +62,14 @@ def _iso_day(value) -> str | None:
 UNMAPPED_ASSET_WARN_MIN = 3
 
 NO_ASSET = "(no asset recorded)"
+
+# The multiselect's widget key is suffixed with its option set, so a changed
+# set of options yields a NEW widget rather than one that deserializes stale
+# indices. The operator's choice and the options it was made against are kept
+# separately, by value, under these two keys.
+SEGMENT_WIDGET_KEY = "paid_media_segments"
+SEGMENT_OPTIONS_KEY = "paid_media_segment_options"
+SEGMENT_CHOICE_KEY = "paid_media_segment_choice"
 
 
 def _has_unresolved_segment(frame: pd.DataFrame) -> bool:
@@ -183,20 +191,59 @@ def available_segments(leads: pd.DataFrame,
     in any frame has to be offered.
 
     The (unmatched leads) bucket is offered when EITHER frame carries an
-    unresolvable segment. daily_mql_summary maps _seg_label over the MQL frame
-    too, so an orphan MQL also becomes (unmatched leads); offering the label
-    only when an orphan LEAD happened to exist would mean a window with orphan
-    MQLs and no orphan leads silently filters those MQLs out. That is B1's
-    signature again, numerator lost and spend kept, on a narrower trigger.
+    unresolvable segment. daily_mql_summary maps segment_label over the MQL
+    frame too, so an orphan MQL also becomes (unmatched leads); offering the
+    label only when an orphan LEAD happened to exist would mean a window with
+    orphan MQLs and no orphan leads silently filters those MQLs out. That is
+    B1's signature again, numerator lost and spend kept, on a narrower trigger.
+
+    Every enumerated value goes through segment_label, the SAME normalizer
+    daily_mql_summary applies before it filters. Enumerating raw values instead
+    would let the picker offer " Spaced " while the filter key is "Spaced", so
+    nothing matches and the rows disappear with no row, no dash and no warning.
+    Not reachable on today's whitespace-clean config, but this repo carries
+    trailing spaces in ASSET_TO_GROUP keys precisely because whitespace is
+    endemic in these HubSpot values, and one stray space in a group VALUE would
+    do it.
     """
-    segs = {s for s in leads["segment"].dropna().unique()}
+    segs = {segment_label(s) for s in leads["segment"].dropna().unique()}
     if mql_frame is not None and not mql_frame.empty:
-        segs |= {s for s in mql_frame["segment"].dropna().unique()}
+        segs |= {segment_label(s)
+                 for s in mql_frame["segment"].dropna().unique()}
     if _has_unresolved_segment(leads) or _has_unresolved_segment(mql_frame):
         segs.add(UNMATCHED_LEADS)
-    segs |= {resolve_segment(n, segment_rollup=segment_rollup)
+    segs |= {segment_label(resolve_segment(n, segment_rollup=segment_rollup))
              for n in fb_window["campaign_name"].dropna()}
     return sorted(segs)
+
+
+def reconcile_selection(previous_options, previous_selection,
+                        options: list[str]) -> tuple[list[str], list[str]]:
+    """Carry a stored segment selection forward BY VALUE. Returns (selection,
+    dropped).
+
+    Streamlit stores a multiselect's value as INDICES into the options list it
+    was built with. MultiSelectSerde.deserialize does
+    `[self.options[i] for i in current_value]` and falls back to the default
+    only when the stored value is None, so when the options list changes shape
+    the old indices re-point into the new list and the operator's selection
+    silently comes to mean DIFFERENT segments. (unmatched leads) sorts first,
+    so a session holding ['Chiro', 'Event'] that later gains the orphan bucket
+    would deserialize to ['(unmatched leads)', 'Chiro'], and Event's leads,
+    MQLs and spend would leave the table with no message.
+
+    Reconciling by value rather than resetting to everything is deliberate: a
+    reset would silently WIDEN the operator's selection, which is the same
+    class of harm in the other direction. The result is always a subset of what
+    they last chose, and anything no longer available is returned so the caller
+    can say so out loud.
+    """
+    if previous_selection is None or previous_options is None:
+        return list(options), []
+    available = set(options)
+    kept = [s for s in previous_selection if s in available]
+    dropped = [s for s in previous_selection if s not in available]
+    return kept, dropped
 
 
 def build_lead_frames(contacts: pd.DataFrame,
@@ -348,8 +395,27 @@ def render_paid_media(start_date: date, end_date: date) -> None:
     # (unmatched leads) row.
     available = available_segments(leads, mql_frame, fb_window,
                                    segment_rollup=cfg.SEGMENT_ROLLUP)
-    picked = st.multiselect("Segments", available, default=available,
-                            key="paid_media_segments")
+    # Streamlit stores a multiselect as INDICES into the options it was built
+    # with, so a stale selection re-points into a changed options list and
+    # comes to mean different segments. Two things prevent that: the stored
+    # choice is carried forward BY VALUE, and the widget key is derived from
+    # the option set, so a changed set builds a fresh widget seeded from that
+    # reconciled value instead of deserializing the old indices.
+    _default, _dropped = reconcile_selection(
+        st.session_state.get(SEGMENT_OPTIONS_KEY),
+        st.session_state.get(SEGMENT_CHOICE_KEY),
+        available)
+    picked = st.multiselect(
+        "Segments", available, default=_default,
+        key=f"{SEGMENT_WIDGET_KEY}_{'|'.join(available)}")
+    st.session_state[SEGMENT_OPTIONS_KEY] = list(available)
+    st.session_state[SEGMENT_CHOICE_KEY] = list(picked)
+    if _dropped:
+        st.info(
+            "These segments are not present in this window, so they were "
+            f"removed from your selection: {', '.join(_dropped)}. Nothing was "
+            "added to it."
+        )
     if not picked:
         # An empty selection means an empty table. Falling back to None here
         # showed MORE rows than any partial selection, which read as a bug.
