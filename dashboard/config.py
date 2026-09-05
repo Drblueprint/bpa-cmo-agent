@@ -158,10 +158,15 @@ SEGMENT_ROLLUP: dict[str, str] = {
     "Practice Growth Workshop": "Event",
 }
 
-# Creative Tracker. 500 ads delivered in the trailing 90 days but only 37
-# cleared $500, and the reference deck shows 16 rows, so a floor is required
-# for the table to be readable.
-CREATIVE_SPEND_FLOOR: float = 500.0
+# Creative Tracker. A floor is required for the table to be readable: 848 ads
+# delivered in a trailing 90-day window, of which only 53 cleared $500.
+# Kurt set this to $100 on 2026-09-04 to see more of the tail. It stays a UI
+# control, so anyone can raise it per-session without a code change.
+# Do NOT set it to 0. Table 3 still divides by spend via _safe_div rather than
+# _cost_div, so a zero-spend ad would render $0.00 costs and, worse, feed that
+# 0.00 into its segment's average and mint a false Winner. $100 is safely clear
+# of that; going to 0 needs the _cost_div fix first.
+CREATIVE_SPEND_FLOOR: float = 100.0
 # An ad is a Winner at 25% below its own segment's average cost per callable
 # MQL, Stand Out between 10% and 25% below. Scored per segment so a Chiro ad
 # is judged against Chiro, not against NLAP.
