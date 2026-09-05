@@ -307,11 +307,21 @@ def segment_results(fb: pd.DataFrame,
 
 
 CREATIVE_COLUMNS = ["ad_id", "ad_name", "segment", "format", "launched",
-                    "status", "story_id", "spend", "callable_mql",
+                    "status", "story_id", "spend", "leads", "cost_per_lead",
+                    "lead_to_cmql_pct", "callable_mql",
                     "cost_cmql", "calls", "cost_per_call", "sales",
                     "performance"]
 
 NOT_ENOUGH_DATA = "Not enough data"
+
+# Two more distinct failures an ad can show, and each is actionable in a
+# different way. NO_LEADS means Hyros attributed nobody to this ad at all --
+# investigate tracking or targeting. NO_MQLS means leads arrived but none of
+# them qualified -- the ad's traffic does not convert, not a tracking gap.
+# Collapsing either into NOT_ENOUGH_DATA is what let both problems hide
+# behind one label that also covers "too new to judge".
+NO_LEADS = "No leads"
+NO_MQLS = "No MQLs"
 
 
 def creative_tracker(ad_insights: pd.DataFrame,
@@ -329,11 +339,22 @@ def creative_tracker(ad_insights: pd.DataFrame,
                      ) -> pd.DataFrame:
     """One row per ad above the spend floor, scored within its own segment.
 
+    Surfaces the lead step between spend and callable MQL: leads (the ad's
+    attributed lead count, already computed for the MQL match but previously
+    discarded), cost_per_lead, and lead_to_cmql_pct.
+
     Performance compares each ad's cost per callable MQL against the average
     for its own segment, so a Chiro ad is judged against Chiro rather than
-    against NLAP. An ad must clear the spend floor AND have at least min_mql
-    callable MQLs to earn any label; below that it reads "Not enough data"
-    rather than being silently ranked on noise.
+    against NLAP. Precedence, checked in order:
+      1. leads == 0             -> "No leads" (investigate tracking/targeting)
+      2. leads > 0, mql == 0    -> "No MQLs" (traffic does not qualify)
+      3. mql < min_mql          -> "Not enough data" (too thin to score)
+      4. no segment average yet -> "Not enough data"
+      5. otherwise Winner / Stand Out / blank, exactly as before.
+    An ad must clear the spend floor AND have at least min_mql callable MQLs
+    to earn a scored label; segment averages are built only from ads that
+    clear that same volume guard, so a single thin ad cannot drag its
+    segment's benchmark around.
     """
     ads = ad_insights.copy() if ad_insights is not None else pd.DataFrame()
     if ads.empty:
@@ -354,6 +375,7 @@ def creative_tracker(ad_insights: pd.DataFrame,
     for r in ads.itertuples(index=False):
         aid = str(r.ad_id)
         emails = ad_emails.get(aid, set())
+        n_leads = len(emails)
         n_mql = len(emails & mql_emails)
         spend = float(r.spend)
         ent = ents.get(aid, {})
@@ -371,6 +393,14 @@ def creative_tracker(ad_insights: pd.DataFrame,
             "status": ent.get("effective_status"),
             "story_id": ent.get("story_id"),
             "spend": spend,
+            "leads": n_leads,
+            # COST column: None unless both sides are non-zero, so a
+            # zero-spend ad with real leads renders a dash, not "$0.00" (B4).
+            "cost_per_lead": _cost_div(spend, n_leads),
+            # RATIO column: None only on a zero denominator, so a real 0%
+            # conversion (leads with no MQLs) survives as a genuine 0.0
+            # rather than being blanked out like a cost column would be.
+            "lead_to_cmql_pct": _safe_div(n_mql, n_leads),
             "callable_mql": n_mql,
             "cost_cmql": _safe_div(spend, n_mql),
             "calls": len(emails & call_emails),
@@ -380,7 +410,9 @@ def creative_tracker(ad_insights: pd.DataFrame,
         })
 
     # Segment averages use only ads that cleared the volume guard, so a
-    # single thin ad cannot drag its segment's benchmark around.
+    # single thin ad cannot drag its segment's benchmark around. Unchanged
+    # by the lead columns above: membership here still depends only on
+    # callable_mql and cost_cmql, exactly as before.
     per_segment: dict[str, list[float]] = {}
     for row in rows:
         if row["callable_mql"] >= min_mql and row["cost_cmql"] is not None:
@@ -388,6 +420,15 @@ def creative_tracker(ad_insights: pd.DataFrame,
     seg_avg = {s: sum(v) / len(v) for s, v in per_segment.items() if v}
 
     for row in rows:
+        # Precedence: a real zero (no leads, or leads that never qualified)
+        # always outranks the generic "too thin to score" label, because
+        # each is a different, specific problem to act on.
+        if row["leads"] == 0:
+            row["performance"] = NO_LEADS
+            continue
+        if row["callable_mql"] == 0:
+            row["performance"] = NO_MQLS
+            continue
         if row["callable_mql"] < min_mql or row["cost_cmql"] is None:
             row["performance"] = NOT_ENOUGH_DATA
             continue

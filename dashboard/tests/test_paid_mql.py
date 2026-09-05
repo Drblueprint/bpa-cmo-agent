@@ -354,14 +354,20 @@ def test_format_from_video_plays():
     assert out.loc["s", "format"] == "Static"
 
 
-def test_ad_with_no_hyros_attribution_reports_zero_not_a_label():
+def test_ad_with_no_hyros_attribution_reads_no_leads():
     """An ad Hyros never attributed must not be scored as an infinitely
-    expensive loser. It has no data, which is a different fact."""
+    expensive loser. It has no data, which is a different fact -- and now
+    that leads are surfaced, it must read the specific 'No leads' label
+    (investigate tracking/targeting) rather than the generic 'Not enough
+    data' bucket that also covers ads that are merely too new to judge."""
     out = _tracker(_ads([("1", "Untracked", CHIRO, 900.0, 0.0)]), {}, set())
     row = out.iloc[0]
+    assert row["leads"] == 0
     assert row["callable_mql"] == 0
     assert row["cost_cmql"] is None
-    assert row["performance"] == "Not enough data"
+    assert row["performance"] == "No leads"
+    assert row["cost_per_lead"] is None
+    assert row["lead_to_cmql_pct"] is None
 
 
 def test_creative_tracker_sort_with_missing_launched():
@@ -430,6 +436,142 @@ def test_ad_entities_numeric_id_lookup_succeeds():
     assert row["launched"] == "2026-08-15"
     assert row["status"] == "ACTIVE"
     assert row["story_id"] == "story_1"
+
+
+# --- Task 9 follow-up: lead-level visibility on the Creative Tracker -------
+#
+# Kurt: "I just need to know what's running and what I need to optimize and
+# look into based on the number of total leads and then the MQLs from those
+# leads." Three new columns (leads, cost_per_lead, lead_to_cmql_pct) and a
+# split Performance label so "no leads at all", "leads that don't qualify"
+# and "too new to judge" stop collapsing into one indistinguishable bucket.
+
+
+def test_leads_and_derived_columns_populate_for_a_normal_ad():
+    """Baseline positive path: leads is a plain count, cost_per_lead and
+    lead_to_cmql_pct compute real numbers when both sides are non-zero."""
+    ads = _ads([("1", "Normal ad", CHIRO, 500.0, 0.0)])
+    emails = {f"e{i}@x.com" for i in range(10)}
+    mql = {f"e{i}@x.com" for i in range(4)}  # 4 of 10 qualify
+    row = _tracker(ads, {"1": emails}, mql, min_mql=3).iloc[0]
+    assert row["leads"] == 10
+    assert row["cost_per_lead"] == 50.0
+    assert row["lead_to_cmql_pct"] == pytest.approx(0.4)
+
+
+def test_ad_with_zero_leads_reads_no_leads():
+    """Precedence rule 1: leads == 0 -> 'No leads'. This is the bucket Kurt
+    needs to investigate tracking or targeting on -- Hyros attributed nobody
+    to this ad at all, which is a different problem from an ad whose leads
+    simply do not qualify."""
+    out = _tracker(_ads([("1", "No-lead ad", CHIRO, 600.0, 0.0)]), {}, set())
+    row = out.iloc[0]
+    assert row["leads"] == 0
+    assert row["performance"] == "No leads"
+    assert row["cost_per_lead"] is None
+    assert row["lead_to_cmql_pct"] is None
+
+
+def test_ad_with_leads_but_no_mqls_reads_no_mqls_with_real_zero_pct():
+    """Precedence rule 2: leads > 0 and callable_mql == 0 -> 'No MQLs'. This
+    is the distinction that matters most: lead_to_cmql_pct must be a REAL
+    0.0 (0% conversion is signal -- the traffic does not qualify), never
+    None, which would instead claim there was nothing to measure."""
+    ads = _ads([("1", "Unqualified ad", CHIRO, 600.0, 0.0)])
+    emails = {f"e{i}@x.com" for i in range(5)}
+    out = _tracker(ads, {"1": emails}, set())
+    row = out.iloc[0]
+    assert row["leads"] == 5
+    assert row["callable_mql"] == 0
+    assert row["performance"] == "No MQLs"
+    assert row["lead_to_cmql_pct"] == 0.0
+    assert row["lead_to_cmql_pct"] is not None
+    assert row["cost_per_lead"] == 120.0
+
+
+def test_ad_below_min_mql_still_reads_not_enough_data():
+    """Precedence rule 3: an ad WITH qualifying MQLs, just not enough of
+    them, must still fall through to 'Not enough data', not 'No MQLs'. Only
+    a genuine zero gets the new label; below-threshold noise keeps the old
+    one."""
+    out = _tracker(
+        _ads([("1", "Thin ad", CHIRO, 600.0, 0.0)]),
+        {"1": {"a@x.com"}}, {"a@x.com"}, min_mql=3)
+    row = out.iloc[0]
+    assert row["leads"] == 1
+    assert row["callable_mql"] == 1
+    assert row["performance"] == "Not enough data"
+
+
+def test_cost_per_lead_is_none_when_spend_is_zero():
+    """cost_per_lead is a COST column, so it goes through _cost_div: None
+    unless BOTH sides are non-zero. A zero-spend ad with real leads must not
+    render $0.00 per lead, which would say those leads were free."""
+    ads = _ads([("1", "Free ad", CHIRO, 0.0, 0.0)])
+    out = _tracker(ads, {"1": {"a@x.com", "b@x.com"}}, set(),
+                   spend_floor=0.0)
+    row = out.iloc[0]
+    assert row["leads"] == 2
+    assert row["spend"] == 0.0
+    assert row["cost_per_lead"] is None
+
+
+def test_segment_average_still_excludes_ads_below_volume_guard():
+    """The three new columns must not disturb the existing rule that a thin
+    ad's cost_cmql never enters its segment's benchmark. 'thin' plants an
+    expensive cost_cmql below the volume guard; if it leaked into the
+    average, 'main' -- the only ad that actually clears the guard -- would be
+    scored against an inflated average and wrongly read as a Winner instead
+    of blank."""
+    ads = _ads([
+        ("thin", "Thin ad", CHIRO, 1000.0, 0.0),    # 1 MQL, below min_mql=3
+        ("main", "Guarded ad", CHIRO, 500.0, 0.0),  # 5 MQL, clears guard
+    ])
+    ad_emails = {
+        "thin": {"t0@x.com", "t1@x.com"},           # 2 leads, 1 becomes MQL
+        "main": {f"m{i}@x.com" for i in range(8)},  # 8 leads, 5 become MQL
+    }
+    mql_emails = {"t0@x.com"} | {f"m{i}@x.com" for i in range(5)}
+    out = _tracker(ads, ad_emails, mql_emails, min_mql=3).set_index("ad_id")
+
+    assert out.loc["thin", "cost_cmql"] == 1000.0
+    assert out.loc["thin", "performance"] == "Not enough data"
+
+    # main's cost_cmql (500/5=100.0) is the ONLY value clearing the guard, so
+    # the segment average must equal it exactly, giving delta == 0 -- neither
+    # Winner nor Stand Out. Were "thin" wrongly included, avg = mean(1000,
+    # 100) = 550 and main's delta would jump to 0.818, misreading "Winner".
+    assert out.loc["main", "cost_cmql"] == 100.0
+    assert out.loc["main", "performance"] == ""
+
+
+def test_winner_and_standout_thresholds_unchanged_by_lead_columns():
+    """Regression guard restating test_winner_and_standout_thresholds with
+    the new columns also asserted: adding leads/cost_per_lead/
+    lead_to_cmql_pct must not shift the existing Winner/Stand Out math."""
+    ads = _ads([
+        ("w", "Winner ad", CHIRO, 700.0, 0.0),
+        ("s", "Standout ad", CHIRO, 850.0, 0.0),
+        ("n", "Normal ad", CHIRO, 950.0, 0.0),
+        ("x", "Expensive ad", CHIRO, 1500.0, 0.0),
+    ])
+    ad_emails = {
+        "w": {f"w{i}@x.com" for i in range(10)},
+        "s": {f"s{i}@x.com" for i in range(10)},
+        "n": {f"n{i}@x.com" for i in range(10)},
+        "x": {f"x{i}@x.com" for i in range(10)},
+    }
+    mql = set().union(*ad_emails.values())
+    out = _tracker(ads, ad_emails, mql).set_index("ad_id")
+    assert out.loc["w", "performance"] == "Winner"
+    assert out.loc["s", "performance"] == "Stand Out"
+    assert out.loc["n", "performance"] == ""
+    assert out.loc["x", "performance"] == ""
+    # And the new columns are populated (10 leads, all 10 became MQL) rather
+    # than silently absent or None.
+    assert out.loc["w", "leads"] == 10
+    assert out.loc["w", "lead_to_cmql_pct"] == 1.0
+    assert out.loc["w", "cost_per_lead"] == 70.0
 
 
 # --- B2: leads whose asset maps to no segment must not vanish ---------------

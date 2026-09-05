@@ -605,6 +605,10 @@ def render_paid_media(start_date: date, end_date: date) -> None:
             "Status": tracker["status"],
             "Performance": tracker["performance"],
             "Spend": tracker["spend"].map(_dash),
+            "Leads": tracker["leads"].map(lambda v: _dash(v, "int")),
+            "Cost per Lead": tracker["cost_per_lead"].map(_dash),
+            "Lead to MQL %": tracker["lead_to_cmql_pct"].map(
+                lambda v: _dash(v, "pct")),
             "Callable MQL": tracker["callable_mql"].map(
                 lambda v: _dash(v, "int")),
             "Cost per CMQL": tracker["cost_cmql"].map(_dash),
@@ -628,7 +632,9 @@ def render_paid_media(start_date: date, end_date: date) -> None:
             "tables will NOT sum identically. Hyros only sees leads it "
             f"tracked. In this window {untracked} of {hyros_records} Hyros "
             "lead records carry no ad id and are therefore absent from every "
-            "ad row above."
+            "ad row above. An ad reading \"No leads\" in Performance may "
+            "simply have leads Hyros could not attribute to it, not a dead "
+            "ad, so check Hyros coverage before writing it off."
         )
         if hyros_records == 0:
             st.warning(
