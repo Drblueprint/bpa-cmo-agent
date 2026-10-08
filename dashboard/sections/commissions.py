@@ -65,6 +65,7 @@ def render_commissions(start: date, end: date) -> None:
     ct = build_closed_deals_table(
         deals, cd, contacts, asset_to_group=cfg.ASSET_TO_GROUP,
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        list_asset_to_group=cfg.LIST_ASSET_TO_GROUP,
     ) if not deals.empty else pd.DataFrame(
         columns=["sdr_owner", "bds", "sme", "typeform", "dealstage",
                  "entered_primary1", "entered_90day", "closedate", "deal_amount"])

@@ -505,6 +505,7 @@ def render_sales(start: date, end: date) -> None:
                 group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
                 source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
                 stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+                list_asset_to_group=cfg.LIST_ASSET_TO_GROUP,
             )
             if not window_table.empty:
                 wt = window_table.copy()
@@ -793,6 +794,7 @@ def render_sales(start: date, end: date) -> None:
             group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
             source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
             stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+            list_asset_to_group=cfg.LIST_ASSET_TO_GROUP,
         )
     else:
         _win_closed = pd.DataFrame(columns=_wc_cols)
@@ -1415,6 +1417,7 @@ def render_sales(start: date, end: date) -> None:
             group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
             source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
             stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+            list_asset_to_group=cfg.LIST_ASSET_TO_GROUP,
         ) if not deals_ytd.empty else pd.DataFrame()
         asset_perf = asset_performance_rollup(
             contacts=_ap_leads, meetings=_ap_meet,
@@ -1537,6 +1540,7 @@ def render_sales(start: date, end: date) -> None:
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        list_asset_to_group=cfg.LIST_ASSET_TO_GROUP,
     )
     # Snapshot before the marketing-only checkbox can reassign deals_table, so
     # the DIY/90-Day/Basic roster below sees the full closed-deals set.
