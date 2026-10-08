@@ -1891,6 +1891,7 @@ def windowed_sales_money(
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
     group_cash_per_deal: dict | None = None,
+    list_asset_to_group: dict | None = None,
 ) -> dict:
     """Window-bounded money + cash + time-to-close.
 
@@ -1940,6 +1941,7 @@ def windowed_sales_money(
         group_default_amount=group_default_amount,
         source_overrides=source_overrides,
         stage_source_fallback=stage_source_fallback,
+        list_asset_to_group=list_asset_to_group,
     )
     n = int(len(table))
     revenue = float(table["deal_amount"].sum()) if n else 0.0
@@ -2913,6 +2915,7 @@ def compute_ytd_money(
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
+    list_asset_to_group: dict | None = None,
 ) -> dict:
     """Compute YTD money KPIs in TWO views: Total (all closed) + Marketing-only.
 
@@ -2924,6 +2927,7 @@ def compute_ytd_money(
         group_default_amount=group_default_amount,
         source_overrides=source_overrides,
         stage_source_fallback=stage_source_fallback,
+        list_asset_to_group=list_asset_to_group,
     )
 
     def _kpis(df: pd.DataFrame) -> dict:

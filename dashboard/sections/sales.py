@@ -447,6 +447,7 @@ def render_sales(start: date, end: date) -> None:
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
         group_cash_per_deal=cfg.GROUP_CASH_COLLECTED_PER_DEAL,
+        list_asset_to_group=cfg.LIST_ASSET_TO_GROUP,
     )
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric(

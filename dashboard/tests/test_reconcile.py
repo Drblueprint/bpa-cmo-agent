@@ -1172,6 +1172,33 @@ def test_d1_unattributed_group_uses_tier_suffix_not_nan():
     assert r["group"] == "Chiro"
 
 
+def test_d1_ytd_money_marketing_view_counts_list_close():
+    # compute_ytd_money feeds the EXECUTIVE Money YTD marketing-only (mkt_*)
+    # view. A list-attributed (NLAP) close must count as marketing revenue when
+    # list_asset_to_group is threaded through; without it the close is dropped
+    # from mkt_* (the regression this pins). Total view is unaffected either way.
+    from dashboard.data.reconcile import compute_ytd_money
+    deals = pd.DataFrame([_d1_deal("dy", "2026-09-11T00:00:00Z")])
+    contacts = pd.DataFrame([_d1_contact(
+        "c1", "ytd@x.com", "NLAP User ", "2026-08-07T00:00:00Z")])
+    cd = pd.DataFrame([{"contact_id": "c1", "deal_id": "dy"}])
+    kwargs = dict(
+        asset_to_group={"EMX Kansas City 2026": "EMX"},  # list labels NOT here
+        group_default_amount={"Chiro": 47928.0},
+    )
+
+    with_list = compute_ytd_money(
+        deals, cd, contacts, list_asset_to_group=_D1_LAG, **kwargs)
+    assert with_list["mkt_new_customers"] == 1
+    assert with_list["mkt_new_revenue"] == 40000.0
+    assert with_list["total_new_customers"] == 1
+
+    without_list = compute_ytd_money(deals, cd, contacts, **kwargs)
+    assert without_list["mkt_new_customers"] == 0
+    assert without_list["mkt_new_revenue"] == 0.0
+    assert without_list["total_new_customers"] == 1
+
+
 def test_drop_dead_meetings():
     """Canceled + rescheduled meetings (any prefix variant) are removed."""
     from dashboard.data.reconcile import drop_dead_meetings

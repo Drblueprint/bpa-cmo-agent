@@ -207,6 +207,7 @@ def render_executive(start: date, end: date) -> None:
         group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
         source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
         stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+        list_asset_to_group=cfg.LIST_ASSET_TO_GROUP,
     )
 
     # YTD ad spend for Marketing CAC calculation
