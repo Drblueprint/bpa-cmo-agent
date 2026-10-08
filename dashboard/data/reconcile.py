@@ -2691,6 +2691,31 @@ def weekly_metrics(
 # Closed-deal detail table helpers
 # ---------------------------------------------------------------------------
 
+def _list_asset_group(asset, list_asset_to_group) -> str | None:
+    """Return the segment group ('TheraRay'/'NLAP') for a list-attributed asset
+    label, or None. Normalizes the label (strip + lower) before lookup."""
+    if not asset or not list_asset_to_group:
+        return None
+    return list_asset_to_group.get(str(asset).strip().lower())
+
+
+def _optin_on_or_before_close(submit_raw, deal) -> bool:
+    """True when the opt-in (typeform_submission_date) is present and on or
+    before the deal's close date (closedate, else stage_entry_date, else
+    createdate). Opt-in date is the list-form submission ONLY; never createdate."""
+    submit_ts = pd.to_datetime(submit_raw, utc=True, errors="coerce")
+    if pd.isna(submit_ts):
+        return False
+    close_ts = pd.to_datetime(deal.get("closedate"), utc=True, errors="coerce")
+    if pd.isna(close_ts):
+        close_ts = pd.to_datetime(deal.get("stage_entry_date"), utc=True, errors="coerce")
+    if pd.isna(close_ts):
+        close_ts = pd.to_datetime(deal.get("createdate"), utc=True, errors="coerce")
+    if pd.isna(close_ts):
+        return False
+    return submit_ts <= close_ts
+
+
 def build_closed_deals_table(
     deals: pd.DataFrame,
     contact_deals: pd.DataFrame,
@@ -2700,6 +2725,7 @@ def build_closed_deals_table(
     group_default_amount: dict[str, float],
     source_overrides: dict | None = None,
     stage_source_fallback: dict | None = None,
+    list_asset_to_group: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Build a row-per-deal detail table for closed-won deals.
 
@@ -2751,6 +2777,15 @@ def build_closed_deals_table(
             source = asset
             group = asset_to_group.get(asset)
             is_marketing = True
+        elif asset and _list_asset_group(asset, list_asset_to_group) \
+                and _optin_on_or_before_close(
+                    primary_contact.get("typeform_submission_date"), deal):
+            # List-attributed close (NLAP / TheraRay): opted in via a HubSpot
+            # list form (asset unmapped in asset_to_group by design) with the
+            # opt-in on or before the close. Credit the segment as marketing.
+            group = _list_asset_group(asset, list_asset_to_group)
+            source = group
+            is_marketing = True
         elif _referral:
             # Doctor-referral fallback: the team fills referring_doctor_s_name
             # when a lead came in via a referral (no typeform). Group derives
@@ -2765,7 +2800,7 @@ def build_closed_deals_table(
         else:
             # Unknown source
             source = "(unattributed)"
-            group = primary_contact.get("group")
+            group = None
             is_marketing = False
 
         # Option C: deal.amount if > 0, else group default
@@ -2827,7 +2862,7 @@ def build_closed_deals_table(
         #  4. "(unmapped)"
         tier_val = primary_contact.get("contract_tier") or ""
         group_from_tier = _group_from_tier(tier_val)
-        if group:  # asset map, override, or TheraRay signal above
+        if group is not None and not (isinstance(group, float) and pd.isna(group)):
             final_group = group
         elif group_from_tier:
             final_group = group_from_tier

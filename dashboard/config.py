@@ -552,6 +552,19 @@ LIST_ATTRIBUTED_ASSETS: frozenset[str] = frozenset({
     "Neuro-Lymphatic Activation Protocol ",
 })
 
+# Close-attribution ONLY: each list-attributed asset label -> its segment group.
+# Kept SEPARATE from ASSET_TO_GROUP on purpose: adding these to ASSET_TO_GROUP
+# would double-count leads (typeform path + list-merge path) in the lead flow.
+# Keys are normalized (strip + lower); build_closed_deals_table normalizes the
+# contact's asset the same way before lookup.
+LIST_ASSET_TO_GROUP: dict[str, str] = {
+    "theraray":                            "TheraRay",
+    "theraray device":                     "TheraRay",
+    "theraray user":                       "TheraRay",
+    "nlap user":                           "NLAP",
+    "neuro-lymphatic activation protocol": "NLAP",
+}
+
 # Webinar contact properties (confirmed via probe on 2026-05-19).
 HS_PROP_WEBINAR_REG_DATE = "webinar_registration_date"
 HS_PROP_WEBINAR_COMPLETED_DATE = "webinar_completed_date"

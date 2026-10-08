@@ -1068,6 +1068,89 @@ def test_jared_wilson_credited_to_emx_kansas_city():
     assert bool(row["is_marketing"]) is True
 
 
+def _d1_deal(did, close, create="2021-01-01T00:00:00Z"):
+    return {"deal_id": did, "dealstage": "24094605", "amount": 40000.0,
+            "createdate": create, "closedate": close, "stage_entry_date": None}
+
+def _d1_contact(cid, email, asset, submit, tier="1:  PRIMARY"):
+    return {"hs_id": cid, "name": cid, "email": email,
+            "typeform_asset_download": asset, "typeform_submission_date": submit,
+            "contract_tier": tier, "send_contract_options": "",
+            "analytics_source_data_1": "", "created": "2021-01-01T00:00:00Z",
+            "sdr_owner": "", "bds": "", "sme": ""}
+
+_D1_LAG = {"theraray": "TheraRay", "theraray device": "TheraRay",
+           "theraray user": "TheraRay", "nlap user": "NLAP",
+           "neuro-lymphatic activation protocol": "NLAP"}
+
+def _d1_build(deals_rows, contact_rows):
+    from dashboard.data.reconcile import build_closed_deals_table
+    deals = pd.DataFrame(deals_rows)
+    contacts = pd.DataFrame(contact_rows)
+    cd = pd.DataFrame([{"contact_id": c["hs_id"], "deal_id": d["deal_id"]}
+                       for d, c in zip(deals_rows, contact_rows)])
+    return build_closed_deals_table(
+        deals, cd, contacts,
+        asset_to_group={"EMX Kansas City 2026": "EMX"},  # list labels NOT here
+        group_default_amount={"Chiro": 47928.0},
+        source_overrides=None, stage_source_fallback=None,
+        list_asset_to_group=_D1_LAG,
+    )
+
+def test_d1_nlap_close_attributed_when_optin_before_close():
+    t = _d1_build(
+        [_d1_deal("dn", "2026-09-11T00:00:00Z")],
+        [_d1_contact("c1", "vs@x.com", "Neuro-Lymphatic Activation Protocol ",
+                     "2026-08-07T00:00:00Z")])
+    r = t.iloc[0]
+    assert r["group"] == "NLAP" and r["source"] == "NLAP" and bool(r["is_marketing"]) is True
+
+def test_d1_theraray_close_attributed_when_optin_before_close():
+    t = _d1_build(
+        [_d1_deal("dt", "2026-07-22T00:00:00Z")],
+        [_d1_contact("c1", "td@x.com", "TheraRay", "2026-07-15T00:00:00Z")])
+    r = t.iloc[0]
+    assert r["group"] == "TheraRay" and bool(r["is_marketing"]) is True
+
+def test_d1_list_optin_after_close_is_not_credited():
+    # Zerebny-style: opted into the list AFTER closing -> not list-credited.
+    t = _d1_build(
+        [_d1_deal("dz", "2026-02-09T00:00:00Z")],
+        [_d1_contact("c1", "mz@x.com", "NLAP User ", "2026-06-20T00:00:00Z",
+                     tier="1:  PRIMARY")])
+    r = t.iloc[0]
+    assert bool(r["is_marketing"]) is False
+    assert r["group"] != "NLAP"          # falls through to tier fallback
+    assert not (isinstance(r["group"], float) and pd.isna(r["group"]))  # not NaN
+
+def test_d1_list_asset_missing_submission_not_credited():
+    t = _d1_build(
+        [_d1_deal("dm", "2026-07-22T00:00:00Z")],
+        [_d1_contact("c1", "ns@x.com", "TheraRay", None)])
+    r = t.iloc[0]
+    assert bool(r["is_marketing"]) is False
+
+def test_d1_unattributed_group_from_tier_not_nan():
+    # No asset, no referral, no list -> group derives from contract tier, not NaN.
+    t = _d1_build(
+        [_d1_deal("du", "2026-08-15T00:00:00Z")],
+        [_d1_contact("c1", "direct@x.com", "", None, tier="1:  PRIMARY")])
+    r = t.iloc[0]
+    assert bool(r["is_marketing"]) is False
+    assert not (isinstance(r["group"], float) and pd.isna(r["group"]))
+    # _group_from_tier("1:  PRIMARY") is None (no recognised suffix) -> "(unmapped)"
+    assert r["group"] == "(unmapped)"
+
+def test_d1_unattributed_group_uses_tier_suffix_not_nan():
+    # Tier carries a recognised suffix -> the tier fallback must run (was NaN).
+    t = _d1_build(
+        [_d1_deal("dc", "2026-08-15T00:00:00Z")],
+        [_d1_contact("c1", "chiro@x.com", "", None, tier="1 PRIMARY - C")])
+    r = t.iloc[0]
+    assert bool(r["is_marketing"]) is False
+    assert r["group"] == "Chiro"
+
+
 def test_drop_dead_meetings():
     """Canceled + rescheduled meetings (any prefix variant) are removed."""
     from dashboard.data.reconcile import drop_dead_meetings
