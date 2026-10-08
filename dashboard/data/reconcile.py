@@ -2848,9 +2848,12 @@ def build_closed_deals_table(
         analytics_src = (primary_contact.get("analytics_source_data_1") or "").lower()
         is_theraray_signal = "theraray" in analytics_src
         if is_theraray_signal and not _is_referral \
-                and not (asset and asset_to_group.get(asset)):
+                and not (asset and asset_to_group.get(asset)) \
+                and not group:
             # No explicit typeform attribution + TheraRay analytics signal
-            # → mark as TheraRay marketing close.
+            # → mark as TheraRay marketing close. Only fires when the
+            # attribution chain left group unset, so an override, stage, or
+            # list-asset credit (e.g. NLAP) is never overwritten here.
             source = "TheraRay (direct traffic)"
             group = "TheraRay"
             is_marketing = True

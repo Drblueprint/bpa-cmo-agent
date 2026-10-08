@@ -1141,6 +1141,27 @@ def test_d1_unattributed_group_from_tier_not_nan():
     # _group_from_tier("1:  PRIMARY") is None (no recognised suffix) -> "(unmapped)"
     assert r["group"] == "(unmapped)"
 
+def test_d1_list_credit_not_overwritten_by_theraray_analytics_signal():
+    # An explicit list credit (NLAP) must win over the TheraRay analytics-signal
+    # block; that block only fires when the attribution chain left group unset.
+    c = _d1_contact("c1", "nl@x.com", "NLAP User ", "2026-08-07T00:00:00Z")
+    c["analytics_source_data_1"] = "theraray.org"
+    t = _d1_build([_d1_deal("dn2", "2026-09-11T00:00:00Z")], [c])
+    r = t.iloc[0]
+    assert r["group"] == "NLAP"
+    assert r["source"] == "NLAP"            # NOT "TheraRay (direct traffic)"
+    assert bool(r["is_marketing"]) is True
+
+def test_d1_direct_theraray_signal_still_credited_when_group_unset():
+    # No asset, no referral, no list credit: the analytics block still fires.
+    c = _d1_contact("c1", "td2@x.com", "", None)
+    c["analytics_source_data_1"] = "theraray.org"
+    t = _d1_build([_d1_deal("dt2", "2026-08-15T00:00:00Z")], [c])
+    r = t.iloc[0]
+    assert r["group"] == "TheraRay"
+    assert r["source"] == "TheraRay (direct traffic)"
+    assert bool(r["is_marketing"]) is True
+
 def test_d1_unattributed_group_uses_tier_suffix_not_nan():
     # Tier carries a recognised suffix -> the tier fallback must run (was NaN).
     t = _d1_build(
