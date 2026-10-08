@@ -721,4 +721,11 @@ CONTACT_SOURCE_OVERRIDES: dict[str, tuple[str, str, bool]] = {
     "danielle@keldermanstherapyservices.com":     ("5 Mil Practice Secrets Marketing", "PT Recovery", True),
     "info@loomislifecare.com":                    ("Top 10 Marketing Lead", "Chiro", True),
     "rich@newhealthmadison.com":                  ("Chiro Economics Email Blast", "Chiro", True),
+    # Jared Wilson: ran the full July event cycle (disco 7/22 via the event
+    # booking link, strategy 7/29, closing call 8/3) before an incidental
+    # TheraRay list opt-in on 8/31, so the automated list logic mis-credits him
+    # to TheraRay. The event was renamed to "Practice Growth Workshop" with a
+    # few weeks to go, so both names map to EMX Kansas City for this timeframe
+    # (Kurt, 2026-10-08).
+    "drjaredwilson@yahoo.com":                    ("EMX Kansas City", "EMX", True),
 }

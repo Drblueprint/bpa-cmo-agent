@@ -1031,6 +1031,43 @@ def test_closed_deals_override_beats_typeform_asset():
     assert bool(row["is_marketing"]) is True
 
 
+def test_jared_wilson_credited_to_emx_kansas_city():
+    """Jared Wilson's close is credited to the EMX Kansas City event via the
+    REAL CONTACT_SOURCE_OVERRIDES entry, overriding his incidental TheraRay
+    list opt-in (he ran the full July event cycle before opting in; the event
+    was renamed to Practice Growth Workshop mid-stream, so both map to EMX
+    Kansas City for this timeframe). Guards the live config entry."""
+    import dashboard.config as cfg
+    from dashboard.data.reconcile import build_closed_deals_table
+
+    deals = pd.DataFrame([
+        {"deal_id": "d1", "dealstage": "24094605", "amount": 40000.0,
+         "createdate": "2026-08-28T00:00:00Z",
+         "closedate": "2026-09-02T00:00:00Z", "stage_entry_date": None},
+    ])
+    contact_deals = pd.DataFrame([{"contact_id": "c1", "deal_id": "d1"}])
+    contacts = pd.DataFrame([
+        {"hs_id": "c1", "name": "Jared Wilson", "email": "drjaredwilson@yahoo.com",
+         "typeform_asset_download": "TheraRay Device ",  # incidental list opt-in
+         "contract_tier": "1:  PRIMARY", "send_contract_options": "",
+         "analytics_source_data_1": "",
+         "typeform_submission_date": None,
+         "created": "2026-07-20T00:00:00Z",
+         "sdr_owner": "", "bds": "", "sme": ""},
+    ])
+    t = build_closed_deals_table(
+        deals, contact_deals, contacts,
+        asset_to_group=cfg.ASSET_TO_GROUP,
+        group_default_amount=cfg.GROUP_DEFAULT_DEAL_AMOUNT,
+        source_overrides=cfg.CONTACT_SOURCE_OVERRIDES,
+        stage_source_fallback=cfg.STAGE_SOURCE_FALLBACK,
+    )
+    row = t.iloc[0]
+    assert row["source"] == "EMX Kansas City"
+    assert row["group"] == "EMX"
+    assert bool(row["is_marketing"]) is True
+
+
 def test_drop_dead_meetings():
     """Canceled + rescheduled meetings (any prefix variant) are removed."""
     from dashboard.data.reconcile import drop_dead_meetings
